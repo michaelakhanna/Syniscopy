@@ -1,0 +1,31 @@
+{
+  "title": "Syniscopy: Theoretical Foundations and Cross-Modality Cramér-Rao Analysis for Synthetic Single-Particle Microscopy",
+  "upload_type": "software",
+  "version": "1.1.0",
+  "publication_date": "2026-05-28",
+  "access_right": "open",
+  "creators": [
+    {
+      "name": "Khanna, Michael A."
+    }
+  ],
+  "description": "Physics-based synthetic single-particle microscopy simulator with matched cross-modality Cramér-Rao diagnostics, supervision masks, paired modality-comparison outputs, and Segment Anything Model 2 starter workflows.",
+  "license": "MIT",
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/michaelakhanna/syniscopy",
+      "relation": "isSupplementTo",
+      "scheme": "url"
+    }
+  ],
+  "keywords": [
+    "microscopy simulation",
+    "synthetic data",
+    "single-particle microscopy",
+    "Cramér-Rao lower bound",
+    "Fisher information",
+    "Segment Anything Model 2",
+    "segmentation"
+  ],
+  "notes": "The MIT license applies to Syniscopy code and documentation. Third-party media and model assets are not relicensed as Syniscopy code. Liverpool caustic-video review manifests identify Creative Commons Attribution 4.0 third-party DataCat sources; the source release does not bundle raw DataCat videos, regenerated reviewed clip AVIs, or derived overlays. Segment Anything Model 2 code, base checkpoints, and any fine-tuned checkpoint derived from those weights retain Meta's upstream Segment Anything Model 2 licenses and notices."
+}

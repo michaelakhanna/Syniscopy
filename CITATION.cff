@@ -1,0 +1,38 @@
+cff-version: 1.2.0
+message: "If you use Syniscopy in academic work, please cite this repository and the accompanying paper. Syniscopy software and documentation are MIT licensed."
+title: "Syniscopy: Theoretical Foundations and Cross-Modality Cramér-Rao Analysis for Synthetic Single-Particle Microscopy"
+authors:
+  - family-names: "Khanna"
+    given-names: "Michael A."
+    email: "michaelakhanna@gmail.com"
+type: software
+version: "1.1.0"
+date-released: "2026-05-28"
+license: "MIT"
+doi: "10.5281/zenodo.18617286"
+url: "https://doi.org/10.5281/zenodo.18617286"
+repository-code: "https://github.com/michaelakhanna/syniscopy"
+keywords:
+  - "microscopy simulation"
+  - "synthetic data"
+  - "segmentation"
+  - "Segment Anything Model 2"
+  - "label-free microscopy"
+  - "Cramér-Rao lower bound"
+  - "measurement-supported annotations"
+abstract: >-
+  Syniscopy is a physics-based synthetic microscopy video generator for
+  single-particle microscopy. It renders particle videos, supervision masks,
+  ignore regions, supervision audit reports, and Cramér-Rao lower-bound
+  diagnostics across multiple microscopy-style forward models.
+preferred-citation:
+  type: generic
+  title: "Syniscopy: Theoretical Foundations and Cross-Modality Cramér-Rao Analysis for Synthetic Single-Particle Microscopy"
+  authors:
+    - family-names: "Khanna"
+      given-names: "Michael A."
+  year: 2026
+  version: "1.1.0"
+  doi: "10.5281/zenodo.18617286"
+  url: "https://doi.org/10.5281/zenodo.18617286"
+  notes: "This is the Zenodo all-versions DOI and resolves to the latest archived release."

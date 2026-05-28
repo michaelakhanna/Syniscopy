@@ -1,0 +1,25 @@
+{
+  "clip_frame_count": 90,
+  "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-5FBS-Rep-2_P1-Movie_Export-01_f000041-f000131excl_clip.avi",
+  "fps_expected_from_repository": 40.0,
+  "fps_metadata": 5.0,
+  "frame_height": 256,
+  "frame_width": 256,
+  "notes": "",
+  "particle_diameter_nm": 50.0,
+  "pixel_size_nm": 116.0,
+  "points": [
+    {
+      "label": "particle",
+      "point_label": 1,
+      "x": 124,
+      "y": 84
+    }
+  ],
+  "prompt_frame_idx": 0,
+  "schema_version": "syniscopy-caustic-review-clip-v1",
+  "source_frame_end_exclusive": 131,
+  "source_frame_start": 41,
+  "source_prompt_frame_idx": 41,
+  "source_video": "50nm/BPEI-50nm-5FBS-Rep-2/P1-Movie Export-01.avi"
+}

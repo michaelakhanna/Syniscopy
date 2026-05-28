@@ -1,0 +1,43 @@
+{
+  "background_intensity": 1000.0,
+  "background_subtraction_method": "reference_frame",
+  "camera_gain_e_per_count": 1.0,
+  "gaussian_noise_enabled": true,
+  "image_size_pixels": 192,
+  "numerical_aperture": 1.0,
+  "particles": [
+    {
+      "components": [
+        {
+          "diameter_nm": 100.0,
+          "material": "fluorescent_polystyrene",
+          "material_properties": null,
+          "offset_nm": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "refractive_index": null,
+          "shape": "sphere",
+          "signal_multiplier": 1.0
+        }
+      ],
+      "motion": {
+        "hydrodynamic_diameter_nm": 100.0,
+        "initial_position_nm": null
+      },
+      "name": "target_particle",
+      "signal_multiplier": 1.0
+    }
+  ],
+  "pixel_size_nm": 65.0,
+  "pupil_samples": 192,
+  "read_noise_counts": 1.0,
+  "refractive_index_immersion": 1.33,
+  "refractive_index_medium": 1.33,
+  "sample_environment_enabled": false,
+  "sample_environment_pattern": "none",
+  "sample_environment_pattern_enabled": false,
+  "shot_noise_enabled": true,
+  "wavelength_nm": 532.0
+}

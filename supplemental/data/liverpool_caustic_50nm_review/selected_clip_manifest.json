@@ -1,0 +1,496 @@
+[
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-10FBS-Rep-2_P1-Movie_Export-01_f000020-f000145excl_clip.json",
+    "clip_frame_count": 125,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-10FBS-Rep-2_P1-Movie_Export-01_f000020-f000145excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 155,
+        "y": 138
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 145,
+    "source_frame_start": 20,
+    "source_prompt_frame_idx": 20,
+    "source_video": "50nm/BPEI-50nm-10FBS-Rep-2/P1-Movie Export-01.avi"
+  },
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-10FBS-Rep-2_P3-Movie_Export-03_f000000-f000274excl_clip.json",
+    "clip_frame_count": 274,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-10FBS-Rep-2_P3-Movie_Export-03_f000000-f000274excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 80,
+        "y": 115
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 274,
+    "source_frame_start": 0,
+    "source_prompt_frame_idx": 0,
+    "source_video": "50nm/BPEI-50nm-10FBS-Rep-2/P3-Movie Export-03.avi"
+  },
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-10FBS-Rep-2_P4-Movie_Export-04_f000318-f000400excl_clip.json",
+    "clip_frame_count": 82,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-10FBS-Rep-2_P4-Movie_Export-04_f000318-f000400excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 132,
+        "y": 48
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 400,
+    "source_frame_start": 318,
+    "source_prompt_frame_idx": 318,
+    "source_video": "50nm/BPEI-50nm-10FBS-Rep-2/P4-Movie Export-04.avi"
+  },
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-10FBS-Rep-2_P6-Movie_Export-06_f000063-f000177excl_clip.json",
+    "clip_frame_count": 114,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-10FBS-Rep-2_P6-Movie_Export-06_f000063-f000177excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 176,
+        "y": 103
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 177,
+    "source_frame_start": 63,
+    "source_prompt_frame_idx": 63,
+    "source_video": "50nm/BPEI-50nm-10FBS-Rep-2/P6-Movie Export-06.avi"
+  },
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-10FBS-Rep-3_P1-Movie_Export-01_f000076-f000133excl_clip.json",
+    "clip_frame_count": 57,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-10FBS-Rep-3_P1-Movie_Export-01_f000076-f000133excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 130,
+        "y": 103
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 133,
+    "source_frame_start": 76,
+    "source_prompt_frame_idx": 76,
+    "source_video": "50nm/BPEI-50nm-10FBS-Rep-3/P1-Movie Export-01.avi"
+  },
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-10FBS-Rep-3_P4-Movie_Export-04_f000430-f000539excl_clip.json",
+    "clip_frame_count": 109,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-10FBS-Rep-3_P4-Movie_Export-04_f000430-f000539excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 14,
+        "y": 142
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 539,
+    "source_frame_start": 430,
+    "source_prompt_frame_idx": 430,
+    "source_video": "50nm/BPEI-50nm-10FBS-Rep-3/P4-Movie Export-04.avi"
+  },
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-10FBS-Rep-3_P8-Movie_Export-08_f000000-f000120excl_clip.json",
+    "clip_frame_count": 120,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-10FBS-Rep-3_P8-Movie_Export-08_f000000-f000120excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 110,
+        "y": 136
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 120,
+    "source_frame_start": 0,
+    "source_prompt_frame_idx": 0,
+    "source_video": "50nm/BPEI-50nm-10FBS-Rep-3/P8-Movie Export-08.avi"
+  },
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-10FBS-Rep-4_P1-Movie_Export-01_f000135-f000266excl_clip.json",
+    "clip_frame_count": 131,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-10FBS-Rep-4_P1-Movie_Export-01_f000135-f000266excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 120,
+        "y": 218
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 266,
+    "source_frame_start": 135,
+    "source_prompt_frame_idx": 135,
+    "source_video": "50nm/BPEI-50nm-10FBS-Rep-4/P1-Movie Export-01.avi"
+  },
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-10FBS-Rep-4_P2-Movie_Export-02_f000000-f000243excl_clip.json",
+    "clip_frame_count": 243,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-10FBS-Rep-4_P2-Movie_Export-02_f000000-f000243excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 186,
+        "y": 128
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 243,
+    "source_frame_start": 0,
+    "source_prompt_frame_idx": 0,
+    "source_video": "50nm/BPEI-50nm-10FBS-Rep-4/P2-Movie Export-02.avi"
+  },
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-10FBS-Rep-4_P3-Movie_Export-03_f000000-f000090excl_clip.json",
+    "clip_frame_count": 90,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-10FBS-Rep-4_P3-Movie_Export-03_f000000-f000090excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 91,
+        "y": 130
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 90,
+    "source_frame_start": 0,
+    "source_prompt_frame_idx": 0,
+    "source_video": "50nm/BPEI-50nm-10FBS-Rep-4/P3-Movie Export-03.avi"
+  },
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-10FBS-Rep-4_P4-Movie_Export-04_f000000-f000118excl_clip.json",
+    "clip_frame_count": 118,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-10FBS-Rep-4_P4-Movie_Export-04_f000000-f000118excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 234,
+        "y": 212
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 118,
+    "source_frame_start": 0,
+    "source_prompt_frame_idx": 0,
+    "source_video": "50nm/BPEI-50nm-10FBS-Rep-4/P4-Movie Export-04.avi"
+  },
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-10FBS-Rep-4_P5-Movie_Export-05_f000038-f000087excl_clip.json",
+    "clip_frame_count": 49,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-10FBS-Rep-4_P5-Movie_Export-05_f000038-f000087excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 132,
+        "y": 113
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 87,
+    "source_frame_start": 38,
+    "source_prompt_frame_idx": 38,
+    "source_video": "50nm/BPEI-50nm-10FBS-Rep-4/P5-Movie Export-05.avi"
+  },
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-2.5FBS-Rep-1_P1-Movie_Export-01_f000000-f000116excl_clip.json",
+    "clip_frame_count": 116,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-2.5FBS-Rep-1_P1-Movie_Export-01_f000000-f000116excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 149,
+        "y": 98
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 116,
+    "source_frame_start": 0,
+    "source_prompt_frame_idx": 0,
+    "source_video": "50nm/BPEI-50nm-2.5FBS-Rep-1/P1-Movie Export-01.avi"
+  },
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-2.5FBS-Rep-1_P5-Movie_Export-05_f000111-f000153excl_clip.json",
+    "clip_frame_count": 42,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-2.5FBS-Rep-1_P5-Movie_Export-05_f000111-f000153excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 30,
+        "y": 126
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 153,
+    "source_frame_start": 111,
+    "source_prompt_frame_idx": 111,
+    "source_video": "50nm/BPEI-50nm-2.5FBS-Rep-1/P5-Movie Export-05.avi"
+  },
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-2.5FBS-Rep-1_P6-Movie_Export-06_f000000-f000058excl_clip.json",
+    "clip_frame_count": 58,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-2.5FBS-Rep-1_P6-Movie_Export-06_f000000-f000058excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 136,
+        "y": 158
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 58,
+    "source_frame_start": 0,
+    "source_prompt_frame_idx": 0,
+    "source_video": "50nm/BPEI-50nm-2.5FBS-Rep-1/P6-Movie Export-06.avi"
+  },
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-5FBS-Rep-1_P3-Movie_Export-03_f000000-f000093excl_clip.json",
+    "clip_frame_count": 93,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-5FBS-Rep-1_P3-Movie_Export-03_f000000-f000093excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 102,
+        "y": 146
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 93,
+    "source_frame_start": 0,
+    "source_prompt_frame_idx": 0,
+    "source_video": "50nm/BPEI-50nm-5FBS-Rep-1/P3-Movie Export-03.avi"
+  },
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-5FBS-Rep-1_P4-Movie_Export-04_f000042-f000102excl_clip.json",
+    "clip_frame_count": 60,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-5FBS-Rep-1_P4-Movie_Export-04_f000042-f000102excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 150,
+        "y": 224
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 102,
+    "source_frame_start": 42,
+    "source_prompt_frame_idx": 42,
+    "source_video": "50nm/BPEI-50nm-5FBS-Rep-1/P4-Movie Export-04.avi"
+  },
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-5FBS-Rep-1_P5-Movie_Export-05_f000000-f000048excl_clip.json",
+    "clip_frame_count": 48,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-5FBS-Rep-1_P5-Movie_Export-05_f000000-f000048excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 184,
+        "y": 150
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 48,
+    "source_frame_start": 0,
+    "source_prompt_frame_idx": 0,
+    "source_video": "50nm/BPEI-50nm-5FBS-Rep-1/P5-Movie Export-05.avi"
+  },
+  {
+    "audit_json": "supplemental/data/liverpool_caustic_50nm_review/audit/BPEI-50nm-5FBS-Rep-2_P1-Movie_Export-01_f000041-f000131excl_clip.json",
+    "clip_frame_count": 90,
+    "clip_video": "supplemental/data/liverpool_caustic_50nm_review/clips/BPEI-50nm-5FBS-Rep-2_P1-Movie_Export-01_f000041-f000131excl_clip.avi",
+    "fps_expected_from_repository": 40.0,
+    "fps_metadata": 5.0,
+    "frame_height": 256,
+    "frame_width": 256,
+    "notes": "",
+    "particle_diameter_nm": 50.0,
+    "pixel_size_nm": 116.0,
+    "points": [
+      {
+        "label": "particle",
+        "point_label": 1,
+        "x": 124,
+        "y": 84
+      }
+    ],
+    "prompt_frame_idx": 0,
+    "schema_version": "syniscopy-caustic-review-clip-v1",
+    "source_frame_end_exclusive": 131,
+    "source_frame_start": 41,
+    "source_prompt_frame_idx": 41,
+    "source_video": "50nm/BPEI-50nm-5FBS-Rep-2/P1-Movie Export-01.avi"
+  }
+]

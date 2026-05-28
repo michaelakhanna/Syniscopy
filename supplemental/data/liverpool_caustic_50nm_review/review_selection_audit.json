@@ -1,0 +1,30 @@
+{
+  "auto_reject_short": true,
+  "auto_rejected_short_clips": [
+    {
+      "clip_frames": 1,
+      "end_frame": 373,
+      "flat_filename": "BPEI-50nm-10FBS-Rep-2__P2-Movie_Export-02.avi",
+      "prompt_frame": 373,
+      "reason": "clip_frames < 30",
+      "video_id": "BPEI-50nm-10FBS-Rep-2__P2-Movie_Export-02"
+    },
+    {
+      "clip_frames": 22,
+      "end_frame": 1794,
+      "flat_filename": "BPEI-50nm-5FBS-Rep-1__P2-Movie_Export-02.avi",
+      "prompt_frame": 1773,
+      "reason": "clip_frames < 30",
+      "video_id": "BPEI-50nm-5FBS-Rep-1__P2-Movie_Export-02"
+    }
+  ],
+  "exported_clip_count": 19,
+  "min_clip_frames": 30,
+  "schema_version": "syniscopy-caustic-review-selection-audit-v1",
+  "short_kept_clips_not_exported": [],
+  "status_counts": {
+    "kept": 19,
+    "pending": 1,
+    "rejected": 14
+  }
+}
