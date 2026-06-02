@@ -14,6 +14,19 @@ from particle_specs import get_particle_specs, ParticleSpec
 from substrate import MaterialProperties
 
 
+class NullPSFZInterpolator:
+    """Placeholder for source-map modalities that never consume optical PSFs."""
+
+    z_min = 0.0
+    z_max = 0.0
+
+    def __call__(self, z_nm):
+        raise RuntimeError(
+            "This particle instance was built for a source-map imaging model "
+            "and has no complex optical PSF stack."
+        )
+
+
 @dataclass(frozen=True)
 class SubParticle:
     """
@@ -29,14 +42,18 @@ class SubParticle:
         - refractive_index: complex refractive index (n + i k).
         - ipsf_interpolator: spherical iPSF interpolator for this
           sub-particle type.
-        - signal_multiplier: local amplitude scaling applied on top of the
+        - signal_multiplier: local optical-field amplitude scaling applied on top of the
           parent ParticleInstance.signal_multiplier.
+        - source_multiplier: local material-source scaling used by
+          source-map modalities; kept separate so optical amplitude knobs do
+          not change TEM/SEM/fluorescence material density/yield.
     """
     offset_nm: np.ndarray
     diameter_nm: float
     refractive_index: complex
     ipsf_interpolator: ComplexPSFZInterpolator
     signal_multiplier: float = 1.0
+    source_multiplier: float = 1.0
     material_properties: MaterialProperties | None = None
 
 
@@ -83,7 +100,7 @@ class ParticleType:
 
             (diameter_nm, n.real, n.imag)
 
-        This matches the key used in main.run_simulation when grouping
+        This matches the key used in simulation.run_simulation when grouping
         particles by type.
         """
         n = self.refractive_index
@@ -98,7 +115,9 @@ class ParticleInstance:
     Each instance:
         - References exactly one ParticleType (optical behavior and iPSF).
         - Stores its full 3D trajectory in nanometers over all frames.
-        - Stores its per-particle signal multiplier (scalar amplitude factor).
+        - Stores its per-particle optical signal multiplier.
+        - Stores a separate per-particle source multiplier for source-map
+          modalities.
         - Optionally stores a per-frame orientation for non-spherical
           composite particles.
 
@@ -119,6 +138,7 @@ class ParticleInstance:
     particle_type: ParticleType
     trajectory_nm: np.ndarray
     signal_multiplier: float
+    source_multiplier: float = 1.0
     orientation_matrices: Optional[np.ndarray] = None
     material_properties: MaterialProperties | None = None
 
@@ -128,6 +148,8 @@ def build_particle_types_and_instances(
     trajectories_nm: np.ndarray,
     psf_interpolators_by_type: Dict[Tuple[float, float, float], ComplexPSFZInterpolator],
     orientations: Optional[np.ndarray] = None,
+    *,
+    require_optical_psf: bool = True,
 ) -> Tuple[Dict[Tuple[float, float, float], ParticleType], List[ParticleInstance]]:
     """
     Construct ParticleType and ParticleInstance objects for the current
@@ -157,7 +179,7 @@ def build_particle_types_and_instances(
             as returned by trajectory.simulate_trajectories.
         psf_interpolators_by_type (dict):
             Mapping from type_key = (diameter_nm, n_real, n_imag) to the
-            ComplexPSFZInterpolator computed for that type in main.run_simulation.
+            ComplexPSFZInterpolator computed for that type in simulation.run_simulation.
         orientations (Optional[np.ndarray]):
             Optional orientation array with shape
             (num_particles, num_frames, 3, 3). When provided, each particle's
@@ -197,38 +219,63 @@ def build_particle_types_and_instances(
                 f"when provided. Got {orientations.shape}."
             )
 
-    # Build spherical optical type objects from every component type that was
-    # collected upstream. Composite particle types reference these same
-    # component iPSF interpolators.
-    spherical_types: Dict[Tuple[float, float, float], ParticleType] = {}
-    for type_key, interpolator in psf_interpolators_by_type.items():
-        diam_nm, n_real, n_imag = type_key
-        n_complex = complex(n_real, n_imag)
-        spherical_types[type_key] = ParticleType(
-            diameter_nm=float(diam_nm),
-            refractive_index=n_complex,
-            ipsf_interpolator=interpolator,
-            is_composite=False,
-            sub_particles=(),
+    def _component_material_properties(component):
+        return resolve_component_material_properties(
+            params,
+            component,
+            require_optical_refractive_index=require_optical_psf,
         )
+
+    def _component_refractive_index(component) -> complex:
+        if require_optical_psf:
+            return resolve_component_refractive_index(params, component)
+        return _component_material_properties(component).n_complex(float(params.get("wavelength_nm", 532.0)))
+
+    # Build spherical type objects from every component type collected upstream.
+    # Source-map modalities do not consume optical PSFs; they receive null
+    # interpolators keyed by geometry/material so the rest of the particle
+    # object model remains shared.
+    spherical_types: Dict[Tuple[float, float, float], ParticleType] = {}
+    if require_optical_psf:
+        for type_key, interpolator in psf_interpolators_by_type.items():
+            diam_nm, n_real, n_imag = type_key
+            n_complex = complex(n_real, n_imag)
+            spherical_types[type_key] = ParticleType(
+                diameter_nm=float(diam_nm),
+                refractive_index=n_complex,
+                ipsf_interpolator=interpolator,
+                is_composite=False,
+                sub_particles=(),
+            )
 
     particle_types: Dict[Tuple[Any, ...], ParticleType] = {}
 
     def _type_key_for_component(component) -> Tuple[float, float, float]:
-        n_complex = resolve_component_refractive_index(params, component)
+        n_complex = _component_refractive_index(component)
         return (
             float(component.diameter_nm),
             float(n_complex.real),
             float(n_complex.imag),
         )
 
+    def _material_key_for_component(component) -> Tuple[Any, ...]:
+        props = component.material_properties or {}
+        props_key = tuple(sorted((str(key), repr(value)) for key, value in props.items()))
+        return (
+            None if component.material is None else str(component.material),
+            props_key,
+        )
+
     def _particle_type_from_spec(spec: ParticleSpec, p_index: int) -> ParticleType:
         primary = spec.primary_component
         primary_key = _type_key_for_component(primary)
         if primary_key not in spherical_types:
-            raise KeyError(
-                f"No ParticleType found for particle {p_index} primary component "
-                f"type_key={primary_key}."
+            spherical_types[primary_key] = ParticleType(
+                diameter_nm=float(primary.diameter_nm),
+                refractive_index=_component_refractive_index(primary),
+                ipsf_interpolator=NullPSFZInterpolator(),
+                is_composite=False,
+                sub_particles=(),
             )
         if spec.is_single_sphere:
             if (
@@ -264,7 +311,9 @@ def build_particle_types_and_instances(
                 (
                     tuple(float(v) for v in component.offset_nm),
                     *_type_key_for_component(component),
+                    _material_key_for_component(component),
                     float(component.signal_multiplier),
+                    float(component.source_multiplier),
                 )
                 for component in spec.components
             ),
@@ -279,11 +328,14 @@ def build_particle_types_and_instances(
         for c_idx, component in enumerate(spec.components):
             component_key = _type_key_for_component(component)
             if component_key not in spherical_types:
-                raise KeyError(
-                    f"No ParticleType found for particle {p_index} component {c_idx} "
-                    f"type_key={component_key}."
+                spherical_types[component_key] = ParticleType(
+                    diameter_nm=float(component.diameter_nm),
+                    refractive_index=_component_refractive_index(component),
+                    ipsf_interpolator=NullPSFZInterpolator(),
+                    is_composite=False,
+                    sub_particles=(),
                 )
-            n_complex = resolve_component_refractive_index(params, component)
+            n_complex = _component_refractive_index(component)
             sub_particles.append(
                 SubParticle(
                     offset_nm=np.asarray(component.offset_nm, dtype=float),
@@ -291,7 +343,8 @@ def build_particle_types_and_instances(
                     refractive_index=n_complex,
                     ipsf_interpolator=spherical_types[component_key].ipsf_interpolator,
                     signal_multiplier=float(component.signal_multiplier),
-                    material_properties=resolve_component_material_properties(params, component),
+                    source_multiplier=float(component.source_multiplier),
+                    material_properties=_component_material_properties(component),
                 )
             )
 
@@ -325,8 +378,9 @@ def build_particle_types_and_instances(
             particle_type=ptype,
             trajectory_nm=trajectories_nm[i],
             signal_multiplier=float(spec.signal_multiplier),
+            source_multiplier=float(spec.source_multiplier),
             orientation_matrices=orientation_matrices,
-            material_properties=resolve_component_material_properties(params, spec.primary_component),
+            material_properties=_component_material_properties(spec.primary_component),
         )
         instances.append(instance)
 

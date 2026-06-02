@@ -1,17 +1,57 @@
 import logging
 
 import numpy as np
-from scipy.special import jv as _jv, yv as _yv
-
-# Mie derivatives use half-integer Bessel orders. scipy.special.jv/yv accept
-# arbitrary real orders, unlike the integer-order jn/yn aliases.
-jn = _jv
-yn = _yv
 from scipy.fft import ifft2, fftshift, ifftshift
 from tqdm import tqdm
 
+from mie_scattering import (
+    mie_S1_S2_from_coefficients,
+    mie_S2_from_coefficients,
+    mie_an_bn,
+    mie_scattering_amplitudes_from_coefficients,
+)
+from vectorial_optics import compute_vectorial_debye_psf
+from optical_extensions import compute_coverslip_aberration_phase
+from shared_constants import COHERENT_REFERENCE_MODALITIES
+
 
 logger = logging.getLogger(__name__)
+
+
+def _interpolate_z_stack_single(
+    z_values: np.ndarray,
+    stack: np.ndarray,
+    z_min: float,
+    z_max: float,
+    z_val: float,
+) -> np.ndarray:
+    """
+    Interpolate one z position from a precomputed complex PSF stack.
+
+    Values outside the precomputed range are clamped to the nearest available
+    slice so a narrow cache does not make a particle vanish abruptly.
+    """
+    if z_val < z_min:
+        return stack[0]
+    if z_val > z_max:
+        return stack[-1]
+
+    if z_values.size == 1:
+        return stack[0]
+
+    upper_index = int(np.searchsorted(z_values, z_val, side="right"))
+    lower_index = upper_index - 1
+    if lower_index < 0:
+        return stack[0]
+    if upper_index >= z_values.size:
+        return stack[-1]
+
+    z_lower = float(z_values[lower_index])
+    z_upper = float(z_values[upper_index])
+    alpha = (z_val - z_lower) / (z_upper - z_lower)
+    lower_slice = stack[lower_index]
+    upper_slice = stack[upper_index]
+    return (1.0 - alpha) * lower_slice + alpha * upper_slice
 
 
 class ComplexPSFZInterpolator:
@@ -35,7 +75,7 @@ class ComplexPSFZInterpolator:
     Different types therefore have independent axial coverage tailored to their motion.
     """
 
-    def __init__(self, z_values_nm, ipsf_stack_complex):
+    def __init__(self, z_values_nm, ipsf_stack_complex, metadata=None):
         """
         Args:
             z_values_nm (array-like): 1D array of z positions (in nm) at which
@@ -65,6 +105,7 @@ class ComplexPSFZInterpolator:
 
         self.z_min = float(self.z_values[0])
         self.z_max = float(self.z_values[-1])
+        self.metadata = dict(metadata or {})
 
     def __call__(self, z_nm):
         """
@@ -110,149 +151,71 @@ class ComplexPSFZInterpolator:
         # Outside the precomputed z-range: use the nearest computed slice. A
         # zero fill would incorrectly turn an out-of-cache particle into no
         # particle and corrupt mask/video alignment.
-        if z_val < self.z_min:
-            return self.ipsf_stack[0]
-        if z_val > self.z_max:
-            return self.ipsf_stack[-1]
-
-        # If only a single z-slice exists, always return that slice.
-        if self.z_values.size == 1:
-            return self.ipsf_stack[0]
-
-        upper_index = int(np.searchsorted(self.z_values, z_val, side="right"))
-        lower_index = upper_index - 1
-        if lower_index < 0:
-            return self.ipsf_stack[0]
-        if upper_index >= self.z_values.size:
-            return self.ipsf_stack[-1]
-
-        z_lower = float(self.z_values[lower_index])
-        z_upper = float(self.z_values[upper_index])
-        alpha = (z_val - z_lower) / (z_upper - z_lower)
-        lower_slice = self.ipsf_stack[lower_index]
-        upper_slice = self.ipsf_stack[upper_index]
-        return (1.0 - alpha) * lower_slice + alpha * upper_slice
+        return _interpolate_z_stack_single(
+            self.z_values,
+            self.ipsf_stack,
+            self.z_min,
+            self.z_max,
+            z_val,
+        )
 
 
-def mie_an_bn(m, x):
+class VectorialPSFZInterpolator:
     """
-    Calculates Mie scattering coefficients a_n and b_n.
+    1D interpolator over a precomputed vectorial complex PSF stack.
 
-    Args:
-        m (complex): The complex refractive index ratio (particle/medium).
-        x (float): The size parameter (2*pi*r/lambda).
+    The stored data has shape ``(num_z, 3, height, width)`` with component
+    order ``(Ex, Ey, Ez)``. Interpolation follows the same axial clamping and
+    piecewise-linear behavior as :class:`ComplexPSFZInterpolator`.
     """
-    if not np.isfinite(x) or x <= 0.0:
-        raise ValueError(f"Mie size parameter x must be finite and positive; got {x}.")
-    nmax = int(np.ceil(x + 4 * x**(1/3) + 2))
-    n = np.arange(1, nmax + 1)
 
-    # Riccati-Bessel functions
-    psi_n_x = np.sqrt(0.5 * np.pi * x) * jn(n + 0.5, x)
-    psi_n_mx = np.sqrt(0.5 * np.pi * m * x) * jn(n + 0.5, m * x)
-    chi_n_x = -np.sqrt(0.5 * np.pi * x) * yn(n + 0.5, x)
+    def __init__(self, z_values_nm, ipsf_stack_vector, metadata=None):
+        z_values = np.asarray(z_values_nm, dtype=float)
+        if z_values.ndim != 1 or z_values.size == 0:
+            raise ValueError("z_values_nm must be a non-empty 1D array.")
 
-    psi_nm1_x = np.sqrt(0.5 * np.pi * x) * jn(n - 1 + 0.5, x)
-    psi_nm1_mx = np.sqrt(0.5 * np.pi * m * x) * jn(n - 1 + 0.5, m * x)
-    chi_nm1_x = -np.sqrt(0.5 * np.pi * x) * yn(n - 1 + 0.5, x)
-
-    # Riccati-Bessel derivatives with respect to their own argument:
-    # psi_n'(z) = psi_{n-1}(z) - n psi_n(z) / z, and the same recurrence for
-    # chi_n(z) = -z y_n(z).  This avoids the half-order bookkeeping error that
-    # appears when differentiating the sqrt(z) J_{n+1/2}(z) expression inline.
-    psi_prime_n_x = psi_nm1_x - n * psi_n_x / x
-    psi_prime_n_mx = psi_nm1_mx - n * psi_n_mx / (m * x)
-
-    xi_n_x = psi_n_x + 1j * chi_n_x
-    chi_prime_n_x = chi_nm1_x - n * chi_n_x / x
-    xi_prime_n_x = psi_prime_n_x + 1j * chi_prime_n_x
-
-    # Nonmagnetic Mie coefficients. ``psi_prime_n_mx`` is the derivative
-    # with respect to its argument mx, so the standard m factors appear
-    # outside that derivative rather than as an m**2 multiplier.
-    a_n = (
-        (m * psi_n_mx * psi_prime_n_x - psi_n_x * psi_prime_n_mx)
-        / (m * psi_n_mx * xi_prime_n_x - xi_n_x * psi_prime_n_mx)
-    )
-    b_n = (
-        (psi_n_mx * psi_prime_n_x - m * psi_n_x * psi_prime_n_mx)
-        / (psi_n_mx * xi_prime_n_x - m * xi_n_x * psi_prime_n_mx)
-    )
-
-    return a_n, b_n
-
-
-def mie_scattering_amplitudes_from_coefficients(a_n, b_n, mu, *, include_s1=True):
-    """
-    Calculate Mie angular scattering amplitudes from precomputed coefficients.
-
-    The two standard amplitudes are
-
-        S1 = sum_n (2n+1)/(n(n+1)) * (a_n*pi_n + b_n*tau_n)
-        S2 = sum_n (2n+1)/(n(n+1)) * (a_n*tau_n + b_n*pi_n)
-
-    Scalar coherent rendering consumes S2 only. Polarization-resolved
-    dark-field, DIC/Nomarski-style shear models, and high-NA vectorial PSFs need
-    both S1 and S2, so this helper exposes both without forcing scalar rendering
-    to compute the unused S1 path.
-
-    Args:
-        a_n, b_n: Mie scattering coefficient arrays.
-        mu (float or ndarray): cos(theta) where theta is the scattering angle.
-        include_s1 (bool): When False, compute and return S2 only.
-    """
-    nmax = len(a_n)
-    mu_arr = np.asarray(mu, dtype=float)
-    scalar_input = mu_arr.ndim == 0
-
-    out_shape = mu_arr.shape
-    S1 = np.zeros(out_shape, dtype=np.complex128)
-    S2 = np.zeros(out_shape, dtype=np.complex128)
-    pi_n = np.zeros((nmax + 2,) + out_shape, dtype=float)
-    tau_n = np.zeros((nmax + 2,) + out_shape, dtype=float)
-    pi_n[1] = 1.0
-
-    for n in range(1, nmax + 1):
-        if n > 1:
-            pi_n[n] = (
-                ((2 * n - 1) / (n - 1)) * mu_arr * pi_n[n - 1]
-                - (n / (n - 1)) * pi_n[n - 2]
+        ipsf_stack = np.asarray(ipsf_stack_vector, dtype=np.complex128)
+        if ipsf_stack.ndim != 4 or ipsf_stack.shape[1] != 3:
+            raise ValueError(
+                "VectorialPSFZInterpolator expects input shape (len(z_values), 3, H, W)."
+            )
+        if ipsf_stack.shape[0] != z_values.size:
+            raise ValueError(
+                "First axis of ipsf_stack_vector must match the length of z_values_nm."
             )
 
-        tau_n[n] = n * mu_arr * pi_n[n] - (n + 1) * pi_n[n - 1]
+        order = np.argsort(z_values)
+        self.z_values = z_values[order]
+        self.ipsf_stack = ipsf_stack[order]
+        if self.z_values.size > 1 and np.any(np.diff(self.z_values) <= 0.0):
+            raise ValueError("z_values_nm must contain unique z positions.")
 
-        factor = (2 * n + 1) / (n * (n + 1))
-        if include_s1:
-            S1 += factor * (a_n[n - 1] * pi_n[n] + b_n[n - 1] * tau_n[n])
-        S2 += factor * (a_n[n - 1] * tau_n[n] + b_n[n - 1] * pi_n[n])
+        self.z_min = float(self.z_values[0])
+        self.z_max = float(self.z_values[-1])
+        self.metadata = dict(metadata or {})
 
-    if scalar_input:
-        S2 = S2.item()
-        if include_s1:
-            S1 = S1.item()
-    if include_s1:
-        return S1, S2
-    return S2
+    def __call__(self, z_nm):
+        z = np.asarray(z_nm, dtype=float)
 
+        if z.ndim == 0:
+            return self._interp_single(float(z))
 
-def mie_S1_S2_from_coefficients(a_n, b_n, mu):
-    """Return the standard pair of Mie scattering amplitudes (S1, S2)."""
-    return mie_scattering_amplitudes_from_coefficients(
-        a_n,
-        b_n,
-        mu,
-        include_s1=True,
-    )
+        z_flat = z.ravel()
+        out = np.empty((z_flat.size,) + self.ipsf_stack.shape[1:], dtype=np.complex128)
+        for idx, z_val in enumerate(z_flat):
+            out[idx] = self._interp_single(float(z_val))
 
+        new_shape = z.shape + self.ipsf_stack.shape[1:]
+        return out.reshape(new_shape)
 
-def mie_S2_from_coefficients(a_n, b_n, mu):
-    """Return S2 only for the scalar coherent backend."""
-    return mie_scattering_amplitudes_from_coefficients(
-        a_n,
-        b_n,
-        mu,
-        include_s1=False,
-    )
+    def _interp_single(self, z_val):
+        return _interpolate_z_stack_single(
+            self.z_values,
+            self.ipsf_stack,
+            self.z_min,
+            self.z_max,
+            z_val,
+        )
 
 
 def compute_complex_psf_stack(params, particle_diameter_nm, particle_refractive_index, z_values_nm):
@@ -263,9 +226,11 @@ def compute_complex_psf_stack(params, particle_diameter_nm, particle_refractive_
     enforce **radial symmetry** of each slice by ring-averaging the complex field
     with **continuous radial interpolation**.
 
-    Polarization and explicit vector-field components are not tracked in this
-    backend. The returned field is a scalar complex scattered-field proxy shared
-    by the pluggable imaging models.
+    This default backend is scalar.
+    Polarization and explicit vector-field components are tracked when the
+    ``optical_field_backend`` selects vectorial Debye.
+    The returned field in this backend is a scalar complex scattered-field proxy
+    shared by the pluggable imaging models.
 
     Fundamental architectural decisions:
         - The z-grid is provided explicitly via `z_values_nm` and is specific to
@@ -301,15 +266,151 @@ def compute_complex_psf_stack(params, particle_diameter_nm, particle_refractive_
             type-specific range derived from the realized trajectories.
 
     Returns:
-        ComplexPSFZInterpolator: An interpolator object that can return the
-            complex 2D PSF for a given z-position. Outside the precomputed
-            range, it uses the nearest available slice rather than returning a
-            zero field.
+        ComplexPSFZInterpolator or VectorialPSFZInterpolator: An interpolator
+        that can return the complex PSF for a given z-position. For
+        vector-aware coherent full-vector paths, this is a 3-component vector interpolator
+        with shape ``(3, H, W)``; otherwise a 2D scalar interpolator is
+        returned.
     """
     # --- Validate and store z-grid ---
     z_values = np.asarray(z_values_nm, dtype=float)
     if z_values.ndim != 1 or z_values.size == 0:
         raise ValueError("z_values_nm must be a non-empty 1D array.")
+    backend = str(params.get("optical_field_backend", "vectorial_debye")).strip().lower()
+    if backend == "vectorial_debye":
+        vectorial = compute_vectorial_debye_psf(
+            params,
+            z_values,
+            particle_diameter_nm=particle_diameter_nm,
+            particle_refractive_index=particle_refractive_index,
+        )
+        dpc_channel_model = str(
+            params.get("dpc_channel_model", "vectorial_debye_asymmetric_illumination")
+        ).strip().lower()
+        active_modality = str(params.get("imaging_model", "")).strip().lower()
+        use_full_vectorial_dpc = active_modality in {
+            "dpc",
+            "differential_phase_contrast",
+        } and dpc_channel_model in {
+            "vectorial_debye_asymmetric_illumination",
+            "two_axis_vectorial_debye_asymmetric_illumination",
+            "vectorial",
+        }
+        detection_mode = str(params.get("vectorial_detection_mode", "incoherent_sum")).strip().lower()
+        use_full_vectorial_coherent = (
+            detection_mode == "full_vector"
+            and active_modality in COHERENT_REFERENCE_MODALITIES
+        )
+        if use_full_vectorial_coherent:
+            polarization_model = str(params.get("polarization_model", "linear_x")).strip().lower()
+            if polarization_model == "scalar":
+                polarization_model = "linear_x"
+            if polarization_model == "unpolarized":
+                raise ValueError(
+                    "polarization_model='unpolarized' is an incoherent average and "
+                    "cannot be used with vectorial_detection_mode='full_vector' for "
+                    f"coherent imaging_model={active_modality!r}. Use linear_x, "
+                    "linear_y, an analyzer mode, or optical_field_backend='scalar_paraxial'."
+                )
+        if use_full_vectorial_dpc or use_full_vectorial_coherent:
+            vector_stack = np.stack(
+                [vectorial["Ex"], vectorial["Ey"], vectorial["Ez"]],
+                axis=1,
+            )
+            metadata = dict(vectorial.get("metadata", {}))
+            metadata.update(
+                {
+                    "scalar_compatibility_reduction": "full_vector_field",
+                    "field_representation": "vectorial_coherent_field",
+                    "vectorial_detection_requested": detection_mode,
+                    "vectorial_field_reason": (
+                        "dpc_vectorial_channel"
+                        if use_full_vectorial_dpc
+                        else "coherent_full_vector_detection"
+                    ),
+                    "particle_diameter_nm": float(particle_diameter_nm),
+                    "particle_refractive_index": {
+                        "real": float(complex(particle_refractive_index).real),
+                        "imag": float(complex(particle_refractive_index).imag),
+                    },
+                }
+            )
+            return VectorialPSFZInterpolator(z_values, vector_stack, metadata=metadata)
+
+        if detection_mode == "analyzer_x":
+            scalar_stack = vectorial["Ex"]
+            reduction = "analyzer_x_component"
+            field_representation = "scalar_coherent_vector_component"
+        elif detection_mode == "analyzer_y":
+            scalar_stack = vectorial["Ey"]
+            reduction = "analyzer_y_component"
+            field_representation = "scalar_coherent_vector_component"
+        elif detection_mode == "unpolarized":
+            if active_modality in COHERENT_REFERENCE_MODALITIES:
+                raise ValueError(
+                    "vectorial_detection_mode='unpolarized' produces an incoherent "
+                    "intensity proxy and cannot be used as a coherent complex field "
+                    f"for imaging_model={active_modality!r}. Use analyzer_x, "
+                    "analyzer_y, full_vector, or "
+                    "the scalar_paraxial backend."
+                )
+            intensity = (
+                np.abs(vectorial["Ex"]) ** 2
+                + np.abs(vectorial["Ey"]) ** 2
+                + np.abs(vectorial["Ez"]) ** 2
+            )
+            scalar_stack = np.sqrt(np.maximum(intensity, 0.0)).astype(np.complex128)
+            reduction = "sqrt_unpolarized_incoherent_vector_intensity_scalar_proxy"
+            field_representation = "incoherent_intensity_proxy"
+        elif detection_mode == "incoherent_sum":
+            if active_modality in COHERENT_REFERENCE_MODALITIES:
+                raise ValueError(
+                    "vectorial_detection_mode='incoherent_sum' produces an "
+                    "incoherent intensity proxy and cannot be used as a coherent "
+                    f"complex field for imaging_model={active_modality!r}. Use "
+                    "analyzer_x, analyzer_y, full_vector, or the scalar_paraxial "
+                    "backend."
+                )
+            intensity = (
+                np.abs(vectorial["Ex"]) ** 2
+                + np.abs(vectorial["Ey"]) ** 2
+                + np.abs(vectorial["Ez"]) ** 2
+            )
+            scalar_stack = np.sqrt(np.maximum(intensity, 0.0)).astype(np.complex128)
+            reduction = "sqrt_incoherent_vector_intensity_scalar_proxy"
+            field_representation = "incoherent_intensity_proxy"
+        elif detection_mode == "full_vector":
+            raise ValueError(
+                "vectorial_detection_mode='full_vector' requires a vector-aware "
+                f"coherent imaging model; got imaging_model={active_modality!r}. "
+                "Use analyzer_x/analyzer_y for a coherent scalar projection or "
+                "optical_field_backend='scalar_paraxial'."
+            )
+        else:
+            raise ValueError(
+                "vectorial_detection_mode must be 'analyzer_x', 'analyzer_y', "
+                "'incoherent_sum', 'unpolarized', or 'full_vector'; "
+                f"got {detection_mode!r}."
+            )
+        metadata = dict(vectorial.get("metadata", {}))
+        metadata.update(
+            {
+                "scalar_compatibility_reduction": reduction,
+                "field_representation": field_representation,
+                "vectorial_detection_requested": detection_mode,
+                "particle_diameter_nm": float(particle_diameter_nm),
+                "particle_refractive_index": {
+                    "real": float(complex(particle_refractive_index).real),
+                    "imag": float(complex(particle_refractive_index).imag),
+                },
+            }
+        )
+        return ComplexPSFZInterpolator(z_values, scalar_stack, metadata=metadata)
+    if backend != "scalar_paraxial":
+        raise ValueError(
+            "optical_field_backend must be 'scalar_paraxial' or 'vectorial_debye'; "
+            f"got {backend!r}."
+        )
     z_values_sorted = np.sort(z_values)
     if not np.allclose(z_values_sorted, z_values):
         # Enforce monotonic increasing order to keep interpolation logic simple.
@@ -337,9 +438,10 @@ def compute_complex_psf_stack(params, particle_diameter_nm, particle_refractive_
     if particle_diameter_nm <= 0.0:
         raise ValueError("particle_diameter_nm must be positive.")
 
-    dk = (2 * np.pi / psf_size_nm) * os_factor
-    kx = np.arange(-pupil_samples // 2, pupil_samples // 2) * dk
-    ky = np.arange(-pupil_samples // 2, pupil_samples // 2) * dk
+    canvas_pitch_nm = float(params["pixel_size_nm"]) / float(os_factor)
+    dk = 2 * np.pi * np.fft.fftfreq(int(pupil_samples), d=canvas_pitch_nm)
+    kx = np.fft.fftshift(dk)
+    ky = np.fft.fftshift(dk)
     Kx, Ky = np.meshgrid(kx, ky)
     K_sq = Kx**2 + Ky**2
 
@@ -371,6 +473,12 @@ def compute_complex_psf_stack(params, particle_diameter_nm, particle_refractive_
     rho = sin_theta / max_sin_theta
     zernike_spherical = np.sqrt(5) * (6 * rho**4 - 6 * rho**2 + 1)
     spherical_phase = params["spherical_aberration_strength"] * zernike_spherical * 2 * np.pi
+    coverslip_phase, coverslip_metadata = compute_coverslip_aberration_phase(
+        params,
+        sin_theta,
+        aperture_mask > 0,
+        wavelength_nm=float(params["wavelength_nm"]),
+    )
     apodization = np.exp(-params["apodization_factor"] * (rho**2))
 
     # --- Random aberration phase (static across the entire Z-stack) ---
@@ -418,8 +526,8 @@ def compute_complex_psf_stack(params, particle_diameter_nm, particle_refractive_
     for i, z in enumerate(tqdm(z_values, disable=not logger.isEnabledFor(logging.INFO))):
         defocus_phase = k_medium * z * cos_theta
 
-        # Total phase in the pupil: defocus + spherical aberration + static random aberration.
-        aberration_phase = defocus_phase + spherical_phase + random_phase
+        # Total phase in the pupil: defocus + configured aberration terms.
+        aberration_phase = defocus_phase + spherical_phase + coverslip_phase + random_phase
 
         pupil_function = (
             -1j * wavelength_medium_nm
@@ -460,7 +568,15 @@ def compute_complex_psf_stack(params, particle_diameter_nm, particle_refractive_
 
         ipsf_stack_complex[i, :, :] = asf_radial
 
-    interpolator = ComplexPSFZInterpolator(z_values, ipsf_stack_complex)
+    interpolator = ComplexPSFZInterpolator(
+        z_values,
+        ipsf_stack_complex,
+        metadata={
+            "backend": "scalar_paraxial",
+            "scalar_compatibility_reduction": "native_scalar_paraxial",
+            **coverslip_metadata,
+        },
+    )
 
     logger.info("Complex PSF stack computation complete.")
     return interpolator

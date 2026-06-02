@@ -6,16 +6,11 @@ import numpy as np
 import cv2
 from tqdm import tqdm
 
-RAW_BACKGROUND_SUBTRACTION_METHODS = {
-    "none",
-    "raw",
-    "raw_signal",
-    "off",
-    "disabled",
-    "no_subtraction",
-}
-VIDEO_BACKGROUND_SUBTRACTION_METHODS = {"video_median"}
-REFERENCE_BACKGROUND_SUBTRACTION_METHODS = {"reference_frame"}
+from shared_constants import (
+    RAW_BACKGROUND_SUBTRACTION_METHODS,
+    REFERENCE_BACKGROUND_SUBTRACTION_METHODS,
+    VIDEO_BACKGROUND_SUBTRACTION_METHODS,
+)
 
 logger = logging.getLogger(__name__)
 _RELATIVE_REFERENCE_FLOOR = 1e-9
@@ -45,7 +40,7 @@ def _uses_relative_reference_contrast(params) -> bool:
     if params is None:
         params = {}
     imaging_model_name = str(params.get("imaging_model", "bright_field")).strip().lower()
-    from imaging_model import modality_uses_relative_reference_contrast
+    from imaging_models import modality_uses_relative_reference_contrast
 
     return modality_uses_relative_reference_contrast(imaging_model_name)
 
@@ -54,7 +49,7 @@ def _uses_phase_contrast_units(params) -> bool:
     if params is None:
         params = {}
     imaging_model_name = str(params.get("imaging_model", "bright_field")).strip().lower()
-    from imaging_model import get_imaging_model_class
+    from imaging_models import get_imaging_model_class
 
     return getattr(get_imaging_model_class(imaging_model_name), "output_type", "intensity") == "phase"
 

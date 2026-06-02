@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+import json
 from typing import Any
 
 import numpy as np
+
+from shared_constants import NONNEGATIVE_MATERIAL_PROPERTY_FIELDS, SE3_STATE_AXES
 
 
 @dataclass(frozen=True)
@@ -17,7 +20,11 @@ class ParticleComponentSpec:
     material: str | None = None
     refractive_index: complex | None = None
     signal_multiplier: float = 1.0
+    source_multiplier: float = 1.0
     material_properties: dict[str, Any] | None = None
+
+
+_NONNEGATIVE_MATERIAL_FIELDS = NONNEGATIVE_MATERIAL_PROPERTY_FIELDS
 
 
 @dataclass(frozen=True)
@@ -42,6 +49,7 @@ class ParticleSpec:
     motion: ParticleMotionSpec
     components: tuple[ParticleComponentSpec, ...]
     signal_multiplier: float = 1.0
+    source_multiplier: float = 1.0
     symmetry_class: str | None = None
     continuous_rotational_symmetry_dim: int | None = None
     singular_rotation_axes_body: tuple[str, ...] = ()
@@ -65,8 +73,14 @@ def _coerce_optional_complex(value: Any) -> complex | None:
         return None
     if isinstance(value, dict):
         if "real" in value or "imag" in value:
-            return complex(float(value.get("real", 0.0)), float(value.get("imag", 0.0)))
-    return complex(value)
+            out = complex(float(value.get("real", 0.0)), float(value.get("imag", 0.0)))
+        else:
+            out = complex(value)
+    else:
+        out = complex(value)
+    if not np.isfinite(out.real) or not np.isfinite(out.imag):
+        raise ValueError(f"refractive_index must have finite real/imag parts; got {value!r}.")
+    return out
 
 
 def _jsonable_complex(value: complex | None) -> Any:
@@ -79,7 +93,53 @@ def _coerce_vector3_nm(value: Any, *, field_name: str) -> tuple[float, float, fl
     arr = np.asarray(value, dtype=float)
     if arr.shape != (3,):
         raise ValueError(f"{field_name} must be a length-3 [x, y, z] vector in nm.")
+    if not np.all(np.isfinite(arr)):
+        raise ValueError(f"{field_name} must contain only finite values in nm.")
     return (float(arr[0]), float(arr[1]), float(arr[2]))
+
+
+def _validate_material_properties(value: Any, *, field_name: str) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise TypeError(f"{field_name} must be None or a material-properties dictionary.")
+    out = deepcopy(value)
+    for key in _NONNEGATIVE_MATERIAL_FIELDS:
+        if key not in out or out[key] is None:
+            continue
+        numeric = float(out[key])
+        if not np.isfinite(numeric) or numeric < 0.0:
+            raise ValueError(f"{field_name}.{key} must be finite and non-negative; got {out[key]!r}.")
+        out[key] = numeric
+    for key in ("emission_peak_nm", "excitation_peak_nm"):
+        if key not in out or out[key] is None:
+            continue
+        numeric = float(out[key])
+        if not np.isfinite(numeric) or numeric <= 0.0:
+            raise ValueError(f"{field_name}.{key} must be finite and positive; got {out[key]!r}.")
+        out[key] = numeric
+    if "n_complex_visible" in out and out["n_complex_visible"] is not None:
+        n_value = _coerce_optional_complex(out["n_complex_visible"])
+        out["n_complex_visible"] = {"real": float(n_value.real), "imag": float(n_value.imag)}
+    return out
+
+
+def _fingerprint_json_safe(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {str(k): _fingerprint_json_safe(v) for k, v in sorted(value.items(), key=lambda item: str(item[0]))}
+    if isinstance(value, (list, tuple)):
+        return [_fingerprint_json_safe(v) for v in value]
+    if isinstance(value, np.ndarray):
+        return _fingerprint_json_safe(value.tolist())
+    if isinstance(value, np.generic):
+        return _fingerprint_json_safe(value.item())
+    if isinstance(value, complex):
+        return {"real": float(value.real), "imag": float(value.imag)}
+    return value
+
+
+def _particles_fingerprint(particles: Any) -> str:
+    return json.dumps(_fingerprint_json_safe(particles), sort_keys=True, separators=(",", ":"))
 
 
 def _build_component(
@@ -126,6 +186,17 @@ def _build_component(
             f"Particle {particle_index} component {component_index} signal_multiplier "
             f"must be a finite non-negative number; got {signal_multiplier!r}."
         )
+    source_multiplier = float(
+        raw_component.get(
+            "source_multiplier",
+            raw_component.get("material_source_multiplier", 1.0),
+        )
+    )
+    if not np.isfinite(source_multiplier) or source_multiplier < 0.0:
+        raise ValueError(
+            f"Particle {particle_index} component {component_index} source_multiplier "
+            f"must be a finite non-negative number; got {source_multiplier!r}."
+        )
 
     return ParticleComponentSpec(
         shape=shape,
@@ -137,7 +208,14 @@ def _build_component(
         material=raw_component["material"],
         refractive_index=_coerce_optional_complex(raw_component["refractive_index"]),
         signal_multiplier=signal_multiplier,
-        material_properties=deepcopy(raw_component["material_properties"]),
+        source_multiplier=source_multiplier,
+        material_properties=_validate_material_properties(
+            raw_component["material_properties"],
+            field_name=(
+                f"PARAMS['particles'][{particle_index}]['components']"
+                f"[{component_index}].material_properties"
+            ),
+        ),
     )
 
 
@@ -165,7 +243,7 @@ def _coerce_singular_rotation_axes(value: Any, *, particle_index: int) -> tuple[
         axes = (value,)
     else:
         axes = tuple(str(axis) for axis in value)
-    allowed = {"x", "y", "z", "omega_x", "omega_y", "omega_z"}
+    allowed = set(SE3_STATE_AXES)
     invalid = [axis for axis in axes if axis not in allowed]
     if invalid:
         raise ValueError(
@@ -236,6 +314,17 @@ def normalize_particle_specs(params: dict, *, mutate: bool = True) -> list[Parti
                 f"Particle {p_idx} signal_multiplier must be a finite non-negative "
                 f"number; got {particle_signal_multiplier!r}."
             )
+        particle_source_multiplier = float(
+            raw_particle.get(
+                "source_multiplier",
+                raw_particle.get("material_source_multiplier", 1.0),
+            )
+        )
+        if not np.isfinite(particle_source_multiplier) or particle_source_multiplier < 0.0:
+            raise ValueError(
+                f"Particle {p_idx} source_multiplier must be a finite non-negative "
+                f"number; got {particle_source_multiplier!r}."
+            )
 
         symmetry_class_raw = raw_particle.get("symmetry_class")
         symmetry_class = None if symmetry_class_raw is None else str(symmetry_class_raw)
@@ -271,6 +360,7 @@ def normalize_particle_specs(params: dict, *, mutate: bool = True) -> list[Parti
                 ),
                 components=tuple(components),
                 signal_multiplier=particle_signal_multiplier,
+                source_multiplier=particle_source_multiplier,
                 symmetry_class=symmetry_class,
                 continuous_rotational_symmetry_dim=continuous_rotational_symmetry_dim,
                 singular_rotation_axes_body=singular_rotation_axes_body,
@@ -278,8 +368,11 @@ def normalize_particle_specs(params: dict, *, mutate: bool = True) -> list[Parti
         )
 
     if mutate:
+        normalized_particles = particle_specs_to_public_dicts(specs)
+        params["particles"] = normalized_particles
         params["_particle_specs"] = specs
-        params["_resolved_particles"] = particle_specs_to_public_dicts(specs)
+        params["_particle_specs_fingerprint"] = _particles_fingerprint(normalized_particles)
+        params["_resolved_particles"] = normalized_particles
     return specs
 
 
@@ -295,6 +388,7 @@ def particle_specs_to_public_dicts(specs: list[ParticleSpec]) -> list[dict[str, 
                 ),
             },
             "signal_multiplier": float(spec.signal_multiplier),
+            "source_multiplier": float(spec.source_multiplier),
             "components": [
                 {
                     "shape": component.shape,
@@ -303,6 +397,7 @@ def particle_specs_to_public_dicts(specs: list[ParticleSpec]) -> list[dict[str, 
                     "material": component.material,
                     "refractive_index": _jsonable_complex(component.refractive_index),
                     "signal_multiplier": float(component.signal_multiplier),
+                    "source_multiplier": float(component.source_multiplier),
                     "material_properties": deepcopy(component.material_properties),
                 }
                 for component in spec.components
@@ -321,8 +416,11 @@ def particle_specs_to_public_dicts(specs: list[ParticleSpec]) -> list[dict[str, 
 
 
 def get_particle_specs(params: dict) -> list[ParticleSpec]:
+    particles = params.get("particles", None)
+    current_fingerprint = _particles_fingerprint(particles)
     cached = params.get("_particle_specs", None)
-    if isinstance(cached, list) and cached:
+    cached_fingerprint = params.get("_particle_specs_fingerprint", None)
+    if isinstance(cached, list) and cached and cached_fingerprint == current_fingerprint:
         return cached
     return normalize_particle_specs(params, mutate=True)
 

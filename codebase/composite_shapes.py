@@ -20,6 +20,7 @@ def component(
     material: str | None = None,
     refractive_index: complex | dict[str, float] | None = None,
     signal_multiplier: float = 1.0,
+    source_multiplier: float = 1.0,
     material_properties: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return one spherical render component with a body-frame offset."""
@@ -30,6 +31,7 @@ def component(
         "material": material,
         "refractive_index": refractive_index,
         "signal_multiplier": float(signal_multiplier),
+        "source_multiplier": float(source_multiplier),
         "material_properties": material_properties,
     }
 
@@ -41,6 +43,7 @@ def dimer(
     material: str | None = None,
     refractive_index: complex | dict[str, float] | None = None,
     signal_multiplier: float = 1.0,
+    source_multiplier: float = 1.0,
 ) -> list[dict[str, Any]]:
     """Return two equal spheres centered on the x axis."""
     half = 0.5 * float(separation_nm)
@@ -51,6 +54,7 @@ def dimer(
             material=material,
             refractive_index=refractive_index,
             signal_multiplier=signal_multiplier,
+            source_multiplier=source_multiplier,
         ),
         component(
             [half, 0.0, 0.0],
@@ -58,6 +62,7 @@ def dimer(
             material=material,
             refractive_index=refractive_index,
             signal_multiplier=signal_multiplier,
+            source_multiplier=source_multiplier,
         ),
     ]
 
@@ -69,6 +74,7 @@ def linear_trimer(
     material: str | None = None,
     refractive_index: complex | dict[str, float] | None = None,
     signal_multiplier: float = 1.0,
+    source_multiplier: float = 1.0,
 ) -> list[dict[str, Any]]:
     """Return three equal spheres in a straight x-axis chain."""
     sep = float(separation_nm)
@@ -79,6 +85,7 @@ def linear_trimer(
             material=material,
             refractive_index=refractive_index,
             signal_multiplier=signal_multiplier,
+            source_multiplier=source_multiplier,
         ),
         component(
             [0.0, 0.0, 0.0],
@@ -86,6 +93,7 @@ def linear_trimer(
             material=material,
             refractive_index=refractive_index,
             signal_multiplier=signal_multiplier,
+            source_multiplier=source_multiplier,
         ),
         component(
             [sep, 0.0, 0.0],
@@ -93,6 +101,7 @@ def linear_trimer(
             material=material,
             refractive_index=refractive_index,
             signal_multiplier=signal_multiplier,
+            source_multiplier=source_multiplier,
         ),
     ]
 
@@ -105,6 +114,7 @@ def rod_stack(
     material: str | None = None,
     refractive_index: complex | dict[str, float] | None = None,
     signal_multiplier: float = 1.0,
+    source_multiplier: float = 1.0,
 ) -> list[dict[str, Any]]:
     """Return ``count`` equal spheres in an x-axis stack."""
     count = int(count)
@@ -118,6 +128,7 @@ def rod_stack(
             material=material,
             refractive_index=refractive_index,
             signal_multiplier=signal_multiplier,
+            source_multiplier=source_multiplier,
         )
         for i in range(count)
     ]
@@ -131,6 +142,7 @@ def bent_trimer(
     material: str | None = None,
     refractive_index: complex | dict[str, float] | None = None,
     signal_multiplier: float = 1.0,
+    source_multiplier: float = 1.0,
 ) -> list[dict[str, Any]]:
     """Return a three-sphere bent chain with the bend centered on the origin."""
     theta = math.radians(float(bend_angle_deg))
@@ -143,6 +155,7 @@ def bent_trimer(
             material=material,
             refractive_index=refractive_index,
             signal_multiplier=signal_multiplier,
+            source_multiplier=source_multiplier,
         ),
         component(
             [r * math.cos(half), r * math.sin(half), 0.0],
@@ -150,6 +163,7 @@ def bent_trimer(
             material=material,
             refractive_index=refractive_index,
             signal_multiplier=signal_multiplier,
+            source_multiplier=source_multiplier,
         ),
         component(
             [r * math.cos(half), -r * math.sin(half), 0.0],
@@ -157,6 +171,7 @@ def bent_trimer(
             material=material,
             refractive_index=refractive_index,
             signal_multiplier=signal_multiplier,
+            source_multiplier=source_multiplier,
         ),
     ]
 
@@ -168,6 +183,7 @@ def particle(
     hydrodynamic_diameter_nm: float,
     initial_position_nm: list[float] | None = None,
     signal_multiplier: float = 1.0,
+    source_multiplier: float = 1.0,
     symmetry_class: str | None = None,
     continuous_rotational_symmetry_dim: int | None = None,
     singular_rotation_axes_body: list[str] | None = None,
@@ -180,6 +196,7 @@ def particle(
             "initial_position_nm": initial_position_nm,
         },
         "signal_multiplier": float(signal_multiplier),
+        "source_multiplier": float(source_multiplier),
         "components": components,
     }
     if symmetry_class is not None:

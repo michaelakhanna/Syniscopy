@@ -24,6 +24,9 @@ import re
 from typing import Any, Mapping
 
 import numpy as np
+from json_utils import json_safe_with_nonfinite_tags
+from shared_constants import MATCHED_INFORMATION_MASK_ROLES
+from packet_validation import _validate_profile_card_contract
 
 
 _SAFE_NAME_RE = re.compile(r"[^A-Za-z0-9_.-]+")
@@ -34,26 +37,39 @@ def _safe_key(name: str) -> str:
     return out.strip("_") or "unnamed"
 
 
-def _json_safe(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return {str(k): _json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe(v) for v in value]
-    if isinstance(value, complex):
-        return {
-            "real": _json_safe(float(value.real)),
-            "imag": _json_safe(float(value.imag)),
-        }
-    if hasattr(value, "tolist"):
-        return _json_safe(value.tolist())
-    if hasattr(value, "item"):
-        try:
-            return _json_safe(value.item())
-        except (TypeError, ValueError, OverflowError):
-            return value
-    if isinstance(value, float):
-        return value if np.isfinite(value) else None
-    return value
+def _validated_image_array(label: str, image: Any) -> np.ndarray:
+    arr = np.asarray(image)
+    if arr.ndim < 2:
+        raise ValueError(f"Image for modality {label!r} must be at least 2D; got {arr.shape}.")
+    if arr.dtype == object or not np.issubdtype(arr.dtype, np.number):
+        raise ValueError(f"Image for modality {label!r} must have a numeric non-object dtype; got {arr.dtype}.")
+    if np.iscomplexobj(arr):
+        raise ValueError(f"Image for modality {label!r} must be real-valued, not complex.")
+    arr = np.asarray(arr, dtype=float)
+    if np.any(~np.isfinite(arr)):
+        raise ValueError(f"Image for modality {label!r} must contain only finite values.")
+    return arr
+
+
+def _validated_mask_array(name: str, mask: Any, image_shape: tuple[int, ...]) -> np.ndarray:
+    arr = np.asarray(mask)
+    if arr.shape != image_shape:
+        raise ValueError(f"Mask {name!r} has shape {arr.shape}, expected {image_shape}.")
+    if arr.dtype == object or not (np.issubdtype(arr.dtype, np.bool_) or np.issubdtype(arr.dtype, np.number)):
+        raise ValueError(f"Mask {name!r} must have boolean or numeric dtype; got {arr.dtype}.")
+    if np.iscomplexobj(arr):
+        raise ValueError(f"Mask {name!r} must be real-valued, not complex.")
+    numeric = np.asarray(arr)
+    if np.any(~np.isfinite(numeric.astype(float, copy=False))):
+        raise ValueError(f"Mask {name!r} must contain only finite values.")
+    values = np.unique(numeric)
+    if "loss_weight" in name:
+        if np.any(values < 0) or np.any(values > 255):
+            raise ValueError(f"Loss-weight mask {name!r} must lie in [0, 255].")
+        return numeric.astype(np.uint8, copy=False)
+    if not np.all(np.isin(values, [0, 1, 255, False, True])):
+        raise ValueError(f"Mask {name!r} must be binary/bool with values 0/1 or 0/255; got values {values[:8]!r}.")
+    return np.where(numeric.astype(float, copy=False) > 0.0, 255, 0).astype(np.uint8)
 
 
 def _safe_key_map(names: list[str], *, kind: str) -> dict[str, str]:
@@ -81,11 +97,116 @@ def _mask_names_cover_modalities(mask_names: set[str], modalities: set[str]) -> 
     return covered
 
 
+_MATCHED_INFORMATION_MASK_ROLES = MATCHED_INFORMATION_MASK_ROLES
+
+
+def _required_mask_roles_present(mask_names: set[str], modality: str) -> set[str]:
+    roles = set()
+    prefixes = (f"{modality}__", f"{_safe_key(modality)}__")
+    for name in mask_names:
+        for prefix in prefixes:
+            if not name.startswith(prefix):
+                continue
+            remainder = name[len(prefix):]
+            for role in _MATCHED_INFORMATION_MASK_ROLES:
+                if remainder == role or remainder.startswith(f"{role}__"):
+                    roles.add(role)
+    return roles
+
+
+def _mask_role_and_suffix(name: str, modality: str) -> tuple[str, str] | None:
+    prefixes = (f"{modality}__", f"{_safe_key(modality)}__")
+    for prefix in prefixes:
+        if not name.startswith(prefix):
+            continue
+        remainder = name[len(prefix):]
+        for role in _MATCHED_INFORMATION_MASK_ROLES:
+            if remainder == role:
+                return role, ""
+            if remainder.startswith(f"{role}__"):
+                return role, remainder[len(role) + 2:]
+    return None
+
+
+def _validate_matched_mask_semantics(
+    mask_arrays: Mapping[str, np.ndarray],
+    modalities: set[str],
+) -> None:
+    """Validate semantic invariants across per-particle supervision sidecars."""
+    for modality in sorted(modalities):
+        grouped: dict[str, dict[str, np.ndarray]] = {}
+        for name, arr in mask_arrays.items():
+            parsed = _mask_role_and_suffix(str(name), modality)
+            if parsed is None:
+                continue
+            role, suffix = parsed
+            grouped.setdefault(suffix, {})[role] = np.asarray(arr)
+        for suffix, roles in grouped.items():
+            missing = set(_MATCHED_INFORMATION_MASK_ROLES) - set(roles)
+            if missing:
+                continue
+            label = f"{modality}::{suffix or 'default'}"
+            geometry = np.asarray(roles["mask_geometry"]) > 0
+            supported = np.asarray(roles["mask_supported"]) > 0
+            ignored = np.asarray(roles["ignore_mask"]) > 0
+            loss_weight = np.asarray(roles["loss_weight"], dtype=float)
+            if np.any(supported & ~geometry):
+                raise ValueError(
+                    f"Matched packet masks for {label} violate mask_supported subset mask_geometry."
+                )
+            if np.any(ignored & ~geometry):
+                raise ValueError(
+                    f"Matched packet masks for {label} violate ignore_mask subset mask_geometry."
+                )
+            expected_ignore = geometry & ~supported
+            if not np.array_equal(ignored, expected_ignore):
+                raise ValueError(
+                    f"Matched packet masks for {label} violate ignore_mask == mask_geometry & ~mask_supported."
+                )
+            if np.any(loss_weight[~supported] > 0.0):
+                raise ValueError(
+                    f"Matched packet masks for {label} have positive loss_weight outside mask_supported."
+                )
+            if np.any(supported) and not np.any(loss_weight[supported] > 0.0):
+                raise ValueError(
+                    f"Matched packet masks for {label} have supported pixels but no positive loss_weight."
+                )
+
+
+def _validate_modality_profile_cards(
+    packet_metadata: Mapping[str, Any],
+    modalities: set[str],
+) -> None:
+    modality_metadata = packet_metadata.get("modality_metadata")
+    if not isinstance(modality_metadata, Mapping):
+        raise ValueError(
+            "Matched-modality information packets require metadata['modality_metadata']."
+        )
+    missing_records = sorted(modalities - {str(key) for key in modality_metadata})
+    if missing_records:
+        raise ValueError(
+            "Matched-modality information packets require modality metadata for "
+            f"every modality; missing {missing_records!r}."
+        )
+    for modality in sorted(modalities):
+        record = modality_metadata.get(modality)
+        if not isinstance(record, Mapping):
+            raise ValueError(f"metadata['modality_metadata'][{modality!r}] must be a mapping.")
+        card = record.get("modality_profile_card")
+        if not isinstance(card, Mapping):
+            raise ValueError(f"Modality {modality!r} is missing modality_profile_card metadata.")
+        _validate_profile_card_contract(modality, card)
+
+
 def build_counterfactual_modality_packet(
     *,
     latent_state: Mapping[str, Any],
     images_by_modality: Mapping[str, np.ndarray],
     masks: Mapping[str, np.ndarray] | None = None,
+    raw_images_by_modality: Mapping[str, np.ndarray] | None = None,
+    rendered_signal_frame_by_modality: Mapping[str, np.ndarray] | None = None,
+    reference_frame_by_modality: Mapping[str, np.ndarray] | None = None,
+    noise_variance_by_modality: Mapping[str, np.ndarray] | None = None,
     fisher_by_modality: Mapping[str, np.ndarray] | None = None,
     crlb_by_modality: Mapping[str, Mapping[str, Any]] | None = None,
     metadata: Mapping[str, Any] | None = None,
@@ -123,7 +244,7 @@ def build_counterfactual_modality_packet(
         raise ValueError("images_by_modality must contain at least two modalities.")
 
     images = {
-        str(modality): np.asarray(image)
+        str(modality): _validated_image_array(str(modality), image)
         for modality, image in images_by_modality.items()
     }
     shapes = {image.shape for image in images.values()}
@@ -133,16 +254,46 @@ def build_counterfactual_modality_packet(
             f"got {sorted(shapes)!r}."
         )
 
+    image_shape = next(iter(shapes))
     mask_arrays = {
-        str(name): np.asarray(mask)
+        str(name): _validated_mask_array(str(name), mask, image_shape)
         for name, mask in (masks or {}).items()
     }
-    image_shape = next(iter(shapes))
-    for name, mask in mask_arrays.items():
-        if mask.shape != image_shape:
-            raise ValueError(
-                f"Mask {name!r} has shape {mask.shape}, expected {image_shape}."
-            )
+    raw_images = {
+        str(modality): _validated_image_array(str(modality), image)
+        for modality, image in (raw_images_by_modality or {}).items()
+    }
+    if raw_images and set(raw_images) != set(images):
+        raise ValueError("raw_images_by_modality must use the same modality labels as images_by_modality.")
+    rendered_signal_frames = {
+        str(modality): _validated_image_array(str(modality), image)
+        for modality, image in (rendered_signal_frame_by_modality or {}).items()
+    }
+    if rendered_signal_frames and set(rendered_signal_frames) != set(images):
+        raise ValueError("rendered_signal_frame_by_modality must use the same modality labels as images_by_modality.")
+    reference_frames = {
+        str(modality): _validated_image_array(str(modality), image)
+        for modality, image in (reference_frame_by_modality or {}).items()
+    }
+    if reference_frames and set(reference_frames) != set(images):
+        raise ValueError("reference_frame_by_modality must use the same modality labels as images_by_modality.")
+    noise_variance_maps = {
+        str(modality): _validated_image_array(str(modality), image)
+        for modality, image in (noise_variance_by_modality or {}).items()
+    }
+    if noise_variance_maps and set(noise_variance_maps) != set(images):
+        raise ValueError("noise_variance_by_modality must use the same modality labels as images_by_modality.")
+    for modality, arr in rendered_signal_frames.items():
+        if arr.shape != image_shape:
+            raise ValueError(f"rendered_signal_frame for modality {modality!r} has shape {arr.shape}, expected {image_shape}.")
+    for modality, arr in reference_frames.items():
+        if arr.shape != image_shape:
+            raise ValueError(f"reference_frame for modality {modality!r} has shape {arr.shape}, expected {image_shape}.")
+    for modality, arr in noise_variance_maps.items():
+        if arr.shape != image_shape:
+            raise ValueError(f"noise_variance_map for modality {modality!r} has shape {arr.shape}, expected {image_shape}.")
+        if np.any(arr <= 0.0):
+            raise ValueError(f"noise_variance_map for modality {modality!r} must be positive.")
 
     fisher_arrays = {
         str(modality): np.asarray(fisher, dtype=float)
@@ -193,6 +344,14 @@ def build_counterfactual_modality_packet(
             raise ValueError(
                 "Matched-modality information packets require CRLB metadata for every modality."
             )
+        if set(rendered_signal_frames) != set(images):
+            raise ValueError(
+                "Matched-modality information packets require rendered signal frames for every modality."
+            )
+        if set(noise_variance_maps) != set(images):
+            raise ValueError(
+                "Matched-modality information packets require noise-variance maps for every modality."
+            )
         mask_modalities = _mask_names_cover_modalities(set(mask_arrays), set(images))
         if mask_modalities != set(images):
             missing_masks = sorted(set(images) - mask_modalities)
@@ -200,6 +359,19 @@ def build_counterfactual_modality_packet(
                 "Matched-modality information packets require at least one supervision "
                 f"mask array for every modality; missing {missing_masks!r}."
             )
+        required_roles = set(_MATCHED_INFORMATION_MASK_ROLES)
+        missing_roles = {
+            modality: sorted(required_roles - _required_mask_roles_present(set(mask_arrays), modality))
+            for modality in images
+        }
+        missing_roles = {modality: roles for modality, roles in missing_roles.items() if roles}
+        if missing_roles:
+            raise ValueError(
+                "Matched-modality information packets require mask_geometry, "
+                "mask_supported, ignore_mask, and loss_weight for every modality; "
+                f"missing {missing_roles!r}."
+            )
+        _validate_matched_mask_semantics(mask_arrays, set(images))
 
     packet_extra_metadata = dict(metadata or {})
     if "shared_coordinate_frame" not in packet_extra_metadata:
@@ -207,9 +379,15 @@ def build_counterfactual_modality_packet(
             "Counterfactual packets must include metadata['shared_coordinate_frame'] "
             "describing the common pixel/world/Fisher coordinate frame."
         )
+    if require_information_fields:
+        _validate_modality_profile_cards(packet_extra_metadata, set(images))
 
     packet_metadata = {
-        "schema_version": "syniscopy-counterfactual-modality-packet-v1",
+        "schema_version": (
+            "syniscopy-matched-modality-packet-v1"
+            if require_information_fields
+            else "syniscopy-counterfactual-modality-packet-v1"
+        ),
         "packet_kind": (
             "matched_modality_information_packet"
             if require_information_fields
@@ -219,10 +397,24 @@ def build_counterfactual_modality_packet(
         "image_key_to_modality": _safe_key_map(list(images.keys()), kind="modality"),
         "fisher_key_to_modality": _safe_key_map(list(fisher_arrays.keys()), kind="fisher"),
         "image_shape": list(image_shape),
-        "latent_state": _json_safe(dict(latent_state)),
+        "image_contract": {
+            "images_by_modality": "common_grid_reprojected_or_native_common_grid",
+            "raw_images_by_modality": "optional_native_modality_grid",
+        },
+        "raw_image_shapes": {name: list(arr.shape) for name, arr in raw_images.items()},
+        "rendered_signal_frame_shapes": {
+            name: list(arr.shape) for name, arr in rendered_signal_frames.items()
+        },
+        "reference_frame_shapes": {
+            name: list(arr.shape) for name, arr in reference_frames.items()
+        },
+        "noise_variance_map_shapes": {
+            name: list(arr.shape) for name, arr in noise_variance_maps.items()
+        },
+        "latent_state": json_safe_with_nonfinite_tags(dict(latent_state), flexible_numpy=True),
         "has_fisher_by_modality": bool(fisher_arrays),
-        "crlb_by_modality": _json_safe(crlb_metadata),
-        "metadata": _json_safe(packet_extra_metadata),
+        "crlb_by_modality": json_safe_with_nonfinite_tags(crlb_metadata, flexible_numpy=True),
+        "metadata": json_safe_with_nonfinite_tags(packet_extra_metadata, flexible_numpy=True),
         "masks": list(mask_arrays.keys()),
         "mask_key_to_name": _safe_key_map(list(mask_arrays.keys()), kind="mask"),
     }
@@ -232,6 +424,10 @@ def build_counterfactual_modality_packet(
         "images_by_modality": images,
         "fisher_by_modality": fisher_arrays,
         "masks": mask_arrays,
+        "raw_images_by_modality": raw_images,
+        "rendered_signal_frame_by_modality": rendered_signal_frames,
+        "reference_frame_by_modality": reference_frames,
+        "noise_variance_by_modality": noise_variance_maps,
     }
 
 
@@ -241,6 +437,10 @@ def save_counterfactual_modality_packet(
     latent_state: Mapping[str, Any],
     images_by_modality: Mapping[str, np.ndarray],
     masks: Mapping[str, np.ndarray] | None = None,
+    raw_images_by_modality: Mapping[str, np.ndarray] | None = None,
+    rendered_signal_frame_by_modality: Mapping[str, np.ndarray] | None = None,
+    reference_frame_by_modality: Mapping[str, np.ndarray] | None = None,
+    noise_variance_by_modality: Mapping[str, np.ndarray] | None = None,
     fisher_by_modality: Mapping[str, np.ndarray] | None = None,
     crlb_by_modality: Mapping[str, Mapping[str, Any]] | None = None,
     metadata: Mapping[str, Any] | None = None,
@@ -254,6 +454,10 @@ def save_counterfactual_modality_packet(
         latent_state=latent_state,
         images_by_modality=images_by_modality,
         masks=masks,
+        raw_images_by_modality=raw_images_by_modality,
+        rendered_signal_frame_by_modality=rendered_signal_frame_by_modality,
+        reference_frame_by_modality=reference_frame_by_modality,
+        noise_variance_by_modality=noise_variance_by_modality,
         fisher_by_modality=fisher_by_modality,
         crlb_by_modality=crlb_by_modality,
         metadata=metadata,
@@ -267,6 +471,14 @@ def save_counterfactual_modality_packet(
     }
     for modality, image in packet["images_by_modality"].items():
         arrays[f"image__{_safe_key(modality)}"] = image
+    for modality, image in packet["raw_images_by_modality"].items():
+        arrays[f"raw_image__{_safe_key(modality)}"] = image
+    for modality, image in packet["rendered_signal_frame_by_modality"].items():
+        arrays[f"signal__{_safe_key(modality)}"] = image
+    for modality, image in packet["reference_frame_by_modality"].items():
+        arrays[f"reference__{_safe_key(modality)}"] = image
+    for modality, image in packet["noise_variance_by_modality"].items():
+        arrays[f"noise_variance__{_safe_key(modality)}"] = image
     for modality, fisher in packet["fisher_by_modality"].items():
         arrays[f"fisher__{_safe_key(modality)}"] = fisher
     for name, mask in packet["masks"].items():
@@ -285,29 +497,72 @@ def save_counterfactual_modality_packet(
 
 def load_counterfactual_modality_packet(path: str) -> dict[str, Any]:
     """Load a packet saved by :func:`save_counterfactual_modality_packet`."""
+    def _mapped_arrays(
+        data: Any,
+        *,
+        prefix: str,
+        key_map: Mapping[str, Any],
+        map_name: str,
+    ) -> dict[str, np.ndarray]:
+        out: dict[str, np.ndarray] = {}
+        for key in data.files:
+            if not key.startswith(prefix):
+                continue
+            safe_key = key[len(prefix):]
+            if safe_key not in key_map:
+                raise ValueError(
+                    f"Counterfactual packet metadata missing {map_name}[{safe_key!r}] "
+                    f"for array key {key!r}."
+                )
+            out[str(key_map[safe_key])] = np.asarray(data[key])
+        return out
+
     with np.load(path, allow_pickle=False) as data:
         metadata = json.loads(str(data["metadata_json"].item()))
         image_key_to_modality = metadata.get("image_key_to_modality", {})
         fisher_key_to_modality = metadata.get("fisher_key_to_modality", {})
         mask_key_to_name = metadata.get("mask_key_to_name", {})
-        images = {
-            image_key_to_modality.get(key[len("image__"):], key[len("image__"):]): np.asarray(data[key])
-            for key in data.files
-            if key.startswith("image__")
-        }
-        fishers = {
-            fisher_key_to_modality.get(key[len("fisher__"):], key[len("fisher__"):]): np.asarray(data[key])
-            for key in data.files
-            if key.startswith("fisher__")
-        }
-        masks = {
-            mask_key_to_name.get(key[len("mask__"):], key[len("mask__"):]): np.asarray(data[key])
-            for key in data.files
-            if key.startswith("mask__")
-        }
-    return {
+        if not isinstance(image_key_to_modality, Mapping):
+            raise ValueError("Counterfactual packet metadata field 'image_key_to_modality' must be a mapping.")
+        if not isinstance(fisher_key_to_modality, Mapping):
+            raise ValueError("Counterfactual packet metadata field 'fisher_key_to_modality' must be a mapping.")
+        if not isinstance(mask_key_to_name, Mapping):
+            raise ValueError("Counterfactual packet metadata field 'mask_key_to_name' must be a mapping.")
+        images = _mapped_arrays(data, prefix="image__", key_map=image_key_to_modality, map_name="image_key_to_modality")
+        fishers = _mapped_arrays(data, prefix="fisher__", key_map=fisher_key_to_modality, map_name="fisher_key_to_modality")
+        masks = _mapped_arrays(data, prefix="mask__", key_map=mask_key_to_name, map_name="mask_key_to_name")
+        raw_images = _mapped_arrays(data, prefix="raw_image__", key_map=image_key_to_modality, map_name="image_key_to_modality")
+        rendered_signal_frames = _mapped_arrays(data, prefix="signal__", key_map=image_key_to_modality, map_name="image_key_to_modality")
+        reference_frames = _mapped_arrays(data, prefix="reference__", key_map=image_key_to_modality, map_name="image_key_to_modality")
+        noise_variance_maps = _mapped_arrays(data, prefix="noise_variance__", key_map=image_key_to_modality, map_name="image_key_to_modality")
+    packet = {
         "metadata": metadata,
         "images_by_modality": images,
+        "raw_images_by_modality": raw_images,
+        "rendered_signal_frame_by_modality": rendered_signal_frames,
+        "reference_frame_by_modality": reference_frames,
+        "noise_variance_by_modality": noise_variance_maps,
         "fisher_by_modality": fishers,
         "masks": masks,
     }
+    validate_counterfactual_modality_packet(packet)
+    return packet
+
+
+def validate_counterfactual_modality_packet(packet: Mapping[str, Any]) -> None:
+    """Validate a loaded or in-memory counterfactual packet."""
+    metadata = dict(packet.get("metadata", {}) or {})
+    packet_extra = dict(metadata.get("metadata", {}) or {})
+    build_counterfactual_modality_packet(
+        latent_state=dict(metadata.get("latent_state", {}) or {}),
+        images_by_modality=dict(packet.get("images_by_modality", {}) or {}),
+        raw_images_by_modality=dict(packet.get("raw_images_by_modality", {}) or {}),
+        rendered_signal_frame_by_modality=dict(packet.get("rendered_signal_frame_by_modality", {}) or {}),
+        reference_frame_by_modality=dict(packet.get("reference_frame_by_modality", {}) or {}),
+        noise_variance_by_modality=dict(packet.get("noise_variance_by_modality", {}) or {}),
+        masks=dict(packet.get("masks", {}) or {}),
+        fisher_by_modality=dict(packet.get("fisher_by_modality", {}) or {}),
+        crlb_by_modality=dict(metadata.get("crlb_by_modality", {}) or {}),
+        metadata=packet_extra,
+        require_information_fields=metadata.get("packet_kind") == "matched_modality_information_packet",
+    )

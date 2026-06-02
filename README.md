@@ -70,6 +70,12 @@ For a faster first check:
 python codebase/lab_fisher_report.py --output lab_reports/smoke --modalities bright_field,interferometric --image-size-pixels 96 --pupil-samples 96 --no-previews
 ```
 
+Render a short trajectory and compute dynamic posteriors in one pass:
+
+```bash
+python codebase/lab_fisher_report.py --params-json lab_params.json --output lab_reports/sequence --num-frames 6 --dynamic-bayesian
+```
+
 List public names when editing a command:
 
 ```bash
@@ -81,18 +87,28 @@ The report writes:
 
 - `report.md`: short ranked summary for the configured particle, pixel pitch, and detector-noise model.
 - `modality_ranking.csv`: per-modality lateral Fisher matrices and Cramér-Rao bounds.
+- `sequence_fisher_summary.csv`: per-frame and cumulative sequence CRLB rows.
 - `fusion_crlb.csv`: best-k Fisher-fusion diagnostics; use `--include-full-fusion` to also write the full-library row when the modality list is longer than `--max-fusion-k`.
 - `manifest.json`: requested, reported, and failed modalities.
 - `params_base.json` and `params_resolved_by_modality/`: run configuration records.
-- `previews/`: display-normalized single-frame contrast previews.
+- `dynamic_modality_summary.json`: optional dynamic Bayesian outputs when enabled.
+- `previews/`: display-normalized first-frame contrast previews (from rendered frame sequences).
 - `fisher_density/`: per-pixel lateral Fisher-density maps.
 
-The default lab modality set focuses on optical and fluorescence paths. Add
-`--include-electron` or pass `--modalities all` when you intentionally want the
-simplified TEM/SEM paths included in the same diagnostic output.
+The default lab modality set now includes optical, fluorescence, TEM, and SEM
+profiles so electron modalities appear alongside optical paths in the same
+diagnostic output.
 
 See `docs/lab_fisher_workflow.md` for the full lab-facing workflow and
 `examples/lab_fisher_params.json` for a small editable starting configuration.
+For a full parameter-exposure audit (core/advanced/hidden + workflow/runtime
+controls), see `docs/param_exposure_policy.md` and
+`docs/param_exposure_matrix.json`.
+For a read-only human summary, use `docs/param_exposure_summary.md` and regenerate all three with:
+
+```bash
+python scripts/generate_param_exposure_matrix.py --summary docs/param_exposure_summary.md
+```
 
 ## Local Dataset Generation
 
@@ -138,11 +154,12 @@ This creates:
 
 ```text
 supplemental/syniscopy_source.zip
-supplemental/outputs/
 ```
 
 The packaging script excludes local build outputs and macOS Finder artifacts
 from `syniscopy_source.zip`; `.DS_Store` is also ignored by the repository.
+Notebook output folders are created later by the notebooks when they write
+generated data.
 
 Upload the `supplemental/` folder itself to Google Drive as:
 

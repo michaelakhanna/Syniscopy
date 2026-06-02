@@ -320,7 +320,7 @@ if __name__ == "__main__":
     # Command-line entry point for quick offline usage.
     #
     # When invoked as a script, this will:
-    #   - Import the global PARAMS from config.py.
+    #   - Import the global PARAMS from config.
     #   - Compute a recommended pupil_samples value for those parameters.
     #   - Print the result alongside the current PARAMS["pupil_samples"] value
     #     for inspection.

@@ -31,6 +31,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 
 from particle_specs import ParticleComponentSpec, get_particle_specs
+from shared_constants import NONNEGATIVE_MATERIAL_PROPERTY_FIELDS, SOURCE_MATERIAL_PROPERTY_FIELDS
 from substrate import MaterialProperties
 
 
@@ -40,6 +41,35 @@ def _coerce_complex(value: Any) -> complex:
         if "real" in value or "imag" in value:
             return complex(float(value.get("real", 0.0)), float(value.get("imag", 0.0)))
     return complex(value)
+
+
+def _override_n_complex_visible(override: Any) -> complex | None:
+    """Return an explicit material-property refractive index override if present."""
+    if isinstance(override, MaterialProperties):
+        return override.n_complex(532.0)
+    if not isinstance(override, dict) or "n_complex_visible" not in override:
+        return None
+    return _coerce_complex(override["n_complex_visible"])
+
+
+def _validate_nonnegative_material_fields(values: dict[str, Any]) -> None:
+    for key in NONNEGATIVE_MATERIAL_PROPERTY_FIELDS:
+        if key not in values or values[key] is None:
+            continue
+        value = float(values[key])
+        if not np.isfinite(value) or value < 0.0:
+            raise ValueError(f"material_properties[{key!r}] must be finite and non-negative; got {values[key]!r}.")
+
+
+_SOURCE_MATERIAL_FIELDS = SOURCE_MATERIAL_PROPERTY_FIELDS
+
+
+def _has_explicit_source_material_fields(value: Any) -> bool:
+    if isinstance(value, MaterialProperties):
+        return True
+    if not isinstance(value, dict):
+        return False
+    return any(key in value and value[key] is not None for key in _SOURCE_MATERIAL_FIELDS)
 
 
 # --- Material property tables -------------------------------------------------
@@ -80,7 +110,7 @@ _MATERIAL_FLUORESCENCE_DEFAULTS: Dict[str, Dict[str, float | None]] = {
     },
 }
 
-# Nominal electron-material defaults used by the simplified TEM/SEM paths.
+# Nominal electron-material defaults used by Syniscopy electron pathways.
 # These values make recognized material labels populate the electron-facing
 # fields already present in MaterialProperties. Calibrated studies should
 # override these fields explicitly through component material_properties.
@@ -381,10 +411,14 @@ def resolve_component_refractive_index(
     """Resolve optical refractive index for one particle component."""
     if component.refractive_index is not None:
         return _coerce_complex(component.refractive_index)
+    material_override_n = _override_n_complex_visible(component.material_properties)
+    if material_override_n is not None:
+        return complex(material_override_n)
     if component.material is None:
         raise ValueError(
             "Particle component refractive index is undefined. Provide either "
-            "component.refractive_index or component.material."
+            "component.refractive_index, component.material, or "
+            "component.material_properties.n_complex_visible."
         )
     return lookup_refractive_index(
         material_name=str(component.material),
@@ -396,16 +430,50 @@ def resolve_component_refractive_index(
 def resolve_component_material_properties(
     params: dict,
     component: ParticleComponentSpec,
+    *,
+    require_optical_refractive_index: bool = True,
 ) -> MaterialProperties:
     """Resolve full modality material properties for one particle component."""
-    n_complex = resolve_component_refractive_index(params, component)
-    base = _material_properties_from_name(
-        None if component.material is None else str(component.material),
-        wavelength_nm=float(params.get("wavelength_nm", 532.0)),
-        diameter_nm=float(component.diameter_nm),
-        refractive_index=n_complex,
-    )
-    return _apply_material_override(base, component.material_properties)
+    if require_optical_refractive_index:
+        n_complex = resolve_component_refractive_index(params, component)
+    else:
+        n_complex = _override_n_complex_visible(component.material_properties)
+        if n_complex is None and component.refractive_index is not None:
+            n_complex = _coerce_complex(component.refractive_index)
+    material_name = None if component.material is None else str(component.material)
+    source_requires_explicit_properties = material_name is None
+    try:
+        base = _material_properties_from_name(
+            material_name,
+            wavelength_nm=float(params.get("wavelength_nm", 532.0)),
+            diameter_nm=float(component.diameter_nm),
+            refractive_index=n_complex,
+        )
+    except ValueError:
+        if require_optical_refractive_index or component.material_properties is None:
+            raise
+        # Source-map modalities can be fully specified by material_properties
+        # without a named visible-light refractive-index model.
+        source_requires_explicit_properties = True
+        base = MaterialProperties(
+            name=str(material_name or "custom_particle"),
+            n_complex_visible=complex(n_complex if n_complex is not None else 1.0 + 0.0j),
+        )
+    resolved = _apply_material_override(base, component.material_properties)
+    if (
+        not require_optical_refractive_index
+        and source_requires_explicit_properties
+        and not _has_explicit_source_material_fields(component.material_properties)
+    ):
+        raise ValueError(
+            "Source-map modalities require each custom or refractive-index-only "
+            "particle component to define material source properties. Set a "
+            "recognized component material or provide material_properties with "
+            "at least one of mean_inner_potential_V, density_g_cm3, "
+            "se_yield_coefficient, fluorophore_density, or "
+            "autofluorescence_per_nm."
+        )
+    return resolved
 
 
 def resolve_primary_component_refractive_indices(params: dict) -> np.ndarray:
@@ -521,6 +589,7 @@ def _apply_material_override(base: MaterialProperties, override: Any) -> Materia
     unknown = sorted(set(override) - allowed)
     if unknown:
         raise ValueError(f"Unsupported material-property override key(s): {unknown}.")
+    _validate_nonnegative_material_fields(override)
 
     n_complex_visible = override.get("n_complex_visible", base.n_complex_visible)
     if isinstance(n_complex_visible, dict):
@@ -551,6 +620,8 @@ def _apply_material_override(base: MaterialProperties, override: Any) -> Materia
 
 def resolve_particle_material_properties(
     params: dict,
+    *,
+    require_optical_refractive_index: bool = True,
 ) -> List[MaterialProperties]:
     """
     Resolve per-particle MaterialProperties for modality-specific physics.
@@ -562,7 +633,11 @@ def resolve_particle_material_properties(
     """
     specs = get_particle_specs(params)
     resolved = [
-        resolve_component_material_properties(params, spec.primary_component)
+        resolve_component_material_properties(
+            params,
+            spec.primary_component,
+            require_optical_refractive_index=require_optical_refractive_index,
+        )
         for spec in specs
     ]
 

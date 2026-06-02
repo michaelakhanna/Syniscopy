@@ -1,0 +1,305 @@
+{
+  "rows": [
+    {
+      "citation_url": "10.1364/OE.27.029875",
+      "classification": "LITERATURE_LOCALIZATION_SCALE",
+      "comparison_target_sigma_xy_nm": "15",
+      "computed_localization_method": "E04 native-regime reference check when generated",
+      "computed_sigma_xy_nm": "nan",
+      "display_name": "partially coherent K\u00f6hler bright-field",
+      "match_status": "partial",
+      "modality": "bright_field",
+      "parameter_match_status": "partial",
+      "parameters_defaulted": {
+        "configured_profile": "Syniscopy shared-scene profile when source does not quote a complete detector/noise/sample contract"
+      },
+      "parameters_extracted": {
+        "reported_scale": "10--20 nm scale"
+      },
+      "published_reference_sigma_xy_nm": "15",
+      "reason_for_mismatch": "Principle citation, dimensional metrology, or literature scale is not collapsed into a parameter-matched localization validation claim.",
+      "reference_target_sigma_xy_nm": "15",
+      "source_category": "structured_source_use_audit",
+      "source_key": "kovari-brightfield-3d",
+      "source_reported_scale": "10--20 nm scale",
+      "source_reported_value": "15"
+    },
+    {
+      "citation_url": "10.1021/acsnano.6b05601",
+      "classification": "LITERATURE_LOCALIZATION_SCALE",
+      "comparison_target_sigma_xy_nm": "3",
+      "computed_localization_method": "E04 native-regime reference check when generated",
+      "computed_sigma_xy_nm": "nan",
+      "display_name": "coherent bright-field / COBRI literature scale",
+      "match_status": "partial",
+      "modality": "coherent_bright_field",
+      "parameter_match_status": "partial",
+      "parameters_defaulted": {
+        "configured_profile": "Syniscopy shared-scene profile when source does not quote a complete detector/noise/sample contract"
+      },
+      "parameters_extracted": {
+        "reported_scale": "<3 nm"
+      },
+      "published_reference_sigma_xy_nm": "3",
+      "reason_for_mismatch": "Principle citation, dimensional metrology, or literature scale is not collapsed into a parameter-matched localization validation claim.",
+      "reference_target_sigma_xy_nm": "3",
+      "source_category": "structured_source_use_audit",
+      "source_key": "huang-cobri-virus",
+      "source_reported_scale": "<3 nm",
+      "source_reported_value": "3"
+    },
+    {
+      "citation_url": "10.1016/j.bpj.2018.11.016",
+      "classification": "MODALITY_PRINCIPLE_CITATION_ONLY",
+      "comparison_target_sigma_xy_nm": "nan",
+      "computed_localization_method": "not a localization-bound source row",
+      "computed_sigma_xy_nm": "nan",
+      "display_name": "annular K\u00f6hler dark-field",
+      "match_status": "not_applicable",
+      "modality": "dark_field",
+      "parameter_match_status": "not_applicable",
+      "parameters_defaulted": {},
+      "parameters_extracted": {
+        "reported_scale": "not quoted"
+      },
+      "published_reference_sigma_xy_nm": "nan",
+      "reason_for_mismatch": "Principle citation, dimensional metrology, or literature scale is not collapsed into a parameter-matched localization validation claim.",
+      "reference_target_sigma_xy_nm": "nan",
+      "source_category": "structured_source_use_audit",
+      "source_key": "ando-darkfield-angstrom",
+      "source_reported_scale": "not quoted",
+      "source_reported_value": "nan"
+    },
+    {
+      "citation_url": "10.1088/1361-6463/ac0f22",
+      "classification": "MODALITY_PRINCIPLE_CITATION_ONLY",
+      "comparison_target_sigma_xy_nm": "nan",
+      "computed_localization_method": "not a localization-bound source row",
+      "computed_sigma_xy_nm": "nan",
+      "display_name": "interferometric scattering microscopy",
+      "match_status": "not_applicable",
+      "modality": "interferometric",
+      "parameter_match_status": "not_applicable",
+      "parameters_defaulted": {},
+      "parameters_extracted": {
+        "reported_scale": "not quoted"
+      },
+      "published_reference_sigma_xy_nm": "nan",
+      "reason_for_mismatch": "Principle citation, dimensional metrology, or literature scale is not collapsed into a parameter-matched localization validation claim.",
+      "reference_target_sigma_xy_nm": "nan",
+      "source_category": "structured_source_use_audit",
+      "source_key": "juffmann-iscat-cobri-crlb",
+      "source_reported_scale": "not quoted",
+      "source_reported_value": "nan"
+    },
+    {
+      "citation_url": "10.1364/OE.509877",
+      "classification": "MODALITY_PRINCIPLE_CITATION_ONLY",
+      "comparison_target_sigma_xy_nm": "nan",
+      "computed_localization_method": "not a localization-bound source row",
+      "computed_sigma_xy_nm": "nan",
+      "display_name": "Zernike phase contrast",
+      "match_status": "not_applicable",
+      "modality": "zernike_phase_contrast",
+      "parameter_match_status": "not_applicable",
+      "parameters_defaulted": {},
+      "parameters_extracted": {
+        "reported_scale": "not quoted"
+      },
+      "published_reference_sigma_xy_nm": "nan",
+      "reason_for_mismatch": "Principle citation, dimensional metrology, or literature scale is not collapsed into a parameter-matched localization validation claim.",
+      "reference_target_sigma_xy_nm": "nan",
+      "source_category": "structured_source_use_audit",
+      "source_key": "kurata-zernike-phase-retrieval",
+      "source_reported_scale": "not quoted",
+      "source_reported_value": "nan"
+    },
+    {
+      "citation_url": "10.1364/OE.23.011394",
+      "classification": "MODALITY_PRINCIPLE_CITATION_ONLY",
+      "comparison_target_sigma_xy_nm": "nan",
+      "computed_localization_method": "not a localization-bound source row",
+      "computed_sigma_xy_nm": "nan",
+      "display_name": "differential phase contrast",
+      "match_status": "not_applicable",
+      "modality": "differential_phase_contrast",
+      "parameter_match_status": "not_applicable",
+      "parameters_defaulted": {},
+      "parameters_extracted": {
+        "reported_scale": "not quoted"
+      },
+      "published_reference_sigma_xy_nm": "nan",
+      "reason_for_mismatch": "Principle citation, dimensional metrology, or literature scale is not collapsed into a parameter-matched localization validation claim.",
+      "reference_target_sigma_xy_nm": "nan",
+      "source_category": "structured_source_use_audit",
+      "source_key": "tian-waller-dpc",
+      "source_reported_scale": "not quoted",
+      "source_reported_value": "nan"
+    },
+    {
+      "citation_url": "10.1038/ncomms8764",
+      "classification": "LITERATURE_LOCALIZATION_SCALE",
+      "comparison_target_sigma_xy_nm": "1.5",
+      "computed_localization_method": "E04 native-regime reference check when generated",
+      "computed_sigma_xy_nm": "nan",
+      "display_name": "quantitative phase imaging",
+      "match_status": "partial",
+      "modality": "quantitative_phase",
+      "parameter_match_status": "partial",
+      "parameters_defaulted": {
+        "configured_profile": "Syniscopy shared-scene profile when source does not quote a complete detector/noise/sample contract"
+      },
+      "parameters_extracted": {
+        "reported_scale": "1.5 nm lateral"
+      },
+      "published_reference_sigma_xy_nm": "1.5",
+      "reason_for_mismatch": "Principle citation, dimensional metrology, or literature scale is not collapsed into a parameter-matched localization validation claim.",
+      "reference_target_sigma_xy_nm": "1.5",
+      "source_category": "structured_source_use_audit",
+      "source_key": "bon-qpi-nanoparticles",
+      "source_reported_scale": "1.5 nm lateral",
+      "source_reported_value": "1.5"
+    },
+    {
+      "citation_url": "10.1364/OE.19.026044",
+      "classification": "LITERATURE_LOCALIZATION_SCALE",
+      "comparison_target_sigma_xy_nm": "3",
+      "computed_localization_method": "E04 native-regime reference check when generated",
+      "computed_sigma_xy_nm": "nan",
+      "display_name": "off-axis digital holography",
+      "match_status": "partial",
+      "modality": "off_axis_holography",
+      "parameter_match_status": "partial",
+      "parameters_defaulted": {
+        "configured_profile": "Syniscopy shared-scene profile when source does not quote a complete detector/noise/sample contract"
+      },
+      "parameters_extracted": {
+        "reported_scale": "3 nm lateral; 70--150 nm axial"
+      },
+      "published_reference_sigma_xy_nm": "3",
+      "reason_for_mismatch": "Principle citation, dimensional metrology, or literature scale is not collapsed into a parameter-matched localization validation claim.",
+      "reference_target_sigma_xy_nm": "3",
+      "source_category": "structured_source_use_audit",
+      "source_key": "verpillat-dhm-gold",
+      "source_reported_scale": "3 nm lateral; 70--150 nm axial",
+      "source_reported_value": "3"
+    },
+    {
+      "citation_url": "10.1021/la050372r",
+      "classification": "MODALITY_PRINCIPLE_CITATION_ONLY",
+      "comparison_target_sigma_xy_nm": "nan",
+      "computed_localization_method": "not a localization-bound source row",
+      "computed_sigma_xy_nm": "nan",
+      "display_name": "reflection interference contrast microscopy",
+      "match_status": "not_applicable",
+      "modality": "ricm",
+      "parameter_match_status": "not_applicable",
+      "parameters_defaulted": {},
+      "parameters_extracted": {
+        "reported_scale": "not quoted"
+      },
+      "published_reference_sigma_xy_nm": "nan",
+      "reason_for_mismatch": "Principle citation, dimensional metrology, or literature scale is not collapsed into a parameter-matched localization validation claim.",
+      "reference_target_sigma_xy_nm": "nan",
+      "source_category": "structured_source_use_audit",
+      "source_key": "clack-groves-ricm",
+      "source_reported_scale": "not quoted",
+      "source_reported_value": "nan"
+    },
+    {
+      "citation_url": "10.1016/s0006-3495(02)75618-x",
+      "classification": "FORMULA_DERIVED_LOCALIZATION_SCALE",
+      "comparison_target_sigma_xy_nm": "nan",
+      "computed_localization_method": "E04 native-regime reference check when generated",
+      "computed_sigma_xy_nm": "nan",
+      "display_name": "widefield fluorescence",
+      "match_status": "partial",
+      "modality": "fluorescence_widefield",
+      "parameter_match_status": "partial",
+      "parameters_defaulted": {
+        "configured_profile": "Syniscopy shared-scene profile when source does not quote a complete detector/noise/sample contract"
+      },
+      "parameters_extracted": {
+        "reported_scale": "formula-derived"
+      },
+      "published_reference_sigma_xy_nm": "nan",
+      "reason_for_mismatch": "Principle citation, dimensional metrology, or literature scale is not collapsed into a parameter-matched localization validation claim.",
+      "reference_target_sigma_xy_nm": "nan",
+      "source_category": "structured_source_use_audit",
+      "source_key": "thompson-larson-webb",
+      "source_reported_scale": "formula-derived",
+      "source_reported_value": "nan"
+    },
+    {
+      "citation_url": "10.1083/jcb.89.1.141",
+      "classification": "MODALITY_PRINCIPLE_CITATION_ONLY",
+      "comparison_target_sigma_xy_nm": "nan",
+      "computed_localization_method": "not a localization-bound source row",
+      "computed_sigma_xy_nm": "nan",
+      "display_name": "total internal reflection fluorescence",
+      "match_status": "not_applicable",
+      "modality": "tirf_fluorescence",
+      "parameter_match_status": "not_applicable",
+      "parameters_defaulted": {},
+      "parameters_extracted": {
+        "reported_scale": "not quoted"
+      },
+      "published_reference_sigma_xy_nm": "nan",
+      "reason_for_mismatch": "Principle citation, dimensional metrology, or literature scale is not collapsed into a parameter-matched localization validation claim.",
+      "reference_target_sigma_xy_nm": "nan",
+      "source_category": "structured_source_use_audit",
+      "source_key": "axelrod-tirf",
+      "source_reported_scale": "not quoted",
+      "source_reported_value": "nan"
+    },
+    {
+      "citation_url": "10.1088/0026-1394/50/6/663",
+      "classification": "DIMENSIONAL_METROLOGY_SCALE_NOT_LOCALIZATION",
+      "comparison_target_sigma_xy_nm": "2.1",
+      "computed_localization_method": "not a localization-bound source row",
+      "computed_sigma_xy_nm": "nan",
+      "display_name": "transmission electron microscopy phase contrast",
+      "match_status": "not_applicable",
+      "modality": "tem_phase_contrast",
+      "parameter_match_status": "not_applicable",
+      "parameters_defaulted": {
+        "configured_profile": "Syniscopy shared-scene profile when source does not quote a complete detector/noise/sample contract"
+      },
+      "parameters_extracted": {
+        "reported_scale": "about 2.1 nm expanded dimensional uncertainty"
+      },
+      "published_reference_sigma_xy_nm": "2.1",
+      "reason_for_mismatch": "Principle citation, dimensional metrology, or literature scale is not collapsed into a parameter-matched localization validation claim.",
+      "reference_target_sigma_xy_nm": "2.1",
+      "source_category": "structured_source_use_audit",
+      "source_key": "rice-tem-sizing",
+      "source_reported_scale": "about 2.1 nm expanded dimensional uncertainty",
+      "source_reported_value": "2.1"
+    },
+    {
+      "citation_url": "10.1016/j.ultramic.2019.112847",
+      "classification": "DIMENSIONAL_METROLOGY_SCALE_NOT_LOCALIZATION",
+      "comparison_target_sigma_xy_nm": "2.6",
+      "computed_localization_method": "not a localization-bound source row",
+      "computed_sigma_xy_nm": "nan",
+      "display_name": "scanning electron microscopy secondary-electron",
+      "match_status": "not_applicable",
+      "modality": "sem_secondary_electron",
+      "parameter_match_status": "not_applicable",
+      "parameters_defaulted": {
+        "configured_profile": "Syniscopy shared-scene profile when source does not quote a complete detector/noise/sample contract"
+      },
+      "parameters_extracted": {
+        "reported_scale": "2.6 nm (k=2) dimensional uncertainty"
+      },
+      "published_reference_sigma_xy_nm": "2.6",
+      "reason_for_mismatch": "Principle citation, dimensional metrology, or literature scale is not collapsed into a parameter-matched localization validation claim.",
+      "reference_target_sigma_xy_nm": "2.6",
+      "source_category": "structured_source_use_audit",
+      "source_key": "crouzier-sem-diameter",
+      "source_reported_scale": "2.6 nm (k=2) dimensional uncertainty",
+      "source_reported_value": "2.6"
+    }
+  ],
+  "schema_version": "syniscopy-source-use-audit-v1"
+}

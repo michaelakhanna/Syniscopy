@@ -33,11 +33,33 @@ jobs:
           pip install -r requirements.txt
           pip install \
             nbformat \
+            pytest \
             pyyaml
 
       - name: Syntax-check Python sources
         run: |
-          python -m compileall -q codebase
+          python -m compileall -q codebase scripts supplemental paper recipes
+
+      - name: Import core modules
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python - <<'PY'
+          import importlib
+          import sys
+          from pathlib import Path
+          sys.path.insert(0, "codebase")
+          failures = []
+          for path in sorted(Path("codebase").glob("*.py")):
+              try:
+                  importlib.import_module(path.stem)
+              except Exception as exc:
+                  failures.append(f"{path.stem}: {type(exc).__name__}: {exc}")
+          if failures:
+              raise SystemExit("\n".join(failures))
+          PY
+
+      - name: Run lightweight regression tests
+        run: |
+          pytest -q tests
 
       - name: Validate numbered supplemental notebooks
         run: |
@@ -45,12 +67,17 @@ jobs:
           import nbformat
           from pathlib import Path
           expected = [Path("supplemental") / f"E{i:02d}.ipynb" for i in range(1, 10)]
+          expected.extend(sorted(Path("sam2_starter").glob("*.ipynb")))
           missing = [str(path) for path in expected if not path.exists()]
           if missing:
               raise SystemExit(f"missing notebooks: {missing}")
           for path in expected:
               nbformat.read(path, as_version=4)
           PY
+
+      - name: Check notebook static hygiene
+        run: |
+          python scripts/check_notebook_static_hygiene.py
 
       - name: Verify release notices and excluded outputs
         run: |

@@ -35,7 +35,21 @@
       14848.0,
       14848.0,
       -1200.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "z_minus_800_clean_mid_counts",
@@ -73,7 +87,21 @@
       14848.0,
       14848.0,
       -800.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "z_minus_400_clean_mid_counts",
@@ -111,7 +139,21 @@
       14848.0,
       14848.0,
       -400.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "z0_clean_mid_counts",
@@ -149,7 +191,21 @@
       14848.0,
       14848.0,
       0.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "z_plus_400_clean_mid_counts",
@@ -187,7 +243,21 @@
       14848.0,
       14848.0,
       400.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "z_plus_800_clean_mid_counts",
@@ -225,7 +295,21 @@
       14848.0,
       14848.0,
       800.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "z_plus_1200_clean_mid_counts",
@@ -263,7 +347,21 @@
       14848.0,
       14848.0,
       1200.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "z_plus_1600_clean_mid_counts",
@@ -301,7 +399,21 @@
       14848.0,
       14848.0,
       1600.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "z_plus_2000_clean_mid_counts",
@@ -339,7 +451,21 @@
       14848.0,
       14848.0,
       2000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "lower_counts_z800",
@@ -377,7 +503,21 @@
       14848.0,
       14848.0,
       800.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "higher_counts_z800",
@@ -415,7 +555,21 @@
       14848.0,
       14848.0,
       800.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "short_exposure_z800",
@@ -453,7 +607,21 @@
       14848.0,
       14848.0,
       800.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "max_frame_exposure_z800",
@@ -491,7 +659,21 @@
       14848.0,
       14848.0,
       800.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "lower_na_z800",
@@ -529,7 +711,21 @@
       14848.0,
       14848.0,
       800.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "higher_na_z800",
@@ -567,7 +763,21 @@
       14848.0,
       14848.0,
       800.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "green_shorter_wavelength_z800",
@@ -605,7 +815,21 @@
       14848.0,
       14848.0,
       800.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "yellow_longer_wavelength_z800",
@@ -643,7 +867,21 @@
       14848.0,
       14848.0,
       800.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "no_residual_texture_z0",
@@ -681,7 +919,21 @@
       14848.0,
       14848.0,
       0.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "no_residual_texture_z800",
@@ -719,7 +971,21 @@
       14848.0,
       14848.0,
       800.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default"
+    }
   },
   {
     "name": "no_residual_texture_z1600",
@@ -751,7 +1017,29 @@
     "fps": 40.0,
     "num_frames_source": 1,
     "duration_seconds_source": 0.025,
-    "source_dataset_preset": "local_caustic_one_frame_matching"
+    "source_dataset_preset": "local_caustic_one_frame_matching",
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "source_initial_position_nm": [
+      14848.0,
+      14848.0,
+      1600.0
+    ],
+    "source_metadata": "condition_manifest_derived_without_source_video_metadata",
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "source_initial_position_nm": "computed_from_image_size_pixel_size_and_z",
+      "source_metadata": "explicit_no_source_metadata_available"
+    }
   },
   {
     "name": "lower_residual_texture_z800",
@@ -783,7 +1071,29 @@
     "fps": 40.0,
     "num_frames_source": 1,
     "duration_seconds_source": 0.025,
-    "source_dataset_preset": "local_caustic_one_frame_matching"
+    "source_dataset_preset": "local_caustic_one_frame_matching",
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "source_initial_position_nm": [
+      14848.0,
+      14848.0,
+      800.0
+    ],
+    "source_metadata": "condition_manifest_derived_without_source_video_metadata",
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_low",
+      "empirical_background_scale_weights": "texture_profile_low",
+      "source_initial_position_nm": "computed_from_image_size_pixel_size_and_z",
+      "source_metadata": "explicit_no_source_metadata_available"
+    }
   },
   {
     "name": "moderate_residual_texture_z800",
@@ -815,7 +1125,29 @@
     "fps": 40.0,
     "num_frames_source": 1,
     "duration_seconds_source": 0.025,
-    "source_dataset_preset": "local_caustic_one_frame_matching"
+    "source_dataset_preset": "local_caustic_one_frame_matching",
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "source_initial_position_nm": [
+      14848.0,
+      14848.0,
+      800.0
+    ],
+    "source_metadata": "condition_manifest_derived_without_source_video_metadata",
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_medium",
+      "empirical_background_scale_weights": "texture_profile_medium",
+      "source_initial_position_nm": "computed_from_image_size_pixel_size_and_z",
+      "source_metadata": "explicit_no_source_metadata_available"
+    }
   },
   {
     "name": "fine_residual_texture_z800",
@@ -847,7 +1179,29 @@
     "fps": 40.0,
     "num_frames_source": 1,
     "duration_seconds_source": 0.025,
-    "source_dataset_preset": "local_caustic_one_frame_matching"
+    "source_dataset_preset": "local_caustic_one_frame_matching",
+    "empirical_background_scales_px": [
+      8.0,
+      24.0,
+      64.0
+    ],
+    "empirical_background_scale_weights": [
+      0.5,
+      0.35,
+      0.15
+    ],
+    "source_initial_position_nm": [
+      14848.0,
+      14848.0,
+      800.0
+    ],
+    "source_metadata": "condition_manifest_derived_without_source_video_metadata",
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_fine",
+      "empirical_background_scale_weights": "texture_profile_fine",
+      "source_initial_position_nm": "computed_from_image_size_pixel_size_and_z",
+      "source_metadata": "explicit_no_source_metadata_available"
+    }
   },
   {
     "name": "slower_brownian_z800",
@@ -879,7 +1233,29 @@
     "fps": 40.0,
     "num_frames_source": 1,
     "duration_seconds_source": 0.025,
-    "source_dataset_preset": "local_caustic_one_frame_matching"
+    "source_dataset_preset": "local_caustic_one_frame_matching",
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "source_initial_position_nm": [
+      14848.0,
+      14848.0,
+      800.0
+    ],
+    "source_metadata": "condition_manifest_derived_without_source_video_metadata",
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "source_initial_position_nm": "computed_from_image_size_pixel_size_and_z",
+      "source_metadata": "explicit_no_source_metadata_available"
+    }
   },
   {
     "name": "small_vibration_z800",
@@ -911,7 +1287,29 @@
     "fps": 40.0,
     "num_frames_source": 1,
     "duration_seconds_source": 0.025,
-    "source_dataset_preset": "local_caustic_one_frame_matching"
+    "source_dataset_preset": "local_caustic_one_frame_matching",
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "source_initial_position_nm": [
+      14848.0,
+      14848.0,
+      800.0
+    ],
+    "source_metadata": "condition_manifest_derived_without_source_video_metadata",
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "source_initial_position_nm": "computed_from_image_size_pixel_size_and_z",
+      "source_metadata": "explicit_no_source_metadata_available"
+    }
   },
   {
     "name": "high_counts_low_texture_z0",
@@ -943,7 +1341,29 @@
     "fps": 40.0,
     "num_frames_source": 1,
     "duration_seconds_source": 0.025,
-    "source_dataset_preset": "local_caustic_one_frame_matching"
+    "source_dataset_preset": "local_caustic_one_frame_matching",
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "source_initial_position_nm": [
+      14848.0,
+      14848.0,
+      0.0
+    ],
+    "source_metadata": "condition_manifest_derived_without_source_video_metadata",
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_low",
+      "empirical_background_scale_weights": "texture_profile_low",
+      "source_initial_position_nm": "computed_from_image_size_pixel_size_and_z",
+      "source_metadata": "explicit_no_source_metadata_available"
+    }
   },
   {
     "name": "high_counts_low_texture_z800",
@@ -975,7 +1395,29 @@
     "fps": 40.0,
     "num_frames_source": 1,
     "duration_seconds_source": 0.025,
-    "source_dataset_preset": "local_caustic_one_frame_matching"
+    "source_dataset_preset": "local_caustic_one_frame_matching",
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "source_initial_position_nm": [
+      14848.0,
+      14848.0,
+      800.0
+    ],
+    "source_metadata": "condition_manifest_derived_without_source_video_metadata",
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_low",
+      "empirical_background_scale_weights": "texture_profile_low",
+      "source_initial_position_nm": "computed_from_image_size_pixel_size_and_z",
+      "source_metadata": "explicit_no_source_metadata_available"
+    }
   },
   {
     "name": "high_counts_low_texture_z1600",
@@ -1007,7 +1449,29 @@
     "fps": 40.0,
     "num_frames_source": 1,
     "duration_seconds_source": 0.025,
-    "source_dataset_preset": "local_caustic_one_frame_matching"
+    "source_dataset_preset": "local_caustic_one_frame_matching",
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "source_initial_position_nm": [
+      14848.0,
+      14848.0,
+      1600.0
+    ],
+    "source_metadata": "condition_manifest_derived_without_source_video_metadata",
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_low",
+      "empirical_background_scale_weights": "texture_profile_low",
+      "source_initial_position_nm": "computed_from_image_size_pixel_size_and_z",
+      "source_metadata": "explicit_no_source_metadata_available"
+    }
   },
   {
     "name": "high_counts_short_exposure_z800",
@@ -1039,7 +1503,29 @@
     "fps": 40.0,
     "num_frames_source": 1,
     "duration_seconds_source": 0.025,
-    "source_dataset_preset": "local_caustic_one_frame_matching"
+    "source_dataset_preset": "local_caustic_one_frame_matching",
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "source_initial_position_nm": [
+      14848.0,
+      14848.0,
+      800.0
+    ],
+    "source_metadata": "condition_manifest_derived_without_source_video_metadata",
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "source_initial_position_nm": "computed_from_image_size_pixel_size_and_z",
+      "source_metadata": "explicit_no_source_metadata_available"
+    }
   },
   {
     "name": "small_stage_drift_z800",
@@ -1071,18 +1557,40 @@
     "fps": 40.0,
     "num_frames_source": 1,
     "duration_seconds_source": 0.025,
-    "source_dataset_preset": "local_caustic_one_frame_matching"
+    "source_dataset_preset": "local_caustic_one_frame_matching",
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "source_initial_position_nm": [
+      14848.0,
+      14848.0,
+      800.0
+    ],
+    "source_metadata": "condition_manifest_derived_without_source_video_metadata",
+    "parameter_resolution": {
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "source_initial_position_nm": "computed_from_image_size_pixel_size_and_z",
+      "source_metadata": "explicit_no_source_metadata_available"
+    }
   },
   {
     "name": "z_plus_2400_low_counts",
     "z_nm": 2400.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 4200.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1107,18 +1615,40 @@
       14848.0,
       14848.0,
       2400.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3000_low_counts",
     "z_nm": 3000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 4200.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1143,18 +1673,40 @@
       14848.0,
       14848.0,
       3000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3600_low_counts",
     "z_nm": 3600.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 4200.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1179,18 +1731,40 @@
       14848.0,
       14848.0,
       3600.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_4400_low_counts",
     "z_nm": 4400.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 4200.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1215,18 +1789,40 @@
       14848.0,
       14848.0,
       4400.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_minus_2400_low_counts",
     "z_nm": -2400.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 4200.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1251,18 +1847,40 @@
       14848.0,
       14848.0,
       -2400.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_minus_3000_low_counts",
     "z_nm": -3000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 4200.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1287,18 +1905,40 @@
       14848.0,
       14848.0,
       -3000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_minus_3600_low_counts",
     "z_nm": -3600.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 4200.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1323,18 +1963,40 @@
       14848.0,
       14848.0,
       -3600.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_minus_4400_low_counts",
     "z_nm": -4400.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 4200.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1359,18 +2021,40 @@
       14848.0,
       14848.0,
       -4400.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3000_very_low_counts",
     "z_nm": 3000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 2600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1395,18 +2079,40 @@
       14848.0,
       14848.0,
       3000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3600_very_low_counts",
     "z_nm": 3600.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 2600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1431,18 +2137,40 @@
       14848.0,
       14848.0,
       3600.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_minus_3000_very_low_counts",
     "z_nm": -3000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 2600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1467,18 +2195,40 @@
       14848.0,
       14848.0,
       -3000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_minus_3600_very_low_counts",
     "z_nm": -3600.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 2600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1503,18 +2253,40 @@
       14848.0,
       14848.0,
       -3600.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3000_short_exposure",
     "z_nm": 3000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 3600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 12.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1539,18 +2311,40 @@
       14848.0,
       14848.0,
       3000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "condition_name_short_exposure",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3600_short_exposure",
     "z_nm": 3600.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 3600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 12.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1575,18 +2369,40 @@
       14848.0,
       14848.0,
       3600.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "condition_name_short_exposure",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3000_lower_na",
     "z_nm": 3000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.05,
+    "wavelength_nm": 520.0,
     "background_counts": 3600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1611,18 +2427,40 @@
       14848.0,
       14848.0,
       3000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "condition_name_lower_na",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3600_lower_na",
     "z_nm": 3600.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.05,
+    "wavelength_nm": 520.0,
     "background_counts": 3600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1647,18 +2485,40 @@
       14848.0,
       14848.0,
       3600.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "condition_name_lower_na",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3000_higher_na",
     "z_nm": 3000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.3,
+    "wavelength_nm": 520.0,
     "background_counts": 3600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1683,18 +2543,40 @@
       14848.0,
       14848.0,
       3000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "condition_name_higher_na",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3600_higher_na",
     "z_nm": 3600.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.3,
+    "wavelength_nm": 520.0,
     "background_counts": 3600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1719,18 +2601,40 @@
       14848.0,
       14848.0,
       3600.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "condition_name_higher_na",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3000_green",
     "z_nm": 3000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 500.0,
     "background_counts": 3600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1755,18 +2659,40 @@
       14848.0,
       14848.0,
       3000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "condition_name_green",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3000_yellow",
     "z_nm": 3000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 560.0,
     "background_counts": 3600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1791,18 +2717,40 @@
       14848.0,
       14848.0,
       3000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "condition_name_yellow",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3000_medium_texture",
     "z_nm": 3000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 4200.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.008,
+    "empirical_gradient": 0.004,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1827,18 +2775,40 @@
       14848.0,
       14848.0,
       3000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "condition_name_medium_texture",
+      "empirical_gradient": "condition_name_medium_texture",
+      "empirical_background_scales_px": "texture_profile_medium",
+      "empirical_background_scale_weights": "texture_profile_medium",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3600_medium_texture",
     "z_nm": 3600.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 4200.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.008,
+    "empirical_gradient": 0.004,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1863,18 +2833,40 @@
       14848.0,
       14848.0,
       3600.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "condition_name_medium_texture",
+      "empirical_gradient": "condition_name_medium_texture",
+      "empirical_background_scales_px": "texture_profile_medium",
+      "empirical_background_scale_weights": "texture_profile_medium",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3000_stronger_texture",
     "z_nm": 3000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 3600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.012,
+    "empirical_gradient": 0.006,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1899,18 +2891,40 @@
       14848.0,
       14848.0,
       3000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "condition_name_stronger_texture",
+      "empirical_gradient": "condition_name_stronger_texture",
+      "empirical_background_scales_px": "texture_profile_strong",
+      "empirical_background_scale_weights": "texture_profile_strong",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3600_stronger_texture",
     "z_nm": 3600.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 3600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.012,
+    "empirical_gradient": 0.006,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -1935,25 +2949,47 @@
       14848.0,
       14848.0,
       3600.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "condition_name_stronger_texture",
+      "empirical_gradient": "condition_name_stronger_texture",
+      "empirical_background_scales_px": "texture_profile_strong",
+      "empirical_background_scale_weights": "texture_profile_strong",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3000_small_vibration",
     "z_nm": 3000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 3600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
       0.0,
       0.0
     ],
-    "vibration_nm": 0.0,
+    "vibration_nm": 12.0,
     "particle_count": 1,
     "image_size_px": 256,
     "num_frames_source": 1,
@@ -1971,25 +3007,48 @@
       14848.0,
       14848.0,
       3000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "vibration_nm": "condition_name_vibration",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3600_small_vibration",
     "z_nm": 3600.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 3600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
       0.0,
       0.0
     ],
-    "vibration_nm": 0.0,
+    "vibration_nm": 12.0,
     "particle_count": 1,
     "image_size_px": 256,
     "num_frames_source": 1,
@@ -2007,18 +3066,41 @@
       14848.0,
       14848.0,
       3600.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "vibration_nm": "condition_name_vibration",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3000_high_viscosity",
     "z_nm": 3000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 3600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.004,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -2043,18 +3125,40 @@
       14848.0,
       14848.0,
       3000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "condition_name_high_viscosity_or_slow_brownian",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3600_high_viscosity",
     "z_nm": 3600.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 3600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.004,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -2079,22 +3183,44 @@
       14848.0,
       14848.0,
       3600.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "condition_name_high_viscosity_or_slow_brownian",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_3000_stage_drift",
     "z_nm": 3000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 3600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
-      0.0,
-      0.0,
+      45.0,
+      -25.0,
       0.0
     ],
     "vibration_nm": 0.0,
@@ -2115,22 +3241,45 @@
       14848.0,
       14848.0,
       3000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "drift_nm_s": "condition_name_stage_drift",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_4400_stage_drift",
     "z_nm": 4400.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 3600.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
-      0.0,
-      0.0,
+      45.0,
+      -25.0,
       0.0
     ],
     "vibration_nm": 0.0,
@@ -2151,18 +3300,41 @@
       14848.0,
       14848.0,
       4400.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "lower_bound_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "drift_nm_s": "condition_name_stage_drift",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_6000_low_counts",
     "z_nm": 6000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 2000.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -2187,18 +3359,40 @@
       11136.0,
       11136.0,
       6000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "hard_fast_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_minus_6000_low_counts",
     "z_nm": -6000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 2000.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -2223,18 +3417,40 @@
       11136.0,
       11136.0,
       -6000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "hard_fast_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_8000_very_low_counts",
     "z_nm": 8000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 1400.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -2259,18 +3475,40 @@
       11136.0,
       11136.0,
       8000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "hard_fast_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_minus_8000_very_low_counts",
     "z_nm": -8000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 1400.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -2295,18 +3533,40 @@
       11136.0,
       11136.0,
       -8000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "hard_fast_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_6000_lower_na",
     "z_nm": 6000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.05,
+    "wavelength_nm": 520.0,
     "background_counts": 1800.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -2331,18 +3591,40 @@
       11136.0,
       11136.0,
       6000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "hard_fast_sweep",
+    "parameter_resolution": {
+      "na": "condition_name_lower_na",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_6000_higher_na",
     "z_nm": 6000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.3,
+    "wavelength_nm": 520.0,
     "background_counts": 1800.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -2367,18 +3649,40 @@
       11136.0,
       11136.0,
       6000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "hard_fast_sweep",
+    "parameter_resolution": {
+      "na": "condition_name_higher_na",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_7000_green",
     "z_nm": 7000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 500.0,
     "background_counts": 1800.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -2403,18 +3707,40 @@
       11136.0,
       11136.0,
       7000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "hard_fast_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "condition_name_green",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_7000_yellow",
     "z_nm": 7000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 560.0,
     "background_counts": 1800.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -2439,18 +3765,40 @@
       11136.0,
       11136.0,
       7000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "hard_fast_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "condition_name_yellow",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_7000_fine_texture",
     "z_nm": 7000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 1800.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.01,
+    "empirical_gradient": 0.004,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -2475,18 +3823,40 @@
       11136.0,
       11136.0,
       7000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      8.0,
+      24.0,
+      64.0
+    ],
+    "empirical_background_scale_weights": [
+      0.5,
+      0.35,
+      0.15
+    ],
+    "condition_source": "hard_fast_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "condition_name_fine_texture",
+      "empirical_gradient": "condition_name_fine_texture",
+      "empirical_background_scales_px": "texture_profile_fine",
+      "empirical_background_scale_weights": "texture_profile_fine",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_7000_coarse_texture",
     "z_nm": 7000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 1800.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -2511,25 +3881,47 @@
       11136.0,
       11136.0,
       7000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      32.0,
+      96.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.25,
+      0.4,
+      0.35
+    ],
+    "condition_source": "hard_fast_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_coarse",
+      "empirical_background_scale_weights": "texture_profile_coarse",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_7000_vibration",
     "z_nm": 7000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 1800.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
       0.0,
       0.0
     ],
-    "vibration_nm": 0.0,
+    "vibration_nm": 12.0,
     "particle_count": 1,
     "image_size_px": 192,
     "num_frames_source": 1,
@@ -2547,18 +3939,41 @@
       11136.0,
       11136.0,
       7000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "hard_fast_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "vibration_nm": "condition_name_vibration",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   },
   {
     "name": "z_plus_9000_near_failure",
     "z_nm": 9000.0,
-    "na": null,
-    "wavelength_nm": null,
+    "na": 1.2,
+    "wavelength_nm": 520.0,
     "background_counts": 1200.0,
-    "exposure_ms": null,
-    "viscosity_pa_s": null,
-    "empirical_std": null,
-    "empirical_gradient": null,
+    "exposure_ms": 25.0,
+    "viscosity_pa_s": 0.0015,
+    "empirical_std": 0.004,
+    "empirical_gradient": 0.002,
     "background_method": "reference_frame",
     "drift_nm_s": [
       0.0,
@@ -2583,6 +3998,28 @@
       11136.0,
       11136.0,
       9000.0
-    ]
+    ],
+    "empirical_background_scales_px": [
+      16.0,
+      64.0,
+      256.0
+    ],
+    "empirical_background_scale_weights": [
+      0.4,
+      0.35,
+      0.25
+    ],
+    "condition_source": "hard_fast_sweep",
+    "parameter_resolution": {
+      "na": "default_e07_caustic_training_contract",
+      "wavelength_nm": "default_e07_caustic_training_contract",
+      "exposure_ms": "default_e07_caustic_training_contract",
+      "viscosity_pa_s": "default_e07_caustic_training_contract",
+      "empirical_std": "default_e07_caustic_training_contract",
+      "empirical_gradient": "default_e07_caustic_training_contract",
+      "empirical_background_scales_px": "texture_profile_default",
+      "empirical_background_scale_weights": "texture_profile_default",
+      "condition_source": "approved_family_source_mapping"
+    }
   }
 ]

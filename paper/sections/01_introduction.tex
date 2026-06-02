@@ -1,0 +1,9 @@
+\section{Introduction}
+
+A nanoparticle image is not an intrinsic measurement of ``modality quality''. It is the result of a scene, a forward model, detector units, noise assumptions, and a derivative convention. Syniscopy makes those choices explicit by putting multiple imaging modalities on one shared scene parameterization and then emitting the Fisher-information diagnostics, status flags, and provenance needed to interpret comparisons under that parameterization.
+
+The contribution is a shared-scene diagnostic workflow. From that workflow we derive four paper-facing outputs: lateral and axial Cramer--Rao diagnostics, detected-quanta-normalized comparisons, algebraic fusion and time-allocation checks, and supervision masks whose positive/ignore labels are gated by support and information conditions. These are downstream uses of one framework rather than separate theoretical claims.
+
+We use the term \emph{contract} for an evaluation view: Contract-LP fixes lateral particle-position diagnostics, Contract-LZ fixes axial diagnostics, Contract-Q fixes detected-quanta normalization, and Contract-NR fixes native-regime source-use auditing. A contract is not a benchmark leaderboard. It states what is being optimized and which artifacts must pass before a row can be treated as validated.
+
+The manuscript is therefore organized around the minimum load-bearing evidence: the shared-scene formulation, the symmetry/fusion consequences, the matched-modality-packet implementation, the supervision policy, and demonstrations whose generated artifacts expose convergence and provenance status.

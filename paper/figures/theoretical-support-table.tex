@@ -1,0 +1,14 @@
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.18\linewidth}>{\raggedright\arraybackslash}p{0.28\linewidth}>{\raggedright\arraybackslash}p{0.28\linewidth}>{\raggedright\arraybackslash}p{0.18\linewidth}@{}}
+\toprule
+Claim & What it says & Simulator diagnostic & Output shown in \\
+\midrule
+Symmetry rank theorem & Contrast-functional continuous symmetry predicts $\mathrm{SE}(3)$ rank deficit. & Rank predictor plus observed Fisher rank and singular-axis metadata. & Table~\ref{tab:orientation-crlb}. \\
+Fusion-symmetry corollary & Fusion breaks only rotation symmetries not shared by each selected modality. & Fused-rank predictor from the intersection stabilizer dimension. & Tables~\ref{tab:orientation-crlb} and~\ref{tab:fusion-symmetry-diagnostic}. \\
+Reject-rule support-score decomposition & Supported supervision uses bounded signal, information, temporal, and ambiguity support factors combined as clipped log odds by default. & Supervision consistency evaluation for representative supported, borderline, and excluded targets. & Table~\ref{tab:supervision-audit}. \\
+Registration covariance & Registration uncertainty monotonically weakens fused information. & Registration-adjusted bound and degradation fraction. & Table~\ref{tab:registration-degradation}. \\
+Loewner dominance & Loewner-dominated information-rate matrices can be pruned for fixed-budget scheduling. & Synthetic two-matrix dominance check and Loewner-maximal set. & Table~\ref{tab:loewner-dominance}. \\
+Structured-background nuisance projection & Structured background removes the nuisance-subspace projection of signed particle derivatives. & Raw and nuisance-adjusted Fisher summaries for a synthetic background basis. & Table~\ref{tab:structured-background-loss}. \\
+Detected-quanta scaling & Poisson-dominated detected-quanta scaling changes the Cram\'{e}r--Rao bound as $1/\sqrt{\alpha}$ when normalized image shape and detector regime are fixed. & Fixed-budget ordering and detected-quanta sweep. & Table~\ref{tab:budget-normalized}; Fig.~\ref{fig:detected-quanta-budget-pareto}. \\
+Diminishing fusion returns & Best-$k$ fusion bounds can saturate under a supplied modality set. & Best-$k$ fusion curve under the implemented modality set. & Fig.~\ref{fig:fusion-curve}. \\
+\bottomrule
+\end{tabular}

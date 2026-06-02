@@ -1,0 +1,84 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "syniscopy"
+version = "1.1.1"
+description = "Synthetic microscopy simulation and Fisher-diagnostic tooling."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+dependencies = [
+  "numpy>=1.24,<2",
+  "scipy>=1.10",
+  "opencv-python-headless>=4.8,<4.12",
+  "pillow>=10",
+  "matplotlib>=3.7",
+  "tqdm>=4.65",
+]
+
+[project.scripts]
+syniscopy-simulate = "main:main"
+syniscopy-dataset = "create_dataset:main"
+syniscopy-fisher-report = "lab_fisher_report:main"
+
+[tool.setuptools]
+package-dir = {"" = "codebase"}
+py-modules = [
+  "acquisition_costs",
+  "backend_fidelity",
+  "bootstrap",
+  "calibration_profiles",
+  "camera_noise",
+  "common_utils",
+  "composite_shapes",
+  "counterfactual_packets",
+  "create_dataset",
+  "dataset_generator",
+  "dataset_schema",
+  "experiment_contracts",
+  "json_utils",
+  "main",
+  "mask_generation",
+  "materials",
+  "metadata",
+  "mie_scattering",
+  "modality_compatibility",
+  "modality_profiles",
+  "modality_registry",
+  "optical_extensions",
+  "optics",
+  "packet_validation",
+  "param_utils",
+  "particle_model",
+  "particle_specs",
+  "postprocessing",
+  "presets",
+  "pupil_sampling",
+  "shared_constants",
+  "single_frame_viewer",
+  "source_use_audit",
+  "substrate_fitting",
+  "supervision_calibration",
+  "supervision_policy",
+  "thinfilm",
+  "trackability",
+  "trajectory",
+  "vectorial_optics",
+  "volume_rendering",
+]
+
+[tool.setuptools.packages.find]
+where = ["codebase"]
+include = [
+  "config*",
+  "dataset*",
+  "fisher*",
+  "imaging_models*",
+  "lab_fisher_report*",
+  "param_schema*",
+  "rendering*",
+  "simulation*",
+  "substrate*",
+]

@@ -2,14 +2,13 @@ import argparse
 import copy
 import json
 import os
-from dataclasses import asdict, is_dataclass
-from typing import Any
 
 import cv2
 import numpy as np
 
 from config import PARAMS
-from main import generate_single_frame_views
+from json_utils import json_safe, load_typed_json
+from simulation import generate_single_frame_views
 from param_utils import build_params_from_controls
 from postprocessing import compute_single_frame_contrast
 
@@ -39,9 +38,9 @@ def _compute_center_position_nm(params_viewer: dict) -> tuple[float, float]:
     """
     image_size_pixels = float(params_viewer["image_size_pixels"])
     pixel_size_nm = float(params_viewer["pixel_size_nm"])
-    L_nm = image_size_pixels * pixel_size_nm
-    x_center_nm = 0.5 * L_nm
-    y_center_nm = 0.5 * L_nm
+    center_nm = 0.5 * (image_size_pixels - 1.0) * pixel_size_nm
+    x_center_nm = center_nm
+    y_center_nm = center_nm
     return x_center_nm, y_center_nm
 
 
@@ -176,82 +175,13 @@ def _tailor_existing_params_for_preview(params_base: dict, output_dir: str) -> d
     return params
 
 
-def _complex_to_json(obj: complex) -> dict[str, float]:
-    """
-    Convert a complex number into a JSON-friendly dict representation.
-    """
-    return {"real": float(obj.real), "imag": float(obj.imag)}
-
-
-def _numpy_to_native(obj: Any) -> Any:
-    """
-    Convert NumPy scalar/array types to plain Python types and lists so that
-    the structure becomes JSON-serializable.
-
-    - np.ndarray -> list
-    - np.generic scalars -> Python scalars
-    - complex numbers -> {"real": float, "imag": float}
-    """
-    if isinstance(obj, np.ndarray):
-        if np.iscomplexobj(obj):
-            return np.vectorize(
-                lambda v: _complex_to_json(complex(v)),
-                otypes=[object],
-            )(obj).tolist()
-        return obj.tolist()
-
-    if isinstance(obj, (np.floating, np.integer)):
-        return obj.item()
-
-    if isinstance(obj, np.bool_):
-        return bool(obj)
-
-    if isinstance(obj, complex):
-        return _complex_to_json(obj)
-
-    if is_dataclass(obj):
-        return _numpy_to_native(asdict(obj))
-
-    return obj
-
-
-def _make_params_json_serializable(params: dict) -> dict:
-    """
-    Recursively convert a parameter dictionary containing NumPy arrays,
-    NumPy scalars, and complex numbers into a JSON-serializable structure.
-
-    Complex numbers are represented as {"real": ..., "imag": ...}.
-    """
-    def convert(value: Any) -> Any:
-        # Handle dicts
-        if isinstance(value, dict):
-            return {str(k): convert(v) for k, v in value.items()}
-
-        # Handle sequences (lists/tuples)
-        if isinstance(value, (list, tuple)):
-            return [convert(v) for v in value]
-
-        # First normalize NumPy / complex types to native.
-        native = _numpy_to_native(value)
-
-        # After normalization, complex numbers will have been converted already.
-        if isinstance(native, dict):
-            # Could be a pre-existing dict that should itself be converted.
-            return {str(k): convert(v) for k, v in native.items()}
-
-        return native
-
-    return convert(params)
-
-
 def _dump_params_to_json(params: dict, output_path: str) -> None:
     """
     Serialize the given parameter dictionary (after JSON-ification) to the
     specified JSON file path.
     """
-    serializable_params = _make_params_json_serializable(params)
     with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(serializable_params, f, indent=2, sort_keys=True)
+        json.dump(json_safe(params), f, indent=2, sort_keys=True, allow_nan=False)
 
 
 def _save_frame_as_png(frame: np.ndarray, path: str) -> None:
@@ -377,10 +307,11 @@ def main() -> None:
         np.random.seed(args.seed)
 
     if args.params_json:
-        with open(args.params_json, "r", encoding="utf-8") as fh:
-            params_loaded = json.load(fh)
-        if not isinstance(params_loaded, dict):
-            raise ValueError("--params_json must contain a JSON object.")
+        params_loaded = load_typed_json(
+            args.params_json,
+            expected=dict,
+            context="--params_json",
+        )
         params_viewer = _tailor_existing_params_for_preview(params_loaded, output_dir)
     else:
         # Tailor params for a single near-centered particle and a single frame,

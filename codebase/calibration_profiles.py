@@ -23,14 +23,14 @@ import numpy as np
 
 from camera_noise import analysis_contrast_noise_variance
 from config import PARAMS
-from fisher_diagnostic import compute_fisher_information, compute_localization_crlb
-from imaging_model import (
-    SUPPORTED_MODALITIES,
-    canonical_modality_name,
-    modality_display_name,
+from fisher import compute_fisher_information, compute_localization_crlb
+from imaging_models import (
+    get_imaging_model,
     modality_uses_relative_reference_contrast,
 )
-from main import generate_single_frame_views
+from json_utils import json_safe
+from simulation import generate_single_frame_views
+from modality_registry import SUPPORTED_MODALITIES, canonical_modality_name, modality_display_name
 
 
 DEFAULT_IMAGE_SIZE = 128
@@ -48,20 +48,6 @@ LOCALIZATION_SCALE_CLASSIFICATIONS = {
 NONLOCALIZATION_NUMERIC_SCALE_CLASSIFICATIONS = {
     "DIMENSIONAL_METROLOGY_SCALE_NOT_LOCALIZATION",
 }
-
-
-def _json_safe(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {str(k): _json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe(v) for v in value]
-    if isinstance(value, np.ndarray):
-        return _json_safe(value.tolist())
-    if isinstance(value, np.generic):
-        return _json_safe(value.item())
-    if isinstance(value, float):
-        return value if np.isfinite(value) else None
-    return value
 
 
 def _particle(diameter_nm: float, material: str = "polystyrene") -> dict[str, Any]:
@@ -103,6 +89,8 @@ def native_params(case: dict[str, Any]) -> dict[str, Any]:
         "particle_material",
         "fluorescent_polystyrene" if "fluorescence" in modality else "polystyrene",
     ))
+    pupil_samples = int(case.get("pupil_samples", DEFAULT_PUPIL_SAMPLES))
+    vectorial_pupil_samples = int(case.get("vectorial_pupil_samples", pupil_samples))
 
     params = deepcopy(PARAMS)
     params.update(
@@ -110,9 +98,11 @@ def native_params(case: dict[str, Any]) -> dict[str, Any]:
             "imaging_model": modality,
             "image_size_pixels": image_size,
             "pixel_size_nm": pixel_size_nm,
-            "pupil_samples": int(case.get("pupil_samples", DEFAULT_PUPIL_SAMPLES)),
+            "pupil_samples": pupil_samples,
+            "vectorial_pupil_samples": vectorial_pupil_samples,
             "psf_oversampling_factor": int(case.get("psf_oversampling_factor", 2)),
             "fps": 24.0,
+            "num_frames": 1,
             "duration_seconds": 1.0 / 24.0,
             "wavelength_nm": float(case.get("wavelength_nm", DEFAULT_WAVELENGTH_NM)),
             "numerical_aperture": float(case.get("numerical_aperture", 1.0)),
@@ -143,15 +133,11 @@ def native_params(case: dict[str, Any]) -> dict[str, Any]:
         }
     )
     params.update(deepcopy(case.get("overrides", {})))
-    side_nm = image_size * pixel_size_nm
+    center_nm = 0.5 * (image_size - 1) * pixel_size_nm
     p = _particle(diameter_nm, material=material)
-    p["motion"]["initial_position_nm"] = [0.5 * side_nm, 0.5 * side_nm, z_nm]
+    p["motion"]["initial_position_nm"] = [center_nm, center_nm, z_nm]
     params["particles"] = [p]
     return params
-
-
-def _relative_reference_for_noise(modality: str) -> bool:
-    return modality_uses_relative_reference_contrast(modality)
 
 
 def run_calibration_profile(modality: str) -> dict[str, Any]:
@@ -176,31 +162,68 @@ def run_calibration_profile(modality: str) -> dict[str, Any]:
         signal_arr,
         reference_arr,
         params,
-        relative_reference=_relative_reference_for_noise(canonical_modality),
+        relative_reference=modality_uses_relative_reference_contrast(canonical_modality),
     )
     crlb = compute_localization_crlb(contrast_arr, noise_var, float(params["pixel_size_nm"]))
     fisher = compute_fisher_information(contrast_arr, noise_var, float(params["pixel_size_nm"]))
     computed = float(crlb["sigma_xy_nm"])
     target = float(case["target_sigma_xy_nm"])
-    ratio = computed / target if np.isfinite(computed) and target > 0 else float("inf")
     classification = str(case.get("classification", "LITERATURE_LOCALIZATION_SCALE")).upper()
-    source_scale_applies = classification in LOCALIZATION_SCALE_CLASSIFICATIONS
-    numeric_nonlocalization_scale = classification in NONLOCALIZATION_NUMERIC_SCALE_CLASSIFICATIONS
-    if source_scale_applies:
+    source_has_localization_scale = classification in LOCALIZATION_SCALE_CLASSIFICATIONS
+    source_has_nonlocalization_scale = classification in NONLOCALIZATION_NUMERIC_SCALE_CLASSIFICATIONS
+    parameter_match_status = str(case.get("parameter_match_status", "partial")).lower()
+    if parameter_match_status not in {"yes", "partial", "no", "not_applicable"}:
+        parameter_match_status = "partial"
+    is_parameter_matched_localization = bool(
+        source_has_localization_scale and parameter_match_status == "yes"
+    )
+    source_localization_sigma_xy_nm = target if source_has_localization_scale else None
+    source_nonlocalization_scale_nm = target if source_has_nonlocalization_scale else None
+    proxy_tuning_target_sigma_xy_nm = target if not source_has_localization_scale else None
+    comparison_target_sigma_xy_nm = (
+        source_localization_sigma_xy_nm
+        if is_parameter_matched_localization
+        else None
+    )
+    ratio = (
+        computed / comparison_target_sigma_xy_nm
+        if is_parameter_matched_localization
+        and comparison_target_sigma_xy_nm is not None
+        and np.isfinite(computed)
+        and comparison_target_sigma_xy_nm > 0
+        else None
+    )
+    if source_has_localization_scale:
         target_kind = "source_localization_scale"
-    elif numeric_nonlocalization_scale:
+    elif source_has_nonlocalization_scale:
         target_kind = "source_nonlocalization_scale"
     else:
         target_kind = "proxy_comparison_target"
-    agreement_ratio = ratio if source_scale_applies else None
+    agreement_ratio = ratio if source_has_localization_scale else None
     within_order = (
         bool(0.1 <= agreement_ratio <= 10.0)
         if agreement_ratio is not None and np.isfinite(agreement_ratio)
         else None
     )
-    parameter_match_status = str(case.get("parameter_match_status", "partial")).lower()
-    if parameter_match_status not in {"yes", "partial", "no", "not_applicable"}:
-        parameter_match_status = "partial"
+    comparison_row_role = (
+        "computed_localization_comparison"
+        if is_parameter_matched_localization
+        else (
+            "source_localization_scale_provenance"
+            if source_has_localization_scale
+            else "citation_provenance"
+        )
+    )
+    model = get_imaging_model(params)
+    phase_domain_output = str(getattr(model, "output_type", "intensity")) == "phase"
+    signal_sum = float(np.nansum(signal_arr))
+    total_detected_quanta = None if phase_domain_output else signal_sum
+    phase_display_counts_sum = signal_sum if phase_domain_output else None
+    detector_count_sum_semantics = (
+        "phase_display_counts_not_detected_quanta"
+        if phase_domain_output
+        else "detected_quanta"
+    )
     return {
         "modality": canonical_modality,
         "requested_modality": requested_modality,
@@ -211,28 +234,35 @@ def run_calibration_profile(modality: str) -> dict[str, Any]:
         "classification_reason": case.get("classification_reason", ""),
         "parameter_match_status": parameter_match_status,
         "parameter_match_note": case.get("parameter_match_note", ""),
+        "row_role": comparison_row_role,
+        "source_has_localization_scale": bool(source_has_localization_scale),
+        "source_has_nonlocalization_scale": bool(source_has_nonlocalization_scale),
+        "is_parameter_matched_localization_comparison": bool(is_parameter_matched_localization),
+        "is_validation_comparison": bool(is_parameter_matched_localization),
         "particle_material": case.get("particle_material", ""),
         "diameter_nm": float(case.get("diameter_nm", 100.0)),
         "pixel_size_nm": float(params["pixel_size_nm"]),
         "image_size_pixels": int(params["image_size_pixels"]),
         "computed_sigma_xy_nm": computed,
-        "comparison_target_sigma_xy_nm": target,
+        "comparison_target_sigma_xy_nm": comparison_target_sigma_xy_nm,
         "comparison_target_kind": target_kind,
+        "computed_localization_comparison_eligible": bool(is_parameter_matched_localization),
         "source_reported_quantity": case.get("source_reported_quantity", ""),
-        "source_scale_applies_to_localization": bool(source_scale_applies),
-        "reference_target_sigma_xy_nm": (
-            target if source_scale_applies else None
-        ),
-        "published_reference_sigma_xy_nm": (
-            target if source_scale_applies else None
-        ),
+        "source_scale_applies_to_localization": bool(source_has_localization_scale),
+        "source_localization_sigma_xy_nm": source_localization_sigma_xy_nm,
+        "source_nonlocalization_scale_nm": source_nonlocalization_scale_nm,
+        "proxy_tuning_target_sigma_xy_nm": proxy_tuning_target_sigma_xy_nm,
+        "reference_target_sigma_xy_nm": source_localization_sigma_xy_nm,
+        "published_reference_sigma_xy_nm": source_localization_sigma_xy_nm,
         "reference_target_kind": target_kind,
         "agreement_ratio": agreement_ratio,
-        "computed_to_comparison_ratio": ratio,
+        "computed_to_comparison_ratio": agreement_ratio,
         "within_order_of_magnitude": within_order,
         "citation": case["citation"],
         "citation_url": case["citation_url"],
-        "total_detected_quanta": float(np.nansum(signal_arr)),
+        "total_detected_quanta": total_detected_quanta,
+        "phase_display_counts_sum": phase_display_counts_sum,
+        "detector_count_sum_semantics": detector_count_sum_semantics,
         "mean_noise_variance": float(np.nanmean(noise_var)),
         "fisher_trace": float(np.trace(fisher)),
         "fisher_det": float(np.linalg.det(fisher)),
@@ -276,6 +306,12 @@ def write_profile_docs(output_dir: Path) -> list[Path]:
     written = []
     for modality, case in CALIBRATION_PROFILES.items():
         params_preview = native_params(case)
+        model = get_imaging_model(params_preview)
+        response = model.compute_response_function(
+            (int(params_preview["image_size_pixels"]), int(params_preview["image_size_pixels"])),
+            params_preview,
+        )
+        probe_wavelength = response.get("probe_wavelength_nm", params_preview.get("probe_wavelength_nm"))
         path = output_dir / f"{modality}.md"
         classification = str(case.get("classification", "")).upper()
         if classification in LOCALIZATION_SCALE_CLASSIFICATIONS:
@@ -306,7 +342,11 @@ def write_profile_docs(output_dir: Path) -> list[Path]:
             "",
             "## Parameters",
             "",
-            f"- Wavelength: {params_preview.get('wavelength_nm')} nm",
+            f"- Configured optical wavelength: {params_preview.get('wavelength_nm')} nm",
+            f"- Probe wavelength: {probe_wavelength} nm",
+            f"- Response kind: {response.get('kind', '')}",
+            f"- Measurement domain: {response.get('measurement_domain', '')}",
+            f"- Fidelity label: {response.get('fidelity_label', '')}",
             f"- NA: {params_preview.get('numerical_aperture')}",
             f"- Particle material: {case.get('particle_material', '')}",
             f"- Particle diameter: {case.get('diameter_nm')} nm",
@@ -318,7 +358,7 @@ def write_profile_docs(output_dir: Path) -> list[Path]:
             "",
             "```json",
             json.dumps(
-                _json_safe(case.get("overrides", {})),
+                json_safe(case.get("overrides", {})),
                 indent=2,
                 sort_keys=True,
                 allow_nan=False,
@@ -342,7 +382,7 @@ def write_calibration_outputs(output_dir: str | Path) -> list[dict[str, Any]]:
     write_profile_docs(output_dir / "calibration_profiles")
     (output_dir / "calibration_reference_check_manifest.json").write_text(
         json.dumps(
-            _json_safe({
+            json_safe({
                 "schema_version": "syniscopy-calibration-reference-check-v1",
                 "modalities": list(CALIBRATION_PROFILES),
                 "rows_csv": rows_csv.name,
@@ -636,7 +676,7 @@ CALIBRATION_PROFILES: dict[str, dict[str, Any]] = {
     "tem_phase_contrast": {
         "profile_id": "tem_ctf_bonevich_nist_native",
         "modality": "tem_phase_contrast",
-        "profile_summary": "Native-pitch TEM weak-phase CTF check for nanoparticle sizing/localization.",
+        "profile_summary": "Native-pitch TEM weak-phase CTF check for nanoparticle dimensional metrology scale.",
         "classification": "DIMENSIONAL_METROLOGY_SCALE_NOT_LOCALIZATION",
         "classification_reason": "Bonevich et al. address TEM nanoparticle size/dimensional metrology, not a lateral particle-center localization bound.",
         "parameter_match_status": "not_applicable",
@@ -654,7 +694,7 @@ CALIBRATION_PROFILES: dict[str, dict[str, Any]] = {
     "sem_secondary_electron": {
         "profile_id": "sem_crouzier_2019_native",
         "modality": "sem_secondary_electron",
-        "profile_summary": "Native-pitch SEM secondary-electron nanoparticle localization/sizing proxy.",
+        "profile_summary": "Native-pitch SEM secondary-electron nanoparticle dimensional metrology proxy.",
         "classification": "DIMENSIONAL_METROLOGY_SCALE_NOT_LOCALIZATION",
         "classification_reason": "Crouzier et al. report SEM nanoparticle diameter/dimensional measurement uncertainty, not a lateral particle-center localization bound.",
         "parameter_match_status": "not_applicable",

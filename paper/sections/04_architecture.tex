@@ -1,0 +1,176 @@
+\section{Information Layer}
+\label{sec:information-layer}
+\label{sec:architecture}
+
+\subsection{Shared simulation frame}
+
+A single latent particle/sample state defines the image-domain quantities used in simulation: rendered frames, per-particle contrast images, noise maps, supervision masks, loss weights, and rejection reasons. Matched modality packets collect those image-domain arrays with per-modality observations. The same state also defines the information-domain quantities used for modality comparison: lateral, axial, and $\mathrm{SE}(3)$ Fisher matrices; scalar Cram\'{e}r--Rao lower-bound summaries; per-pixel Fisher density maps; and fusion and time-allocation diagnostics. Because these quantities share one coordinate frame, the Fisher matrices can be ordered, fused, and used by the supervision policy to gate known-object pixels.
+
+\paragraph{Serial shared-scene Fisher information-rate region.}
+For a fixed latent scene $s$ (particle geometry/material, medium, mounting interface, trajectory state, and detected-quanta and noise budget), let $\mathcal{M}$ be the implemented modality library and let $F_M(s)$ be the Fisher matrix computed for modality $M$ on the common physical parameter vector. For serial scheduling, Syniscopy uses the achievable serial-acquisition shared-scene Fisher information-rate region
+\begin{equation}
+  \mathcal{R}(s)
+  =
+  \left\{
+    \sum_{M\in\mathcal{M}} w_M A_M(s)
+    \;:\;
+    w_M\ge 0,\;\sum_M w_M \le 1
+  \right\},
+  \qquad
+  A_M(s)=F_M(s)/\Delta t_M ,
+\end{equation}
+with the serial-scheduling case obtained by optimizing the weights $w_M=t_M/T$. This serial-only region diagnoses how to spend a fixed acquisition budget. Simultaneous independent-channel fusion is a separate Fisher-sum diagnostic, $\sum_{M\in\mathcal{S}}F_M(s)$, on the same shared parameter frame; it is not generally an element of $\mathcal{R}(s)$ because it is not a serial time-rate allocation. These two operations answer different modality-choice questions: the rate region allocates a serial acquisition budget, while the fusion sum diagnoses what independent, compatible channels could contribute if acquired for the same sample state. The theorem below constrains the ranks of the Fisher matrices used in both operations through contrast-functional symmetry. The remaining named diagnostics describe how registration error, structured background, Loewner dominance, and detected-quanta scaling alter the corresponding Fisher objects using established matrix and estimation results. Each formal statement or operational diagnostic is instantiated by a named simulator output listed in \cref{tab:theoretical-support}.
+
+\subsection{Per-frame Fisher information}
+
+Syniscopy uses the per-frame Fisher information under independent pixels with a fixed variance map, or under the mean-Fisher diagnostic approximation for Poisson--Gaussian count profiles. Let $c_i(\mathbf{r},t)$ be the expected per-particle detector-domain contrast image for particle $i$ and $\sigma_n^2(\mathbf{r},t)$ the pixel-wise measurement-domain noise variance evaluated for the diagnostic profile. For localization coordinates $x_j$, Syniscopy uses
+\begin{equation}
+  F_{jk}(i,t) =
+  \sum_{\mathbf{r}}
+  \frac{(\partial c_i/\partial x_j)(\partial c_i/\partial x_k)}
+       {\sigma_n^2(\mathbf{r},t)} ,
+\end{equation}
+The simulator computes derivatives by central differences in the rendered image domain, reads finite-axis covariance lower bounds from $F^{-1}$, and reports singular or near-singular axes explicitly rather than returning an ill-conditioned inverse.
+
+Sequence-aware contracts use the same per-frame Fisher objects. For independent static frames, Syniscopy sums the per-frame Fisher matrices and reports the cumulative CRLB. For dynamic scenes, the estimator layer can instead run a Bayesian information-filter CRLB with a configured state transition, Brownian process covariance, initial covariance, frame rate, and optional smoothing. The generated metadata records the selected sequence contract, state axes, axis units, process covariance units, frame count, and whether the reported row is \texttt{per\_frame}, \texttt{static\_cumulative}, or \texttt{dynamic\_bayesian\_information\_filter}.
+
+For lateral localization, the rendered-image derivative is the detector-grid central difference of the signed contrast frame, converted to the coordinate derivative under the stationary-shift convention $I(\mathbf{r};x_0,y_0)=C(\mathbf{r}-\mathbf{r}_0)$. This is the stationary-shift approximation to a subpixel rerendered derivative, so absolute values can depend on pixel pitch and derivative discretization unless the profile is convergence-checked at the intended sampling. Axial and orientation derivatives are rerendered through symmetric perturbation pairs as described below.
+
+The axial/orientation extension adds one center render plus symmetric perturbation pairs for $z$, $\omega_x$, $\omega_y$, and $\omega_z$; lateral coordinate derivatives are computed from the rendered image domain with this stationary-shift sign convention. The coordinates $\omega_x,\omega_y,\omega_z$ are infinitesimal body-frame rotation coordinates, not spatial translations. Table labels identify when one of these axes is the bond, chain, or rod symmetry axis. Under the stated local-identifiability and diagnostic-profile assumptions, the diagnostic examples follow the expected symmetry cases: sphere-like contrast gives rank 3 with all rotation axes singular, axisymmetric contrast gives rank 5 with rotation about the symmetry axis singular, and non-axisymmetric composites can reach rank 6. The implementation can attach explicit continuous-symmetry metadata to particle specifications and compare the observed estimable state-axis rank against the theorem below.
+
+Following the distinction from McGray et al.~\cite{orientation-precision} in Section~\ref{sec:related}, the result here identifies continuous stabilizers of a modality-specific contrast functional as Fisher-null directions.
+
+\begin{theorem}[Contrast-functional symmetry gives $\mathrm{SE}(3)$ Fisher-rank deficit]
+\label{thm:symmetry-fisher-rank}
+Let $c(\mathbf{r};R,\mathbf{x})$ be the detector-domain contrast image of a rigid particle with position $\mathbf{x}$ and orientation $R\in \mathrm{SO}(3)$ under a fixed imaging model, sample environment, and detector noise map. Let $G_0\subset \mathrm{SO}(3)$ be the identity component of the particle's rotational stabilizer for that contrast functional, with dimension $d$. Then every generator in the Lie algebra $\mathfrak{g}_0$ is a rotational null direction of the Fisher matrix. Consequently the rotational Fisher block has nullity at least $d$ and the full $\mathrm{SE}(3)$ Fisher matrix has rank at most $6-d$. In any local configuration set where the three translations and all rotations transverse to $\mathfrak{g}_0$ are locally identifiable and no additional contrast, sampling, or nuisance degeneracy is present, the local Fisher rank is $6-d$.
+\end{theorem}
+
+\begin{proof}
+For any one-parameter subgroup $\exp(t\xi)\in G_0$, the stabilizer condition gives $c(\mathbf{r};R\exp(t\xi),\mathbf{x})=c(\mathbf{r};R,\mathbf{x})$ for all $t$. Differentiating at $t=0$ gives $\partial c/\partial \xi\equiv 0$ pointwise in the detector image. Every Fisher entry involving that generator is therefore a sum of zero derivative products divided by $\sigma_n^2(\mathbf{r})$, so $\xi$ lies in the nullspace of the rotational Fisher block. The $d$ independent generators of $\mathfrak{g}_0$ give at least $d$ rotational null directions. On a local set where the three translations and all transverse rotations are identifiable and no additional contrast, sampling, or nuisance degeneracy removes information from those coordinates, the standard local-identifiability/Fisher-rank condition gives rank $6-d$ \cite{rothenberg-identification,orientation-precision}. The equality is therefore conditional on local identifiability outside the stabilizer; symmetry alone proves the nullity lower bound, not the absence of other degeneracies.
+\end{proof}
+
+The stabilizer here is not merely geometric. It is the stabilizer of the modality-specific contrast functional, so illumination, projection, substrate state, detector sampling, and modality response can break or introduce effective symmetries. The rank statement is local in a coordinate chart of $\mathrm{SE}(3)$; discrete orientation aliases remain global ambiguities rather than infinitesimal Fisher-null directions. The rank columns in \cref{tab:orientation-crlb} place this prediction next to the observed rank for the composite-particle diagnostic cases, so the structural prediction and the numerical Fisher result are read together rather than as separate claims.
+
+\begin{corollary}[Fusion breaks only non-shared continuous symmetries]
+\label{cor:fusion-symmetry-breaking}
+For an independent, fixed-registration modality subset $\mathcal{S}$ on one $\mathrm{SE}(3)$ parameter frame, let $G_{M,0}$ be the connected stabilizer of modality $M$'s contrast functional and let
+\[
+  G_{\mathcal{S},0}=\left(\bigcap_{M\in\mathcal{S}}G_{M,0}\right)_0 .
+\]
+Then every generator of $\mathrm{Lie}(G_{\mathcal{S},0})$ is a rotational null direction of the fused Fisher matrix $\sum_{M\in\mathcal{S}}F_M$. Generically, the fused rotational rank is $3-\dim G_{\mathcal{S},0}$ under local identifiability of the remaining axes.
+\end{corollary}
+
+\begin{proof}[Proof sketch]
+If $v^\top(\sum_{M\in\mathcal{S}}F_M)v=0$ and every $F_M$ in the selected subset is positive semidefinite, then each nonnegative term $v^\top F_M v$ must be zero, hence $F_M v=0$ for each modality in that subset. The fused Fisher nullspace is therefore the intersection of the per-modality nullspaces. By the theorem, each per-modality rotational nullspace contains the Lie algebra of its contrast-functional stabilizer; intersecting the stabilizers gives the guaranteed fused null directions, and local identifiability outside that intersection gives the generic rank. Operationally, this corollary is the cross-modality statement: fusion can recover an otherwise unobservable rotation axis only if at least one added modality breaks the corresponding contrast symmetry. Dimensions of the individual stabilizers alone are not enough; the intersection subgroup is the object that matters. Discrete symmetries are different: they do not create infinitesimal Fisher null directions because their Lie algebra is zero, but they still create global orientation aliases unless the pose space is quotiented by the finite symmetry group \cite{ambiguous-rotations}.
+\end{proof}
+
+\subsection{Cross-modality ordering and budget normalization}
+
+For the reported information-diagnostic modality set, the simulator renders the same latent particle state through optical profiles, including fluorescence and interference paths, plus electron-microscopy profiles whose selected backend is declared in profile-card metadata. Proxy, physics-based-unvalidated, and reference-validated backend states are explicit contract fields rather than prose assumptions. This produces matched pairs $(c_i^{(M)},\sigma_n^{(M),2})$ on the same spatial parameter frame. The shared latent state is required because each modality must see the same scatterer, material, trajectory, sample environment, and coordinate system for the resulting Fisher matrices to be comparable. Syniscopy reports
+\begin{equation}
+  \rho_M = \frac{\sigma_{xy}^{(M)}}{\sigma_{xy}^{(M^\star)}} ,
+  \qquad
+  N_M = \rho_M^2 ,
+\end{equation}
+where $M^\star$ is the lowest-bound modality under the supplied profile. The ratio $\rho_M$ is the per-frame Cram\'{e}r--Rao ratio, and $N_M$ is the number of independent equal-duration frames of modality $M$ required to match one frame of $M^\star$ under the same supplied profile.
+
+The modality library includes coherent and partially coherent variants for bright-field and dark-field families. In the modality-ordering diagnostics, each row names the specific simulated profile being compared; those row labels should not be read as claims about an entire microscopy family.
+
+Detected-quanta-budget normalization puts count-domain modalities on a common detected-count budget. Count-domain modalities are first mapped to nonnegative count images by \texttt{scale\_intensity\_to\_counts}; those images are rescaled so their sums equal a common budget $N_Q$, and their Poisson means define the noise floor and exposure scale. The signed particle-contrast image remains the Fisher derivative target after that same exposure scaling, so signed contrast is not replaced by a nonnegative background image. Quantitative phase imaging is not treated as a photon-count image. Its phase map remains in radians and the same budget enters through the per-pixel quanta term $n_Q$ in $\sigma_\phi^2=1/(V^2n_Q)+\sigma_{\phi,r}^2$.
+
+\begin{remark}[Detected-quanta scaling diagnostic]
+\label{rem:quanta-budget-scaling}
+For a count-domain modality with fixed normalized image shape and Poisson-dominated detected quanta, scaling the detected-quanta budget by $\alpha>0$ scales Fisher information linearly:
+\begin{equation}
+  F_M(\alpha N_Q)=\alpha F_M(N_Q),
+  \qquad
+  \sigma_M(\alpha N_Q)=\sigma_M(N_Q)/\sqrt{\alpha}.
+\end{equation}
+Thus common budget scaling preserves orderings among modalities that remain inside the same ideal count-domain model, and the frame-equivalence statistic is $(\sigma_M/\sigma_{M^\star})^2$.
+\end{remark}
+
+The implementation records this scaling law as a diagnostic rather than as a new Cram\'{e}r--Rao theorem \cite{thompson-larson-webb,ober-ram-ward,fisher-tutorial}. Additive readout variance breaks exact linear scaling; phase-domain modalities use the stated phase-noise model and are flagged when phase readout variance is non-negligible.
+
+\subsection{Fusion}
+
+For independent modality noise, Fisher information is additive:
+\begin{equation}
+  F_{\mathrm{fusion}}(\mathcal{S}) = \sum_{M\in\mathcal{S}} F^{(M)} .
+\end{equation}
+The fusion Cram\'{e}r--Rao bound is therefore non-increasing as modalities are added, and fusing $k$ identical independent modalities yields the expected $\sqrt{k}$ precision gain. Fusion requires more than separate per-modality simulations: the per-modality Fisher matrices must be expressed in the same physical coordinates for the same particle instance before they can be summed.
+
+The fusion operation is therefore an algebraic independent-channel diagnostic unless the selected modalities are physically compatible for the same sample state. Users should fuse only independently acquired channels with calibrated registration, compatible preparation, and no double-counting of alternate reconstructions of the same detected quanta.
+
+The simulator also accepts a lateral registration covariance $\Sigma_{\mathrm{reg}}$ and interprets it as an independent Gaussian perturbation to each modality's registered lateral position estimate after cross-channel alignment. Under that approximation, the simulator adjusts each lateral contribution as $F'=(F^{-1}+\Sigma_{\mathrm{reg}})^{-1}$ before fusion. Correlated detector noise would require a calibrated cross-modality covariance. Syniscopy exhaustively enumerates lowest-bound $k$-modality subsets for the current library. Larger libraries would require greedy or branch-and-bound search; theoretical guarantees depend on the scalar utility, not on Fisher additivity alone.
+
+\begin{remark}[Registration covariance diagnostic]
+\label{rem:registration-covariance-monotonicity}
+For positive-definite modality Fisher matrix $F_M$ and positive-semidefinite registration covariances $0\preceq\Sigma_1\preceq\Sigma_2$,
+\begin{equation}
+  (F_M^{-1}+\Sigma_2)^{-1}
+  \preceq
+  (F_M^{-1}+\Sigma_1)^{-1}
+  \preceq
+  F_M .
+\end{equation}
+Thus summed fusion information is monotone non-increasing as residual registration uncertainty grows, and covariance-based Cram\'{e}r--Rao criteria are monotone non-decreasing.
+\end{remark}
+
+This is ordinary Loewner-order matrix monotonicity, not new sensor-fusion mathematics \cite{boyd-convex,fisher-fusion}. Its role here is operational: the simulator computes both raw and registration-adjusted per-modality Fisher matrices plus a degradation curve, showing in the registration-covariance diagnostic how subpixel alignment error can remove the practical benefit of cross-channel fusion. The diagnostic is stated for positive-definite $F_M$; the implementation handles singular Fisher matrices numerically via pseudoinverse and reports singular rotational axes explicitly per Theorem~\ref{thm:symmetry-fisher-rank}, separately from the monotonicity claim.
+
+\paragraph{Diminishing fusion returns under the implemented modality set.}
+The fusion curve is interpreted only within the angular and measurement modes represented by the implemented modality library. The curve shows diminishing returns for the supplied modality set, not a complete optical-information capacity bound or angular $k$-space accounting.
+
+\subsection{Time allocation}
+
+Fusion asks what bound is achievable when modalities are observed simultaneously on independent channels. A complementary question is serial scheduling: under a fixed acquisition time budget $T$, how should time be split among modalities with per-frame Fisher matrices $F_M$ and frame times $\Delta t_M$? Syniscopy exposes this as an optimal time-allocation Cram\'{e}r--Rao bound:
+\begin{equation}
+  F_{\mathrm{total}}(\{t_M\}) =
+  \sum_M \frac{t_M}{\Delta t_M}F_M,
+  \qquad
+  \sum_M t_M=T,\quad t_M\ge 0 .
+\end{equation}
+The implementation minimizes A-optimal, D-optimal, or E-optimal scalarizations of the Cram\'{e}r--Rao covariance, corresponding to trace, determinant, and worst-axis criteria, on the simplex with a NumPy-only Frank--Wolfe projected iteration. It initializes at the equal-time allocation projected onto the simplex with any requested minimum-allocation floor, evaluates analytic gradients of the selected scalar criterion with respect to $t_M$, selects the feasible vertex minimizing the linearized objective, and applies Armijo backtracking from step size one with shrink factor 0.5, coefficient $10^{-4}$, and at most 40 backtracking steps. The solver stops at relative objective change below $10^{-9}$, no descent direction, adoption of a better feasible baseline allocation, or the 200-iteration cap. It reports the optimum, the uniform-allocation baseline, the lowest-bound single-modality baseline, convergence status, and the termination reason. This is a scheduling diagnostic, not a replacement for simultaneous fusion.
+
+\begin{remark}[Loewner dominance for fixed-budget allocation]
+\label{rem:loewner-dominance-pruning}
+Define each modality's information-rate matrix $A_M=F_M/\Delta t_M$. If $A_i\preceq A_j$ in Loewner order and a scheduling objective is monotone with respect to total Fisher information, then any feasible allocation assigning time to modality $i$ can be weakly improved by moving that time to modality $j$. Therefore, when no minimum-allocation floor is imposed, there exists an optimum assigning zero time to every strictly Loewner-dominated modality.
+\end{remark}
+
+This dominance rule applies to fixed-budget serial scheduling, not to free simultaneous fusion. A dominated modality with positive Fisher information still improves a fusion sum if the measurement is available at no opportunity cost. The implementation reports the dominance matrix of the information-rate set and can optionally prune dominated modalities before solving the time-allocation problem; pruning is disabled when a positive minimum-allocation floor is requested.
+
+\subsection{Fisher information density}
+
+The Fisher information used to compute the scalar localization bound is the spatial sum of per-pixel Fisher information contributions. Syniscopy exposes those maps directly:
+\begin{equation}
+  f_{xx}(\mathbf{r}) =
+  \frac{(\partial c/\partial x)^2}{\sigma_n^2(\mathbf{r})},
+  \qquad
+  f_{yy}(\mathbf{r}) =
+  \frac{(\partial c/\partial y)^2}{\sigma_n^2(\mathbf{r})}.
+\end{equation}
+For the supplied modality profile, the maps localize detector pixels with high contribution to the localization Fisher integral and can be used as auxiliary diagnostics or optional information-aware supervision targets. This does not change the Cram\'{e}r--Rao mathematics; it makes explicit an intermediate that was already required to compute the bound. For localization-oriented training, Fisher density can provide a task-specific auxiliary target: it tells a model which pixels carry estimator-relevant information about position, not merely which pixels are geometrically occupied.
+
+\begin{remark}[Structured background as nuisance-information projection]
+\label{rem:structured-background-fisher}
+Let $g_\theta(\mathbf{r})=\partial c(\mathbf{r})/\partial\theta$ be signed image derivatives for particle parameters $\theta$, and let structured background be represented by nuisance basis images $B_k(\mathbf{r})$ with unknown coefficients $\beta_k$. Under the same pixelwise Gaussian noise model, the Fisher information remaining for $\theta$ after jointly estimating $\beta$ is the Schur complement
+\begin{equation}
+  F_{\theta|\beta}
+  =
+  F_{\theta\theta}
+  -
+  F_{\theta\beta}F_{\beta\beta}^{+}F_{\beta\theta}.
+\end{equation}
+The information-loss term is the weighted projection of particle-derivative directions onto the structured-background nuisance span.
+\end{remark}
+
+This is the standard nuisance-parameter Cram\'{e}r--Rao bound specialized to Syniscopy's detector-grid representation \cite{fisher-tutorial,ober-ram-ward,fisher-fusion}. The implementation uses signed derivative maps, not squared density maps, because cross-Fisher terms require derivative sign. The resulting per-modality diagnostic quantifies Fisher information loss under the specified nuisance basis: for a supplied substrate nuisance basis, the simulator reports how much localization Fisher information remains after projecting out background directions. The sample-environment layer can provide nuisance basis maps such as height, material fraction, topography gradient, secondary-electron yield, and autofluorescence density; users can also pass basis maps recovered from real background calibration.
+
+\subsection{Matched modality packets}
+
+For downstream learning systems that need the same latent particle state observed under several contrast mechanisms, matched modality packets represent one trajectory/sample state across modality profiles. A packet contains per-modality contrast images, masks, Fisher matrices, and Cram\'{e}r--Rao lower-bound summaries. This representation supports future training or evaluation of modality-selection models without rerunning trajectory generation for each modality profile. The packet format lets modality vary after scene generation, enabling learned modality-selection studies against matched information quantities, but no learned modality selector is trained or evaluated in this manuscript.
+
+The serialized packet format is a compressed NumPy archive with one \texttt{metadata\_json} array plus modality-keyed arrays. Image arrays are stored as \texttt{image\_\_<modality>}, Fisher matrices as \texttt{fisher\_\_<modality>}, and supervision masks as \texttt{mask\_\_<name>}. The metadata records \texttt{schema\_version}, \texttt{packet\_kind}, the modality list, safe-key maps back to modality names, image shape, latent state, \texttt{shared\_coordinate\_frame}, per-modality Cram\'{e}r--Rao summaries, and the mask names present in the packet. Matched information packets require every modality to have an image, Fisher matrix, Cram\'{e}r--Rao summary, and at least one supervision mask on the same image grid.
+
+
+\paragraph{Status-rich comparison contracts.} The codebase defines executable comparison contracts and status-rich FisherResult metadata. Downstream fusion, time-allocation, registration, detected-quanta, and paper-table rows are required to carry or inherit convergence and validation status rather than relying on display-only pass/fail strings. Algebraic Fisher fusion remains computable for diagnostic subsets, while physical feasibility is represented separately by the modality-compatibility contract.

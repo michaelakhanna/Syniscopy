@@ -1,17 +1,25 @@
 import numpy as np
 from config import BOLTZMANN_CONSTANT
+from shared_constants import NUM_FRAME_DURATION_SEARCH_STEPS
 from particle_specs import (
     get_particle_specs,
     hydrodynamic_diameters_nm,
     initial_positions_from_specs_nm,
 )
-from substrate_pattern import (
+from substrate.patterns import (
     is_position_in_substrate_solid,
     project_position_to_fluid_region,
     reflect_position_across_substrate_boundary,
 )
 
 _INITIAL_POSITION_MAX_ATTEMPTS = 1000
+
+
+def _rng_from_params(params: dict, stream: int) -> np.random.Generator:
+    seed = params.get("random_seed", None)
+    if seed is None:
+        return np.random.default_rng()
+    return np.random.default_rng(np.random.SeedSequence([int(seed) % (2**32), int(stream)]))
 
 
 def _positive_finite_param(params: dict, key: str) -> float:
@@ -46,6 +54,69 @@ def resolve_num_frames(params: dict) -> int:
             "positive to generate at least one frame."
         )
     return num_frames
+
+
+def resolve_public_num_frames(
+    params: dict,
+    *,
+    drop_num_frames: bool = False,
+    enforce_existing_duration: bool = False,
+) -> None:
+    """Apply ``num_frames`` by resolving ``duration_seconds`` in place.
+
+    Parameters
+    ----------
+    drop_num_frames:
+        Remove ``num_frames`` from ``params`` after resolving ``duration_seconds``.
+    enforce_existing_duration:
+        If true and ``duration_seconds`` is present, require the provided value to
+        remain numerically consistent with the requested frame count.
+    """
+    raw_num_frames = params.get("num_frames", None)
+    if raw_num_frames is None:
+        return
+    if isinstance(raw_num_frames, bool):
+        raise ValueError("PARAMS['num_frames'] must be a positive integer, not bool.")
+    if isinstance(raw_num_frames, (float, np.floating)) and not float(raw_num_frames).is_integer():
+        raise ValueError("PARAMS['num_frames'] must be an integer frame count.")
+    try:
+        requested_num_frames = int(raw_num_frames)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("PARAMS['num_frames'] must be a positive integer.") from exc
+    if requested_num_frames <= 0:
+        raise ValueError("PARAMS['num_frames'] must be positive.")
+
+    fps = float(params.get("fps", 0.0))
+    if fps <= 0.0:
+        raise ValueError("PARAMS['fps'] must be positive when num_frames is set.")
+
+    if enforce_existing_duration and "duration_seconds" in params:
+        supplied_duration = float(params["duration_seconds"])
+        implied_num_frames = int(fps * supplied_duration)
+        if implied_num_frames != requested_num_frames:
+            raise ValueError(
+                "Conflicting dataset timing overrides: "
+                f"num_frames={requested_num_frames} but "
+                f"duration_seconds={supplied_duration} and fps={fps} imply "
+                f"{implied_num_frames} frame(s) under the int(fps * duration_seconds) rule."
+            )
+        if drop_num_frames:
+            params.pop("num_frames", None)
+        return
+
+    duration_seconds = requested_num_frames / fps
+    for _ in range(NUM_FRAME_DURATION_SEARCH_STEPS):
+        if int(fps * duration_seconds) == requested_num_frames:
+            params["duration_seconds"] = float(duration_seconds)
+            if drop_num_frames:
+                params.pop("num_frames", None)
+            return
+        duration_seconds = float(np.nextafter(duration_seconds, np.inf))
+
+    raise RuntimeError(
+        "Could not choose duration_seconds that reproduces "
+        f"num_frames={requested_num_frames} at fps={fps}."
+    )
 
 
 def stokes_einstein_diffusion_coefficient(diameter_nm, temp_K, viscosity_Pa_s):
@@ -105,7 +176,7 @@ def resolve_translational_diameters_nm(params) -> np.ndarray:
     return diameters_nm.astype(float)
 
 
-def simulate_trajectories(params):
+def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
     """
     Simulate 3D Brownian motion trajectories for a set of particles.
 
@@ -204,6 +275,8 @@ def simulate_trajectories(params):
             containing the [x, y, z] coordinates of each particle for each
             frame, in nanometers.
     """
+    rng = _rng_from_params(params, 0x5452414A) if rng is None else rng
+
     # --- Basic simulation timing and counts ---
     fps = _positive_finite_param(params, "fps")
     num_frames = resolve_num_frames(params)
@@ -312,8 +385,8 @@ def simulate_trajectories(params):
             # geometries from hanging trajectory generation.
             max_attempts = _INITIAL_POSITION_MAX_ATTEMPTS
             for _ in range(max_attempts):
-                x_nm = float(np.random.rand() * img_size_nm)
-                y_nm = float(np.random.rand() * img_size_nm)
+                x_nm = float(rng.random() * img_size_nm)
+                y_nm = float(rng.random() * img_size_nm)
                 if not is_position_in_substrate_solid(
                     params,
                     x_nm,
@@ -330,22 +403,22 @@ def simulate_trajectories(params):
                     "verify the substrate pattern geometry parameters."
                 )
         else:
-            initial_positions[i, 0:2] = np.random.rand(2) * img_size_nm
+            initial_positions[i, 0:2] = rng.random(2) * img_size_nm
 
         # Initialize z according to the selected z-motion model.
         if z_model == "unconstrained":
             # Symmetric distribution around z = 0. This is only an initial
             # sampling span, not a Brownian-motion confinement boundary.
-            initial_positions[i, 2] = (float(np.random.rand()) - 0.5) * initial_z_span_nm
+            initial_positions[i, 2] = (float(rng.random()) - 0.5) * initial_z_span_nm
         elif z_model == "reflecting_floor_z0":
             # Start in the half-space z >= 0. For simplicity and consistency
             # with the PSF stack, sample z uniformly from the positive
             # half of the initial z span.
-            initial_positions[i, 2] = float(np.random.rand()) * (initial_z_span_nm / 2.0)
+            initial_positions[i, 2] = float(rng.random()) * (initial_z_span_nm / 2.0)
         elif z_model == "reflecting_ceiling_z0":
             # Start in the half-space z <= 0 and sample z uniformly from the
             # negative half of the initial z span.
-            initial_positions[i, 2] = -float(np.random.rand()) * (initial_z_span_nm / 2.0)
+            initial_positions[i, 2] = -float(rng.random()) * (initial_z_span_nm / 2.0)
         else:
             # This should not be reachable due to earlier validation.
             raise RuntimeError(
@@ -376,7 +449,7 @@ def simulate_trajectories(params):
         # Generate the random walk over time.
         for frame_idx in range(1, num_frames):
             # Draw a 3D Brownian step [dx, dy, dz] in nanometers.
-            step_nm = np.random.normal(loc=0.0, scale=sigma_nm, size=3)
+            step_nm = rng.normal(loc=0.0, scale=sigma_nm, size=3)
 
             # Previous position at the last frame.
             prev_position_nm = trajectories[i, frame_idx - 1, :]
@@ -611,7 +684,13 @@ def resolve_rotational_step_std_rad(params: dict, num_particles: int) -> np.ndar
     return np.full(num_particles, step_std_rad_scalar / np.sqrt(3.0), dtype=float)
 
 
-def simulate_orientations(params: dict, num_particles: int, num_frames: int) -> np.ndarray | None:
+def simulate_orientations(
+    params: dict,
+    num_particles: int,
+    num_frames: int,
+    *,
+    rng: np.random.Generator | None = None,
+) -> np.ndarray | None:
     """
     Simulate rotational Brownian motion (orientation trajectories) for a set
     of particles.
@@ -674,6 +753,7 @@ def simulate_orientations(params: dict, num_particles: int, num_frames: int) -> 
     rotational_enabled = bool(params.get("rotational_diffusion_enabled", False))
     if not rotational_enabled:
         return None
+    rng = _rng_from_params(params, 0x4F524945) if rng is None else rng
 
     num_particles = int(num_particles)
     num_frames = int(num_frames)
@@ -696,7 +776,7 @@ def simulate_orientations(params: dict, num_particles: int, num_frames: int) -> 
     # the same per-video seed used for translational trajectories and noise.
     #
     # We restrict seeds to a safe 32-bit range valid for default_rng.
-    particle_seeds_int = np.random.randint(
+    particle_seeds_int = rng.integers(
         0,
         2**31,
         size=num_particles,

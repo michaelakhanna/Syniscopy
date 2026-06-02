@@ -62,7 +62,8 @@ For fluorescence checks, use a material with fluorescence metadata, such as
 
 ## 3. Pick Modalities
 
-The default lab set focuses on optical and fluorescence paths:
+The default lab set covers the full local default list (optical, fluorescence, TEM,
+and SEM):
 
 ```bash
 python codebase/lab_fisher_report.py --params-json lab_params.json --output lab_reports/my_setup
@@ -84,14 +85,13 @@ python codebase/lab_fisher_report.py \
   --output lab_reports/three_modalities
 ```
 
-Include simplified electron-microscopy paths only when that comparison is
-intentional:
+The default command below now includes TEM/SEM; use `--modalities optical` for an
+optical/fluorescence-only run.
 
 ```bash
 python codebase/lab_fisher_report.py \
   --params-json lab_params.json \
-  --include-electron \
-  --output lab_reports/with_simplified_em
+  --output lab_reports/with_electron_modalities
 ```
 
 ## 4. Inspect Outputs
@@ -101,19 +101,37 @@ Open `lab_reports/my_setup/report.md` first.
 The report directory contains:
 
 - `modality_ranking.csv`: lateral Fisher matrices and Cramér-Rao bounds.
+- `sequence_fisher_summary.csv`: per-frame and cumulative lateral CRLB progression for each modality.
 - `fusion_crlb.csv`: best-k Fisher-fusion diagnostics. Add
   `--include-full-fusion` when a full-library algebraic fusion row is useful.
 - `manifest.json`: requested, reported, and failed modalities.
 - `params_base.json`: base configuration before per-modality imaging-model overrides.
+- `dynamic_modality_summary.json`: dynamic Bayesian CRLB summary when `--dynamic-bayesian` is enabled.
 - `params_resolved_by_modality/`: resolved configuration for each reported modality.
-- `previews/`: display-normalized single-frame contrast previews.
+- `previews/`: display-normalized first-frame contrast previews for each modality sequence.
 - `fisher_density/`: per-pixel lateral Fisher-density maps and arrays.
+
+To run a multi-frame, dynamic-Bayesian pass:
+
+```bash
+python codebase/lab_fisher_report.py \
+  --params-json examples/lab_fisher_params.json \
+  --num-frames 6 \
+  --dynamic-bayesian \
+  --output lab_reports/my_setup_dynamic
+```
 
 The numbers are conditional on the configured forward model and noise model.
 They are most useful for comparing candidate profiles under the same stated
 assumptions, not for claiming native instrument performance without calibration.
 Fusion rows additionally assume independent measurements of the same particle
 state and zero cross-channel registration covariance.
+
+The latest parameter-exposure map for this workflow is available at
+`docs/param_exposure_matrix.json`, and the governing rule-of-thumb for
+public/internal/advanced classification is in
+`docs/param_exposure_policy.md`.
+There is also a generated markdown summary at `docs/param_exposure_summary.md`.
 
 ## 5. What To Calibrate First
 

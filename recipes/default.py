@@ -127,6 +127,17 @@ DEFAULT = {
     "fluorescence_emission_psf_sigma_px": 1.0,
     "fluorescence_background": 0.0,
     "fluorescence_photon_count_scale": 500.0,
+    "fluorescence_backend": "vectorial_photophysics",
+    "fluorescence_photons_per_fluorophore_per_frame": None,
+    "fluorescence_require_physical_photon_budget": False,
+    "fluorescence_collection_efficiency": 1.0,
+    "fluorescence_detector_qe": 1.0,
+    "fluorescence_blinking_rate_per_frame": 0.0,
+    "fluorescence_recovery_rate_per_frame": 0.0,
+    "fluorescence_bleaching_rate_per_frame": 0.0,
+    "fluorescence_allow_psf_fallback": False,
+    "fluorescence_reference_status": "physics_based_unvalidated",
+    "fluorescence_reference_validation_hash": None,
     "fluorescence_spectral_bandwidth_nm": 40.0,
     "fluorescence_excitation_wavelength_nm": 488.0,
     "fluorescence_emission_wavelength_nm": 520.0,
@@ -225,6 +236,21 @@ DEFAULT = {
     # ------------------------------------------------------------------
     # PSF / response calculation controls
     # ------------------------------------------------------------------
+    # optical_field_backend options: scalar_paraxial, vectorial_debye.
+    # Default to vectorial Debye for polarization-aware scattering.
+    "optical_field_backend": "vectorial_debye",
+    # polarization_model options: linear_x, linear_y, unpolarized.
+    "polarization_model": "linear_x",
+    # vectorial_detection_mode options: incoherent_sum, analyzer_x, analyzer_y,
+    # unpolarized, full_vector.
+    "vectorial_detection_mode": "full_vector",
+    # Optional rotation (degrees) of the linear polarization basis for
+    # vectorial_debye.
+    "vectorial_polarization_rotation_deg": 0.0,
+    # Optional vectorial pupil override (None = auto based on optics grid).
+    "vectorial_pupil_samples": None,
+    # Enable/disable aplanatic sqrt(cos θ) apodization in the Debye integral.
+    "vectorial_obliquity_apodization": True,
     "psf_oversampling_factor": 2,
     "pupil_samples": 256,
     # False is the recommended public default: the renderer builds each PSF
@@ -252,11 +278,28 @@ DEFAULT = {
     # noise_parameterization options: camera_counts.
     "noise_parameterization": "camera_counts",
 
+    # Quantum efficiency / electron conversion controls.
+    "detector_qe": 1.0,
+    "detector_input_is_incident_quanta": False,
+    "emccd_enabled": False,
+    "emccd_gain": 1.0,
+    "emccd_excess_noise_factor": 1.0,
+
     # camera_gain_e_per_count: detected electrons per camera count/ADU.
     "camera_gain_e_per_count": 1.0,
 
+    # Exposure and electron-drift controls.
+    "exposure_time_s": 1.0,
+    "dark_current_e_per_pixel_per_s": 0.0,
+
     # read_noise_counts: RMS Gaussian read noise in counts.
     "read_noise_counts": 1.0,
+    "read_noise_e": None,
+
+    # Saturation and clipping controls.
+    "saturation_level": None,
+    "saturation_e": None,
+    "clip_output_to_nonnegative": True,
 
     # dark_offset_counts: constant camera offset before noise.
     "dark_offset_counts": 0.0,
@@ -266,8 +309,17 @@ DEFAULT = {
     "fixed_pattern_offset_counts": 0.0,
     "hot_pixel_fraction": 0.0,
     "hot_pixel_value_counts": None,
+    "fixed_pattern_gain_map": None,
+    "fixed_pattern_offset_map": None,
+    "prnu_map": None,
+    "dsnu_map": None,
+    "flat_field_map": None,
+    "dark_frame_map": None,
+    "hot_pixel_mask": None,
+    "scmos_gain_map": None,
+    "scmos_variance_map": None,
+    "scmos_read_noise_map": None,
     "scan_line_noise_counts": 0.0,
-    "clip_output_to_nonnegative": True,
 
     # modality_noise: per-imaging-model overrides, for example:
     # {"sem_secondary_electron": {"scan_line_noise_counts": 2.0}}
@@ -305,16 +357,19 @@ DEFAULT = {
     "save_raw_frame_views": False,
 
     "mask_generation_enabled": True,
-    "mask_outer_ring_count": 1,
+    # Keep the public training target at the central object/support lobe by
+    # default. Extra optical rings are a contrast-support experiment, not the
+    # default particle-instance target.
+    "mask_outer_ring_count": 0,
     "mask_max_area_fraction": 0.25,
 
     # supervision_target options: mask_supported, mask_geometry.
     "supervision_target": "mask_supported",
 
     # supervision_support_factors options:
-    # [], ["temporal"], ["signal"], ["information"], or any combination of
-    # temporal, signal, information.
-    "supervision_support_factors": [],
+    # None uses the enabled canonical factors below. Use an explicit list only
+    # when intentionally changing the supervision contract.
+    "supervision_support_factors": None,
     "supervision_supported_threshold": 0.2,
     "supervision_temporal_support_enabled": True,
     "supervision_signal_support_enabled": True,

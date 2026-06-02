@@ -31,34 +31,32 @@ per-video seed and preset names. Paths are stored relative to the dataset root
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
 from typing import Any, Dict, List
 
+from common_utils import relative_path
 from supervision_policy import build_policy_annotation_schema, resolve_policy_contract
 
 SIMULATOR_VERSION = "1.0.5"
-from materials import material_properties_to_dict, resolve_particle_material_properties
+from imaging_models import get_imaging_model
+from json_utils import json_safe
+from materials import (
+    material_properties_to_dict,
+    resolve_component_material_properties,
+    resolve_particle_material_properties,
+)
+from modality_registry import canonical_modality_name
 from particle_specs import get_particle_specs, particle_specs_to_public_dicts
-
-
-def _relative_path(base_dir: str, path: str) -> str:
-    """
-    Return 'path' expressed relative to 'base_dir', if possible.
-
-    On systems where base_dir and path are on different drives or when
-    relpath fails, this falls back to returning the absolute path. This
-    keeps manifests robust without imposing strict requirements on how
-    users specify output directories.
-    """
-    base_dir_abs = os.path.abspath(base_dir)
-    path_abs = os.path.abspath(path)
-    try:
-        return os.path.relpath(path_abs, base_dir_abs)
-    except ValueError:
-        # Windows drive mismatches use the absolute path.
-        return path_abs
+from experiment_contracts import (
+    ArtifactNode,
+    artifact_graph_manifest,
+    backend_contract_for_modality,
+    contracts_manifest,
+    detector_model_from_params,
+)
 
 
 def _safe_float(value: Any) -> float:
@@ -71,53 +69,12 @@ def _safe_float(value: Any) -> float:
     return float(value)
 
 
-def _safe_complex_to_dict(z: complex | Any) -> Dict[str, float]:
-    """
-    Convert a complex (or complex-like) value into a dict with 'real' and
-    'imag' fields suitable for JSON serialization.
-
-    If 'z' is not already a complex instance but supports .real and .imag,
-    those attributes are used.
-    """
-    if isinstance(z, complex):
-        real = z.real
-        imag = z.imag
-    else:
-        # Accept numpy complex scalars, etc.
-        real = getattr(z, "real", 0.0)
-        imag = getattr(z, "imag", 0.0)
-    return {
-        "real": _json_safe(_safe_float(real)),
-        "imag": _json_safe(_safe_float(imag)),
-    }
-
-
-def _json_safe(value: Any) -> Any:
-    """Convert common NumPy/complex containers into JSON-safe values."""
-    if isinstance(value, dict):
-        return {str(k): _json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe(v) for v in value]
-    if hasattr(value, "tolist"):
-        return _json_safe(value.tolist())
-    if isinstance(value, complex):
-        return _safe_complex_to_dict(value)
-    if hasattr(value, "item"):
-        try:
-            return _json_safe(value.item())
-        except (TypeError, ValueError, OverflowError):
-            return value
-    if isinstance(value, float):
-        return value if value == value and value not in (float("inf"), float("-inf")) else None
-    return value
-
-
 def _resolved_noise_metadata(params: Dict[str, Any]) -> Dict[str, Any]:
     """Return the canonical resolved camera-noise metadata for manifests."""
     try:
         from camera_noise import camera_noise_metadata
 
-        return _json_safe(camera_noise_metadata(params))
+        return json_safe(camera_noise_metadata(params), flexible_numpy=True)
     except Exception as exc:
         return {"metadata_error": repr(exc)}
 
@@ -148,10 +105,110 @@ def _git_commit_or_none(repo_root: str) -> str | None:
             text=True,
             timeout=5,
         )
-    except Exception:
+    except (OSError, subprocess.SubprocessError):
         return None
     commit = out.strip()
     return commit or None
+
+
+def _git_dirty_or_none(repo_root: str) -> bool | None:
+    """Best-effort dirty-worktree flag; returns None if git is unavailable."""
+    try:
+        out = subprocess.check_output(
+            ["git", "status", "--porcelain"],
+            cwd=repo_root,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return bool(out.strip())
+
+
+def _sha256_file_or_none(path: str) -> str | None:
+    try:
+        h = hashlib.sha256()
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+                h.update(chunk)
+        return h.hexdigest()
+    except OSError:
+        return None
+
+
+def build_source_provenance(repo_root: str | None = None) -> Dict[str, Any]:
+    """Build the source-code fingerprint that governs generated outputs.
+
+    The dataset generator may resume partially complete datasets. This
+    fingerprint is intentionally independent of numeric run parameters: if the
+    code/notebook/source package changes, regenerated outputs must not silently
+    claim the current source provenance while reusing stale frames or masks.
+    """
+    if repo_root is None:
+        repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    repo_root = os.path.abspath(repo_root)
+    tracked_roots = [
+        "codebase",
+        "recipes",
+        "scripts",
+        "supplemental",
+        "sam2_starter",
+    ]
+    suffixes = {".py", ".ipynb", ".md"}
+    excluded_parts = {
+        "outputs",
+        "__pycache__",
+        ".ipynb_checkpoints",
+    }
+    file_records: list[Dict[str, Any]] = []
+    for root_name in tracked_roots:
+        root = os.path.join(repo_root, root_name)
+        if not os.path.isdir(root):
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [
+                d for d in dirnames
+                if d not in excluded_parts and not d.startswith(".")
+            ]
+            rel_dir = os.path.relpath(dirpath, repo_root)
+            rel_parts = set(rel_dir.split(os.sep))
+            if rel_parts & excluded_parts:
+                continue
+            for filename in sorted(filenames):
+                if filename.startswith("."):
+                    continue
+                path = os.path.join(dirpath, filename)
+                rel = os.path.relpath(path, repo_root)
+                if rel == os.path.join("supplemental", "syniscopy_source.zip"):
+                    continue
+                if os.path.splitext(filename)[1] not in suffixes:
+                    continue
+                digest = _sha256_file_or_none(path)
+                if digest is not None:
+                    file_records.append({"path": rel.replace(os.sep, "/"), "sha256": digest})
+    file_records.sort(key=lambda item: item["path"])
+    aggregate = hashlib.sha256()
+    for record in file_records:
+        aggregate.update(record["path"].encode("utf-8"))
+        aggregate.update(b"\0")
+        aggregate.update(record["sha256"].encode("ascii"))
+        aggregate.update(b"\n")
+    source_zip = os.path.join(repo_root, "supplemental", "syniscopy_source.zip")
+    return {
+        "schema_version": "syniscopy-source-provenance-v1",
+        "repo_root": repo_root,
+        "git_commit": _git_commit_or_none(repo_root),
+        "git_dirty": _git_dirty_or_none(repo_root),
+        "fingerprint": aggregate.hexdigest(),
+        "file_count": len(file_records),
+        "source_zip_path": (
+            os.path.relpath(source_zip, repo_root).replace(os.sep, "/")
+            if os.path.exists(source_zip)
+            else None
+        ),
+        "source_zip_sha256": _sha256_file_or_none(source_zip),
+    }
 
 
 def build_video_manifest(
@@ -161,6 +218,11 @@ def build_video_manifest(
     dataset_preset: str | None,
     instrument_preset: str | None,
     video_seed: int,
+    result_metadata: Dict[str, Any] | None = None,
+    composition_leaf_index: int | None = None,
+    composition_leaf_name: str | None = None,
+    composition_leaf_signature: str | None = None,
+    composition_local_index: int | None = None,
 ) -> Dict[str, Any]:
     """
     Construct a per-video manifest dictionary from the simulation parameters
@@ -195,13 +257,20 @@ def build_video_manifest(
         "dataset_preset": dataset_preset,
         "instrument_preset": instrument_preset,
         "random_seed": int(video_seed),
-        "output_video_path": _relative_path(base_output_dir, output_filename),
-        "mask_root_dir": _relative_path(base_output_dir, mask_output_directory),
+        "source_provenance": build_source_provenance(),
+        "output_video_path": relative_path(base_output_dir, output_filename),
+        "mask_root_dir": relative_path(base_output_dir, mask_output_directory),
         "num_frames": num_frames,
         "fps": fps,
         "duration_seconds": duration_seconds,
         "image_size_pixels": image_size_pixels,
         "pixel_size_nm": pixel_size_nm,
+        "frame_products": {
+            "output_video_path": "8-bit encoded preview video, not quantitative analysis data",
+            "training_frames_dir": "lossless 8-bit rendered frame sequence for downstream training",
+            "mask_root_dir": "per-particle binary supervision sidecars on the final rendered frame grid",
+            "metadata_json": "machine-readable provenance and per-particle/frame records",
+        },
     }
 
     # Substrate-pattern and background-related configuration.
@@ -213,15 +282,40 @@ def build_video_manifest(
     manifest["sample_environment_pattern"] = str(_sub_model) if _sub_model is not None else None
     manifest["sample_environment_pattern_preset"] = str(_sub_preset) if _sub_preset is not None else None
 
+    render_metadata = dict((result_metadata or {}).get("render_metadata") or {})
+    response_function = dict(render_metadata.get("response_function") or {})
+
     # Canonical counts-domain noise metadata resolved through camera_noise.py.
     noise_metadata = _resolved_noise_metadata(params)
     manifest["camera_noise"] = noise_metadata
+    modality_name = canonical_modality_name(str(params.get("imaging_model", "bright_field")))
+    backend_contract = backend_contract_for_modality(modality_name, response_function).to_dict()
+    manifest["backend_contract"] = backend_contract
+    manifest["detector_model"] = detector_model_from_params(params).to_dict()
+    manifest["comparison_contracts"] = contracts_manifest([modality_name])
+    manifest["artifact_graph"] = artifact_graph_manifest([ArtifactNode(artifact_id=f"video:{int(video_index):04d}", artifact_path=manifest["output_video_path"], artifact_type="simulation_video_manifest", source_notebook_or_script="codebase/dataset_generator.py", model_version=backend_contract.get("backend_id", ""), paper_consumers=("dataset_manifest",), heavy_execution=False)])
+    if result_metadata:
+        if render_metadata is not None:
+            manifest["render_metadata"] = json_safe(render_metadata, flexible_numpy=True)
+        source_map_provenance = result_metadata.get("source_map_provenance")
+        if source_map_provenance is not None:
+            manifest["source_map_provenance"] = json_safe(source_map_provenance, flexible_numpy=True)
+        if result_metadata.get("clip_diagnostics") is not None:
+            manifest["clip_diagnostics"] = json_safe(result_metadata.get("clip_diagnostics"), flexible_numpy=True)
 
     manifest["background_subtraction_method"] = str(
         params.get("background_subtraction_method", "video_median")
     )
     manifest["mask_generation_enabled"] = bool(params.get("mask_generation_enabled", False))
     manifest["mask_outer_ring_count"] = int(params.get("mask_outer_ring_count", 0))
+    if composition_leaf_index is not None:
+        manifest["composition_leaf_index"] = int(composition_leaf_index)
+    if composition_leaf_name is not None:
+        manifest["composition_leaf_name"] = str(composition_leaf_name)
+    if composition_leaf_signature is not None:
+        manifest["composition_leaf_signature"] = str(composition_leaf_signature)
+    if composition_local_index is not None:
+        manifest["composition_local_index"] = int(composition_local_index)
     manifest["annotation_schema"] = build_policy_annotation_schema(params)
     policy_contract = resolve_policy_contract(params)
     manifest["supervision_policy"] = {
@@ -264,7 +358,14 @@ def build_video_manifest(
     )
 
     particle_specs = get_particle_specs(params)
-    particle_material_properties = resolve_particle_material_properties(params)
+    try:
+        require_optical = bool(getattr(get_imaging_model(params), "requires_complex_optical_psf", True))
+    except Exception:
+        require_optical = True
+    particle_material_properties = resolve_particle_material_properties(
+        params,
+        require_optical_refractive_index=require_optical,
+    )
     particles_meta = particle_specs_to_public_dicts(particle_specs)
     for i, entry in enumerate(particles_meta):
         entry["particle_index"] = int(i)
@@ -272,6 +373,22 @@ def build_video_manifest(
             particle_material_properties[i],
             wavelength_nm=float(params.get("wavelength_nm", 532.0)),
         )
+        components_meta = entry.get("components", [])
+        for component_index, component in enumerate(getattr(particle_specs[i], "components", []) or []):
+            if component_index >= len(components_meta):
+                continue
+            try:
+                component_material = resolve_component_material_properties(
+                    params,
+                    component,
+                    require_optical_refractive_index=require_optical,
+                )
+                components_meta[component_index]["material_properties"] = material_properties_to_dict(
+                    component_material,
+                    wavelength_nm=float(params.get("wavelength_nm", 532.0)),
+                )
+            except Exception as exc:
+                components_meta[component_index]["material_properties_error"] = repr(exc)
     manifest["particles"] = particles_meta
 
 
@@ -300,7 +417,7 @@ def save_video_manifest(
 
     filename = os.path.join(metadata_dir, f"video_{video_index:04d}.json")
     with open(filename, "w", encoding="utf-8") as f:
-        json.dump(_json_safe(manifest), f, indent=2, sort_keys=True, allow_nan=False)
+        json.dump(json_safe(manifest, flexible_numpy=True), f, indent=2, sort_keys=True, allow_nan=False)
 
     return os.path.abspath(filename)
 
@@ -326,17 +443,32 @@ def build_dataset_index_entry(
         "dataset_preset": manifest.get("dataset_preset"),
         "instrument_preset": manifest.get("instrument_preset"),
     }
+    if manifest.get("composition_leaf_index") is not None:
+        entry["composition_leaf_index"] = manifest.get("composition_leaf_index")
+    if manifest.get("composition_leaf_name") is not None:
+        entry["composition_leaf_name"] = manifest.get("composition_leaf_name")
+    if manifest.get("composition_leaf_signature") is not None:
+        entry["composition_leaf_signature"] = manifest.get("composition_leaf_signature")
+    if manifest.get("composition_local_index") is not None:
+        entry["composition_local_index"] = manifest.get("composition_local_index")
     if manifest.get("channel_sidecar_videos"):
         entry["channel_sidecar_videos"] = list(manifest["channel_sidecar_videos"])
     if manifest.get("matched_modality_packet_npz"):
         entry["matched_modality_packet_npz"] = manifest["matched_modality_packet_npz"]
         entry["matched_modalities"] = list(manifest.get("matched_modalities", []))
+    if manifest.get("source_provenance"):
+        entry["source_provenance_fingerprint"] = manifest["source_provenance"].get("fingerprint")
+        entry["source_git_commit"] = manifest["source_provenance"].get("git_commit")
+        entry["source_git_dirty"] = manifest["source_provenance"].get("git_dirty")
+    if manifest.get("frame_products"):
+        entry["frame_products"] = dict(manifest["frame_products"])
     return entry
 
 
 def save_dataset_manifest(
     base_output_dir: str,
     dataset_entries: List[Dict[str, Any]],
+    source_provenance: Dict[str, Any] | None = None,
 ) -> str:
     """
     Save the dataset-level manifest file listing all videos.
@@ -364,12 +496,17 @@ def save_dataset_manifest(
         "schema_version": "syniscopy-dataset-manifest-v1",
         "base_output_dir": base_output_dir_abs,
         "num_videos": len(dataset_entries),
+        "source_provenance": (
+            source_provenance
+            if source_provenance is not None
+            else build_source_provenance()
+        ),
         "videos": dataset_entries,
     }
 
     filename = os.path.join(base_output_dir_abs, "dataset_manifest.json")
     with open(filename, "w", encoding="utf-8") as f:
-        json.dump(_json_safe(payload), f, indent=2, sort_keys=True, allow_nan=False)
+        json.dump(json_safe(payload, flexible_numpy=True), f, indent=2, sort_keys=True, allow_nan=False)
 
     return filename
 
@@ -399,6 +536,7 @@ def build_simulation_manifest(
         "simulator": "Syniscopy",
         "simulator_version": simulator_version,
         "git_commit": _git_commit_or_none(repo_root),
+        "source_provenance": build_source_provenance(repo_root),
         "random_seed": None if random_seed is None else int(random_seed),
         "dataset_preset": dataset_preset,
         "base_output_dir": os.path.abspath(base_output_dir),
@@ -410,16 +548,16 @@ def build_simulation_manifest(
         ),
         "particle_geometry": (
             None if params_template is None
-            else _json_safe({
+            else json_safe({
                 "particles": params_template.get(
                     "_resolved_particles",
                     params_template.get("particles"),
                 ),
-            })
+            }, flexible_numpy=True)
         ),
         "trajectory_parameters": (
             None if params_template is None
-            else _json_safe({
+            else json_safe({
                 "fps": params_template.get("fps"),
                 "duration_seconds": params_template.get("duration_seconds"),
                 "num_frames": _resolved_num_frames_or_none(params_template),
@@ -441,21 +579,21 @@ def build_simulation_manifest(
                 "sample_environment_exclusion_method": params_template.get(
                     "sample_environment_exclusion_method"
                 ),
-            })
+            }, flexible_numpy=True)
         ),
         "sample_environment_parameters": (
             None if params_template is None
-            else _json_safe({
+            else json_safe({
                 key: params_template.get(key)
                 for key in params_template
                 if str(key).startswith("sample_environment_pattern")
                 or str(key).startswith("empirical_background")
-            })
+            }, flexible_numpy=True)
         ),
         "camera_noise": noise_metadata,
         "supervision_policy": (
             None if params_template is None
-            else _json_safe({
+            else json_safe({
                 **resolve_policy_contract(params_template),
                 "supported_threshold": params_template.get(
                     "supervision_supported_threshold"
@@ -478,7 +616,7 @@ def build_simulation_manifest(
                 "prior_log_odds": params_template.get(
                     "supervision_prior_log_odds"
                 ),
-            })
+            }, flexible_numpy=True)
         ),
         "crlb_policy": {
             "lateral_crlb_metadata": True,
@@ -495,5 +633,5 @@ def build_simulation_manifest(
 def save_simulation_manifest(manifest: Dict[str, Any], base_output_dir: str) -> str:
     filename = os.path.join(os.path.abspath(base_output_dir), "simulation_manifest.json")
     with open(filename, "w", encoding="utf-8") as f:
-        json.dump(_json_safe(manifest), f, indent=2, sort_keys=True, allow_nan=False)
+        json.dump(json_safe(manifest, flexible_numpy=True), f, indent=2, sort_keys=True, allow_nan=False)
     return filename

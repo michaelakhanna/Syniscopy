@@ -6,16 +6,15 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
-import sys
 from pathlib import Path
 from typing import Any
 
+from bootstrap import REPO_ROOT, ensure_codebase_on_path
 
-ROOT = Path(__file__).resolve().parent
-REPO_ROOT = ROOT.parent
 DEFAULT_RECIPE = "recipes/default.py:DEFAULT"
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
+ensure_codebase_on_path()
+
+from json_utils import json_safe, load_typed_json
 
 
 def _parse_args() -> argparse.Namespace:
@@ -28,11 +27,16 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--output",
+        "--output-dir",
+        "--output_dir",
+        dest="output",
         default="datasets/syniscopy_dataset",
         help="Output dataset directory. Default: datasets/syniscopy_dataset.",
     )
     parser.add_argument(
         "--num-videos",
+        "--num_videos",
+        dest="num_videos",
         type=int,
         default=1,
         help="Number of videos to generate. Default: 1.",
@@ -50,6 +54,8 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--params-json",
+        "--params_json",
+        dest="params_json",
         default=None,
         help="Optional JSON object with PARAMS overrides.",
     )
@@ -68,11 +74,23 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--write-params-template",
+        "--write_params_template",
+        dest="write_params_template",
         default=None,
         help=(
             "Write the public editable recipe parameters to JSON and exit. "
             "This writes recipe-facing dataset keys rather than every "
             "simulator runtime parameter."
+        ),
+    )
+    parser.add_argument(
+        "--composition-json",
+        "--composition_json",
+        dest="composition_json",
+        default=None,
+        help=(
+            "Optional JSON file defining a per-leaf composition plan. "
+            "Each entry should include num_videos and optional recipe/param overrides."
         ),
     )
     parser.add_argument(
@@ -82,16 +100,19 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--no-resume",
+        "--no_resume",
+        dest="no_resume",
         action="store_true",
         help="Regenerate requested videos even if matching outputs exist.",
     )
     parser.add_argument(
         "--append-on-config-change",
+        "--append_on_config_change",
+        dest="append_on_config_change",
         action="store_true",
         help=(
-            "Append a new batch if the output directory already contains a "
-            "dataset made with different parameters. By default this is an "
-            "error; use --reset to replace the directory."
+            "Legacy flag retained for compatibility. Any generation-request "
+            "change rewrites the existing dataset."
         ),
     )
     parser.add_argument(
@@ -129,17 +150,6 @@ def _load_recipe(recipe_spec: str) -> dict:
     return dict(value)
 
 
-def _json_safe(value: Any) -> Any:
-    """Convert recipe values into JSON-serializable primitives."""
-    if isinstance(value, complex):
-        return {"real": float(value.real), "imag": float(value.imag)}
-    if isinstance(value, dict):
-        return {str(k): _json_safe(v) for k, v in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_safe(v) for v in value]
-    return value
-
-
 def _list_recipes() -> None:
     file_part, _ = DEFAULT_RECIPE.split(":", 1)
     path = REPO_ROOT / file_part
@@ -165,21 +175,29 @@ def main() -> int:
             out = REPO_ROOT / out
         out.parent.mkdir(parents=True, exist_ok=True)
         with open(out, "w", encoding="utf-8") as fh:
-            json.dump(_json_safe(template), fh, indent=2, sort_keys=True)
+            json.dump(json_safe(template), fh, indent=2, sort_keys=True)
         print(f"Wrote public dataset parameter template: {out}")
         return 0
 
     recipe_overrides = None
     user_overrides = None
+    composition = None
+    if args.composition_json:
+        composition = load_typed_json(
+            args.composition_json,
+            expected=list,
+            context="--composition-json",
+        )
     if args.recipe:
         recipe_overrides = _load_recipe(args.recipe)
     if args.params_json:
-        with open(args.params_json, "r", encoding="utf-8") as fh:
-            user_overrides = json.load(fh)
-        if not isinstance(user_overrides, dict):
-            raise ValueError("--params-json must contain one JSON object.")
+        user_overrides = load_typed_json(
+            args.params_json,
+            expected=dict,
+            context="--params-json",
+        )
 
-    from dataset_generator import generate_dataset
+    from dataset import generate_dataset
 
     dataset_dir = generate_dataset(
         num_videos=args.num_videos,
@@ -189,6 +207,7 @@ def main() -> int:
         random_seed=args.seed,
         recipe_overrides=recipe_overrides,
         param_overrides=user_overrides,
+        composition=composition,
         resume_existing=not args.no_resume,
         reset_existing=args.reset,
         append_on_config_change=args.append_on_config_change,

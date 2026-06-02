@@ -9,7 +9,8 @@ def _compute_lobe_boundary_radius_pixels(
     outer_ring_count: int = 0,
     tiny_abs: float = 1e-9,
     zero_level_fraction: float = 1e-3,
-) -> float:
+    return_status: bool = False,
+) -> float | tuple[float, dict]:
     """
     Compute the mask boundary radius (in pixels) for a single particle in a
     contrast image, using radial sign changes:
@@ -57,6 +58,12 @@ def _compute_lobe_boundary_radius_pixels(
     outer_ring_count = int(outer_ring_count)
     if outer_ring_count < 0:
         raise ValueError("outer_ring_count must be >= 0.")
+    status = {
+        "mask_inference_status": "not_evaluated",
+        "mask_inference_reason": "",
+        "outer_ring_count": int(outer_ring_count),
+        "fallback_used": False,
+    }
 
     img = np.asarray(contrast_image, dtype=float)
     if img.ndim != 2:
@@ -80,13 +87,15 @@ def _compute_lobe_boundary_radius_pixels(
         x1 = min(cx + 3, W)
         neighborhood = img[y0:y1, x0:x1]
         if neighborhood.size == 0:
-            return 0.0
+            status.update(mask_inference_status="failed", mask_inference_reason="empty_center_neighborhood")
+            return (0.0, status) if return_status else 0.0
         # Find the pixel with the largest absolute contrast.
         idx_flat = np.argmax(np.abs(neighborhood))
         max_val = float(neighborhood.flat[idx_flat])
         if abs(max_val) < tiny_abs:
             # No meaningful signal in the neighborhood.
-            return 0.0
+            status.update(mask_inference_status="failed", mask_inference_reason="no_meaningful_center_signal")
+            return (0.0, status) if return_status else 0.0
         center_val = max_val
 
     center_sign = 1.0 if center_val >= 0.0 else -1.0
@@ -100,12 +109,14 @@ def _compute_lobe_boundary_radius_pixels(
 
     # If the image is extremely small, just return zero radius or one pixel.
     if r_index.size == 0:
-        return 0.0
+        status.update(mask_inference_status="failed", mask_inference_reason="empty_image")
+        return (0.0, status) if return_status else 0.0
 
     max_ring = int(r_index.max())
     if max_ring == 0:
         # Single-pixel image or everything at center; treat as trivial lobe.
-        return 0.0
+        status.update(mask_inference_status="failed", mask_inference_reason="single_pixel_image")
+        return (0.0, status) if return_status else 0.0
 
     flat_vals = img.ravel()
     flat_rings = r_index.ravel()
@@ -129,7 +140,8 @@ def _compute_lobe_boundary_radius_pixels(
 
     if ring0_mag < tiny_abs:
         # No meaningful signal for defining a lobe.
-        return 0.0
+        status.update(mask_inference_status="failed", mask_inference_reason="no_meaningful_ring_signal")
+        return (0.0, status) if return_status else 0.0
 
     # Threshold for considering a ring to carry significant contrast.
     mag_threshold = zero_level_fraction * ring0_mag
@@ -160,17 +172,21 @@ def _compute_lobe_boundary_radius_pixels(
         r_boundary = float(r_boundary_index) - 0.5
         if r_boundary < 0.0:
             r_boundary = 0.0
-        return r_boundary
+        status.update(mask_inference_status="resolved", mask_inference_reason="radial_sign_change_boundary")
+        return (r_boundary, status) if return_status else r_boundary
 
     # Fallback: no sign flip detected. Use the largest radius where the
     # ring-averaged magnitude is above threshold.
     significant_indices = np.where(np.abs(ring_mean) >= mag_threshold)[0]
     if significant_indices.size == 0:
-        return 0.0
+        status.update(mask_inference_status="failed", mask_inference_reason="no_significant_rings")
+        return (0.0, status) if return_status else 0.0
 
     k_max = int(significant_indices[-1])
     r_boundary = float(k_max) + 0.5
-    return max(r_boundary, 0.0)
+    status.update(mask_inference_status="fallback", mask_inference_reason="no_sign_change_used_above_threshold_extent", fallback_used=True)
+    radius = max(r_boundary, 0.0)
+    return (radius, status) if return_status else radius
 
 
 def _compute_central_lobe_mask_floodfill(
@@ -296,7 +312,8 @@ def generate_central_lobe_mask(
     use_floodfill: bool = False,
     max_search_radius_px: int | None = None,
     max_area_fraction: float = 0.25,
-) -> np.ndarray:
+    return_status: bool = False,
+) -> np.ndarray | tuple[np.ndarray, dict]:
     """
     Generate a binary lobe/ring mask for a particle.
 
@@ -370,20 +387,31 @@ def generate_central_lobe_mask(
         mask = _compute_central_lobe_mask_floodfill(
             img, (cy, cx), max_search_radius_px=max_search_radius_px
         )
+        status = {
+            "mask_inference_status": "resolved" if np.count_nonzero(mask) > 0 else "failed",
+            "mask_inference_reason": "connected_same_sign_floodfill" if np.count_nonzero(mask) > 0 else "empty_floodfill_region",
+            "outer_ring_count": int(outer_ring_count),
+            "fallback_used": False,
+            "area_cap_exceeded": False,
+        }
         if max_area_fraction is not None:
             area_fraction = float(np.count_nonzero(mask)) / float(mask.size or 1)
             if area_fraction > float(max_area_fraction):
-                return np.zeros_like(img, dtype=np.uint8)
-        return mask
+                status.update(mask_inference_status="failed", mask_inference_reason="mask_area_cap_exceeded", area_cap_exceeded=True)
+                mask = np.zeros_like(img, dtype=np.uint8)
+        return (mask, status) if return_status else mask
 
     # Default radially-symmetric path for single-sphere particles.
-    r_boundary = _compute_lobe_boundary_radius_pixels(
+    r_boundary, status = _compute_lobe_boundary_radius_pixels(
         img,
         (cy, cx),
         outer_ring_count=int(outer_ring_count),
+        return_status=True,
     )
+    status["area_cap_exceeded"] = False
     if r_boundary <= 0.0:
-        return np.zeros_like(img, dtype=np.uint8)
+        mask = np.zeros_like(img, dtype=np.uint8)
+        return (mask, status) if return_status else mask
 
     yy, xx = np.indices((H, W))
     dy = yy - cy
@@ -395,8 +423,9 @@ def generate_central_lobe_mask(
     if max_area_fraction is not None:
         area_fraction = float(np.count_nonzero(mask)) / float(mask.size or 1)
         if area_fraction > float(max_area_fraction):
-            return np.zeros_like(img, dtype=np.uint8)
-    return mask
+            status.update(mask_inference_status="failed", mask_inference_reason="mask_area_cap_exceeded", area_cap_exceeded=True)
+            mask = np.zeros_like(img, dtype=np.uint8)
+    return (mask, status) if return_status else mask
 
 
 def save_mask(

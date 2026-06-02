@@ -1,0 +1,439 @@
+\section{Results}
+\label{sec:results}
+
+\paragraph{Results convention.}
+All numerical results below are contract-scoped diagnostics. A row is treated as paper-facing evidence only when its emitted convergence and validation-status fields say so; otherwise it remains a diagnostic artifact for model development rather than a benchmark claim. This convention replaces repeated per-paragraph disclaimers.
+
+
+The results are organized around the analyses supporting claims C1--C5. First, forward renders and composite-particle examples show one shared scene represented across multiple modality profiles. Second, Cram\'{e}r--Rao orderings, fusion diagnostics, and Fisher density maps evaluate the information layer. Third, supervision-schema evaluations and a Segment Anything Model 2 transfer example show how supervision masks and auxiliary arrays can support a downstream model.
+
+\subsection{Forward-model demonstrations}
+
+\paragraph{Modality panel.} The same latent particle state is rendered through the configured modality set. The aligned panels in \cref{fig:modality-panel} present one particle/sample state under different contrast mechanisms; the shared scene, rather than a separate single-modality simulation, is held fixed across panels.
+
+\IfFileExists{figures/imaging-modes.png}{%
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figures/imaging-modes.png}
+\caption{Modality panel. The same latent particle state is rendered through the configured modality set. Optical panels use the shared optical display profile; electron-microscopy panels use the selected backend profile and modality-specific detector sampling recorded in the profile metadata. Each panel is independently contrast-stretched for visual inspection of that profile's rendered response.}
+\label{fig:modality-panel}
+\end{figure}
+}{%
+\generatedfallbackfigure{fig:modality-panel}{Modality panel. The same latent particle state is rendered through the configured modality set. Optical panels use the shared optical display profile; electron-microscopy panels use selected backend profiles with modality-specific detector sampling.}{Required figure asset.}
+}
+
+\paragraph{Composite-particle rendering.} Composite particles are represented as rigid assemblies of spherical components with body-frame offsets. The panel in \cref{fig:composite-gallery} shows representative rendered frames for a sphere, dimer, linear trimer, rod stack, bent triatomic, bowtie-like assembly, and tetrahedral 3D assembly under matched camera, imaging-model, and noise settings. The gallery illustrates the composite geometries used by the shared-scene renderer; compact assemblies can still project similarly, so orientation identifiability is quantified separately for the $\mathrm{SE}(3)$ diagnostic subset in \cref{tab:orientation-crlb}.
+
+\IfFileExists{figures/composite-gallery.png}{%
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figures/composite-gallery.png}
+\caption{Composite particle gallery. The displayed shapes are rendered under identical camera, imaging-model, and noise settings. Compact assemblies can project similarly in this display; \cref{tab:orientation-crlb} reports orientation-rank diagnostics for the subset used in the $\mathrm{SE}(3)$ check.}
+\label{fig:composite-gallery}
+\end{figure}
+}{%
+\generatedfallbackfigure{fig:composite-gallery}{Composite particle gallery. The displayed shapes are rendered under identical camera, imaging-model, and noise settings.}{Required figure asset.}
+}
+
+\paragraph{Composite assembly cost.} Rod-stack composites with increasing component count are summarized by per-frame component-stamping work. After per-type point-spread-function caching, each frame stamps cached component fields rather than recomputing a pupil propagation for every component, so the expected per-frame stamping work is linear in component count. \Cref{tab:composite-stamping-work} reports the generated operation-count check; it is not a wall-clock benchmark.
+
+\IfFileExists{figures/composite-stamping-work-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\input{figures/composite-stamping-work-table}
+\caption{Composite assembly component-stamping work. Values are normalized operation counts for cached component placement in rod-stack examples.}
+\label{tab:composite-stamping-work}
+\end{table}
+}{}
+
+\subsection{Cram\'{e}r--Rao and Fisher information diagnostics}
+
+\paragraph{Theory-to-diagnostic map.}
+Each formal statement in \cref{sec:information-layer} is paired with a simulator diagnostic in \cref{tab:theoretical-support}. The table lists, for each theorem, corollary, or operational diagnostic, the output used to inspect the corresponding behavior.
+
+\IfFileExists{figures/theoretical-support-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/theoretical-support-table}}
+\caption{How the theoretical contributions map to simulator diagnostics. Established mathematical tools are used where stated; the paper's contributions are the shared-scene Fisher information framing, the contrast-symmetry rank theorem and fusion corollary, the matched modality-packet format, and the reject-rule support-score supervision decomposition as implemented diagnostics.}
+\label{tab:theoretical-support}
+\end{table}
+}{%
+\generatedfallbacktable{tab:theoretical-support}{How the theoretical contributions map to simulator diagnostics.}{Required table asset.}
+}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{p{0.26\linewidth}p{0.64\linewidth}}
+\toprule
+Parameter & Diagnostic profile value \\
+\midrule
+Particle & 100~nm gold sphere unless varied; the same particle material state is passed to all modalities, while each modality profile supplies its own response and noise parameters \\
+Image grid & Per-modality detector pitch/profile on a shared physical coordinate frame \\
+Optical medium/objective & water medium $n=1.33$; immersion $n=1.518$; profile-specific numerical aperture or probe scale \\
+Wavelength & 532~nm profile unless a modality profile overrides it (vectorial Debye default; scalar paraxial selectable) \\
+Derivative and singularity rules & lateral detector-grid central differences; axial planes at $z_0\pm200$~nm; $\mathrm{SE}(3)$ orientation perturbations of 0.03~rad; singular axes use a scale-relative Fisher eigenvalue tolerance of $10^{-12}$ \\
+Noise and budget & propagated detector noise for configured-profile rankings; $N_Q=5\times10^4$ for budget-normalized Poisson/phase diagnostics \\
+\bottomrule
+\end{tabular}
+\caption{Representative diagnostic profile conventions for the configured-profile Cram\'{e}r--Rao examples in this section. These values are not a calibration of any specific bench; absolute bounds depend on supplied amplitude, detector, sampling, and noise parameters.}
+\label{tab:default-profile}
+\end{table}
+
+\paragraph{Closed-form scaling checks.} The lateral Cram\'{e}r--Rao implementation includes checks against three expected laws: $\sigma_{xy}\propto 1/\mathrm{SNR}$ at fixed point-spread-function width, $\sigma_{xy}\propto d^{-3}$ for a controlled Rayleigh-amplitude response, and diameter-independence at fixed signal-to-noise ratio \cite{thompson-larson-webb,ober-ram-ward,juffmann-iscat-cobri-crlb}. \Cref{tab:closed-form-scaling-checks} reports the fitted exponent or residual for each check. These are software consistency diagnostics under controlled inputs, not empirical validation of microscope performance. The Rayleigh row holds the image geometry and noise fixed while scaling contrast amplitude as $d^3$, so the Fisher bound should scale as $d^{-3}$. The fixed-SNR diameter-independence check is a renormalized control in which the signal amplitude is held fixed as diameter changes; both controls are separate from the particle-size sweep in \cref{fig:particle-size-sweep}, where modality-specific contrast amplitude, sampling, and noise can vary with diameter and the Cram\'{e}r--Rao bound is therefore expected to deviate from a closed-form law.
+
+\IfFileExists{figures/closed-form-scaling-check-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/closed-form-scaling-check-table}}
+\caption{Closed-form scaling checks for the Fisher implementation. The first row uses the native iSCAT detected-quanta sweep converted to the Poisson-limited signal-to-noise proxy $\sqrt{N_Q}$, the Rayleigh row uses a controlled fixed-geometry contrast-amplitude sweep, and the fixed-SNR row is the renormalized control in which contrast and noise arrays are held fixed.}
+\label{tab:closed-form-scaling-checks}
+\end{table}
+}{}
+
+\paragraph{Configured-profile lateral Cram\'{e}r--Rao diagnostic.} Modalities are reported under the configured profiles summarized in \cref{tab:default-profile}; generated profile-card artifacts, when present, provide the per-modality fidelity cards. The diagnostic values depend on the supplied microscope, particle material, medium, detector sampling, and detector budget. The lateral derivative implementation is checked in \cref{tab:derivative-convergence-crlb} by re-rendering the particle at symmetric physical displacements of 1, 0.5, 0.25, and 0.125 detector pixels and recomputing the central-difference Fisher matrix from those displaced renders.
+
+\paragraph{Comparison contracts.} Table-to-table claims are contract-specific in this section. We use four explicit contracts: Contract-LP (configured-profile lateral Cram\'{e}r--Rao), Contract-LZ (configured-profile axial/\(\mathrm{SE}(3)\) diagnostics), Contract-Q (detected-quanta-normalized comparison), and Contract-NR (native-regime source-use context). The same profile can therefore produce different orderings under different contracts.
+
+Cross-modality Cram\'{e}r--Rao lower bounds in \Cref{tab:modality-ranking} are Contract-LP diagnostics: they are reported on a shared physical coordinate frame with per-modality detector pitch and noise profiles, not as a native-instrument comparison. Bench mapping is approximate: the current configuration parameters do not absorb all stray light, alignment error, out-of-focus particles, dust, or detector nonlinearity; source-matching residuals are addressed explicitly through configurable sample-environment perturbations including \texttt{sample\_environment\_pattern\_roughness\_model}, \texttt{sample\_environment\_pattern\_roughness\_amplitude}, \texttt{sample\_environment\_pattern\_roughness\_correlation\_pixels}, \texttt{sample\_environment\_pattern\_roughness\_phase\_std}, and \texttt{sample\_environment\_pattern\_roughness\_source} (for \texttt{source\_matched} mode), with roughness-source coupling options \texttt{independent}, \texttt{coherent\_amplitude}, \texttt{field\_weighted}, \texttt{scene\_weighted}, and \texttt{channel\_weighted} (default: \texttt{channel\_weighted}). The transmission-electron-microscopy row uses its configured backend-specific detector, dose, and potential/contrast settings \texttt{ctf\_proxy}/\texttt{multislice\_lite}/\texttt{syniscopy\_multislice}; native transmission-electron-microscopy sampling remains a separate instrument-specific configuration in Contract-NR.
+
+\Cref{tab:modality-ranking} reports the default Contract-LP configured-profile diagnostic bound and within-profile relative bound. Table~\ref{tab:derivative-convergence-crlb} shows that only a subset of rows passes the derivative-step convergence gate, so Table~\ref{tab:modality-ranking} should be read as a status-tagged configured-profile diagnostic rather than a fully convergence-validated universal ranking. Under the default production-grid calculation, the lowest lateral bounds are scanning electron microscopy secondary-electron, interferometric scattering microscopy, and off-axis digital holography; rows that fail the convergence gate should not be used for precise numerical claims without rerunning the intended derivative-step and detector-grid choices. The differential-phase-contrast row is reported via the configured asymmetric-illumination phase-gradient model (vectorial Debye, defaulting to \texttt{full\_vector} non-reduced vectorial detection, with optional \texttt{analyzer\_x}, \texttt{analyzer\_y}, \texttt{incoherent\_sum}, \texttt{unpolarized}, and scalar \texttt{two-axis} options), and metadata records the selected backend.
+
+\IfFileExists{figures/modality-profile-card-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/modality-profile-card-table}}
+\caption{Human-readable modality profile cards used by the configured-profile tables. Full machine-readable profile identifiers are retained in the generated artifact manifest and supplemental metadata.}
+\label{tab:modality-profile-cards}
+\end{table}
+}{}
+
+Total internal reflection fluorescence and widefield fluorescence are separate configured fluorescence profiles in \cref{tab:modality-ranking}. A separate native-regime source-use audit row for total internal reflection fluorescence exercises angle-derived evanescent excitation and trajectory depth; that audit row is not the configured-profile ranking row in \cref{tab:modality-ranking}.
+
+Appendix~\ref{sec:source-use-audit} reports the native-regime source-use audit. That audit documents source use, source category, parameter-match status, computed localization scale where applicable, and source-reported scale. Only source categories that report or derive a localization scale populate the computed-localization column; dimensional-metrology and modality-principle rows are retained for provenance without being treated as particle-center localization checks. In particular, the native interferometric-scattering audit path uses the opt-in Fresnel-reference and high-numerical-aperture dipole-collection controls and gives a nanometer-scale result under that native check, whereas the configured-profile interferometric-scattering row belongs to the cross-modality diagnostic table.
+
+The annular K\"{o}hler dark-field row is finite under the configured gold-particle scattering profile. Singular entries, when they occur, indicate that the selected diagnostic image provides no finite Fisher bound under that profile, not that experimental dark-field localization is impossible.
+
+\IfFileExists{figures/modality-ranking-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/modality-ranking-table}}
+\caption{Default Contract-LP production-grid lateral Cram\'{e}r--Rao diagnostic values. The table reports Syniscopy diagnostic values only and should not be read as a convergence-validated native-instrument benchmark; native-regime literature scale checks are separated into the source-use audit in Appendix~\ref{sec:source-use-audit}.}
+\label{tab:modality-ranking}
+\end{table}
+}{%
+\generatedfallbacktable{tab:modality-ranking}{Configured-profile lateral Cram\'{e}r--Rao ordering over the configured modality profiles.}{Required table asset.}
+}
+
+Only the rows marked as passing the derivative-step convergence check in \Cref{tab:derivative-convergence-crlb} should be interpreted as convergence-validated lateral numerical bounds; rows that fail that gate are still reported as diagnostic output on the configured production grid.
+
+\IfFileExists{figures/derivative-convergence-crlb-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/derivative-convergence-crlb-table}}
+\caption{Lateral derivative-step convergence check for the configured-profile Cram\'{e}r--Rao diagnostic. The default column is the production detector-grid gradient. The $h=0.125$ px column uses the finest re-rendered physical-displacement central difference; separate columns report the maximum adjacent step-halving change, rank/order range, and convergence-pass gate across $h\in\{1,0.5,0.25,0.125\}$ detector pixels.}
+\label{tab:derivative-convergence-crlb}
+\end{table}
+}{}
+
+\Cref{fig:particle-size-sweep} shows the corresponding particle-size sweep. Diameter-dependent contrast scaling can change the ordering, so the sweep should not be read as a universal modality ranking for every contract or as the fixed-SNR diameter-independence check above.
+
+\IfFileExists{figures/particle-size-sweep.png}{%
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\linewidth]{figures/particle-size-sweep.png}
+\caption{Particle-size sweep under the Contract-LP production-grid derivative convention. Each color/marker/line-style combination is one imaging modality, identified by the legend below the axes. The curves expose how diameter-dependent contrast scaling can change modality diagnostics across particle sizes. Unless separately regenerated with per-diameter derivative convergence metadata, these curves inherit the convergence limitations in Table~\ref{tab:derivative-convergence-crlb}; singular cases are treated as nonfinite rather than assigned artificial finite values.}
+\label{fig:particle-size-sweep}
+\end{figure}
+}{%
+\generatedfallbackfigure{fig:particle-size-sweep}{Particle-size sweep. The curves expose how diameter-dependent contrast scaling can change modality orderings across particle sizes. Singular cases are treated as nonfinite rather than assigned artificial finite values.}{Required figure asset.}
+}
+
+\paragraph{Axial and orientation bounds.} Contract-LZ uses a three-plane axial extension at $z_0-\Delta z$, $z_0$, and $z_0+\Delta z$, and reports default $\sigma_z$ values and singular rows in \cref{tab:axial-crlb}. The $\mathrm{SE}(3)$ extension uses one center render plus symmetric perturbation pairs for $z$, $\omega_x$, $\omega_y$, and $\omega_z$, where $\omega$ denotes an infinitesimal body-frame rotation. Symmetric composites report singular body axes explicitly in \cref{tab:orientation-crlb}. Most finite axial rows in \Cref{tab:axial-crlb} fail the axial derivative-step convergence gate (Table~\ref{tab:axial-convergence-crlb}); widefield fluorescence, TEM phase contrast, and SEM remain singular under this Contract-LZ setup. Therefore this table is an axial singularity/diagnostic report, not a universal claim of native axial instrument performance.
+
+\IfFileExists{figures/orientation-crlb-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/orientation-crlb-table}}
+\caption{$\mathrm{SE}(3)$ rank and singular-axis metadata by composite shape. The numerical Fisher rank is shown beside the axis-estimability rank, the rank predicted from continuous contrast symmetry, and the guaranteed number of null rotation axes; $\omega_x,\omega_y,\omega_z$ are infinitesimal body-frame rotations about the principal axes.}
+\label{tab:orientation-crlb}
+\end{table}
+}{%
+\generatedfallbacktable{tab:orientation-crlb}{$\mathrm{SE}(3)$ rank and singular-axis metadata by composite shape. The numerical Fisher rank and axis-estimability rank are shown beside the symmetry-predicted generic rank and the symmetry-guaranteed nullity lower bound.}{Required table asset.}
+}
+
+\IfFileExists{figures/orientation-spectrum-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/orientation-spectrum-table}}
+\caption{$\mathrm{SE}(3)$ Fisher spectrum metadata for the orientation-rank diagnostic. The table records the eigenvalue spectrum and rank tolerance used to declare singular axes.}
+\label{tab:orientation-spectrum}
+\end{table}
+}{}
+
+\IfFileExists{figures/orientation-rank-convergence-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/orientation-rank-convergence-table}}
+\caption{$\mathrm{SE}(3)$ orientation-step convergence check. The numerical Fisher rank and singular-axis labels are recomputed across symmetric body-frame rotation perturbations and must remain stable for the diagnostic to pass.}
+\label{tab:orientation-rank-convergence}
+\end{table}
+}{}
+
+\Cref{tab:fusion-symmetry-diagnostic} records the cross-modality fusion-symmetry case separately from the per-shape table. An axisymmetric contrast profile cannot observe rotation about its symmetry axis, while a symmetry-breaking profile has no continuous rotational null axis. Their intersection therefore has no continuous rotational symmetry, giving predicted fused rotational rank 3 and full $\mathrm{SE}(3)$ rank 6. This is the operational test behind Corollary~\ref{cor:fusion-symmetry-breaking}: fusion breaks only null axes not shared by each selected modality.
+
+\IfFileExists{figures/fusion-symmetry-diagnostic-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/fusion-symmetry-diagnostic-table}}
+\caption{Fusion-symmetry diagnostic. The fused subset removes the axisymmetric profile's null rotation because the second contrast profile observes that rotation axis. The connected stabilizer intersection is therefore trivial.}
+\label{tab:fusion-symmetry-diagnostic}
+\end{table}
+}{}
+
+\IfFileExists{figures/cross-modality-axial-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/cross-modality-axial-table}}
+\caption{Default Contract-LZ axial Cram\'{e}r--Rao diagnostic and singularity report over the lateral-shared-profile setup. Infinite rows indicate no finite three-plane axial Fisher bound under the Contract-LZ diagnostic response; finite rows must be interpreted with the convergence states in Table~\ref{tab:axial-convergence-crlb}.}
+\label{tab:axial-crlb}
+\end{table}
+}{%
+\generatedfallbacktable{tab:axial-crlb}{Contract-LZ axial Cram\'{e}r--Rao ordering over the configured modality profiles.}{Required table asset.}
+}
+
+\IfFileExists{figures/axial-convergence-crlb-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/axial-convergence-crlb-table}}
+\caption{Contract-LZ axial derivative-step convergence check. The three-plane Fisher calculation is repeated across symmetric axial perturbations. Status values distinguish finite-converged rows, stable-singular rows with no finite axial bound under this diagnostic, and failed-convergence rows whose finite $\sigma_z$ values are not step-span validated.}
+\label{tab:axial-convergence-crlb}
+\end{table}
+}{}
+
+The axial table should be interpreted through the convergence gate: stable singular rows identify absent axial information under this diagnostic setup, while finite rows that fail the span criterion should not be used as precise axial performance claims.
+
+\paragraph{Detected-quanta normalization.} Contract-Q assigns each count-domain modality the same detected-quanta budget and evaluates the resulting count image with a Poisson-Gaussian mean-Fisher diagnostic. The Contract-Q output now emits a dedicated rerendered derivative-convergence artifact, \Cref{tab:detected-quanta-derivative-convergence}, so the fixed-budget ranking is status-tagged by its own Contract-Q convergence export rather than relying only on prose-level inheritance from Contract-LP. This is a common-budget diagnostic, not a claim that photons, electrons, reference-arm counts, and sample damage constraints are interchangeable operating costs. Quantitative phase imaging remains phase-domain and is evaluated through the phase-noise model, so its row is model-conditional rather than an intrinsic statement about all phase-imaging instruments. Because several count-domain rows in \Cref{tab:detected-quanta-normalization-metadata} have readout fractions materially away from zero (including 0.424 and 0.567), this scaling check is interpreted as a diagnostic reference rather than an exact model for every point in the reported sweep. \Cref{tab:budget-normalized} summarizes the fixed-budget comparison, and \cref{fig:detected-quanta-budget-pareto} shows the sweep over detected-quanta budgets. Contract-LP and Contract-Q answer different questions: the former uses propagated detector noise under representative modality profiles, while the latter maps eligible modalities to a fixed detected-quanta budget and Poisson/phase noise model. Signed-contrast and reference-arm modalities can move between these normalizations when a small contrast rides on a bright Poisson background. Dose, bleaching, radiation damage, heating, preparation, and destruction penalties belong to the acquisition-cost metadata layer and can be included when that contract is configured.
+
+\IfFileExists{figures/detected-quanta-normalized-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/detected-quanta-normalized-table}}
+ \caption{Detected-quanta-budget-normalized lateral Cram\'{e}r--Rao bound at $N_Q=5\times10^4$ for Contract-Q. This common-budget diagnostic is not a native operating-regime ranking and is status-tagged by its dedicated Contract-Q derivative-convergence export in the current source outputs.}
+\label{tab:budget-normalized}
+\end{table}
+}{%
+\generatedfallbacktable{tab:budget-normalized}{Detected-quanta-budget-normalized lateral Cram\'{e}r--Rao bound at $N_Q=5\times10^4$.}{Required table asset.}
+}
+
+\IfFileExists{figures/detected-quanta-normalization-metadata-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/detected-quanta-normalization-metadata-table}}
+\caption{Detected-quanta normalization metadata. Count-domain rows record the exposure scale and additive-readout fraction; phase-domain rows record the phase-variance path. Signed contrast remains the derivative target while the detector-count image supplies the Poisson mean. Ideal count-domain $F\propto N_Q$ scaling is exact only when additive readout variance is negligible.}
+\label{tab:detected-quanta-normalization-metadata}
+\end{table}
+}{}
+
+\IfFileExists{figures/detected-quanta-derivative-convergence-crlb-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/detected-quanta-derivative-convergence-crlb-table}}
+\caption{Contract-Q derivative-step convergence status for detected-quanta-normalized ranking.}
+\label{tab:detected-quanta-derivative-convergence}
+\end{table}
+}{\generatedfallbacktable{tab:detected-quanta-derivative-convergence}{Contract-Q derivative-step convergence status for detected-quanta normalization.}{Required table asset.}}
+
+\IfFileExists{figures/detected-quanta-budget-pareto.png}{%
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\linewidth]{figures/detected-quanta-budget-pareto.png}
+\caption{Detected-quanta-budget sweep for Contract-Q. Each color/marker/line-style combination is one imaging modality, identified by the legend below the axes. Sweeping the plotted budget range within this configured profile shows whether the diagnostic ordering is stable or budget-dependent there. The plotted curves are accompanied by the Contract-Q derivative-convergence gate in Table~\ref{tab:detected-quanta-derivative-convergence}; singular budget cases are treated as nonfinite rather than assigned artificial finite values.}
+\label{fig:detected-quanta-budget-pareto}
+\end{figure}
+}{%
+\generatedfallbackfigure{fig:detected-quanta-budget-pareto}{Detected-quanta-budget sweep. Sweeping the plotted budget range within this configured profile shows whether the ordering is stable or budget-dependent there. Singular budget cases are treated as nonfinite rather than assigned artificial finite values.}{Required figure asset.}
+}
+
+\paragraph{Fusion Cram\'{e}r--Rao bound.} Best-$k$ subset search reports the lowest-bound single modality, the lowest-bound subset at each size, and full-library fusion in \cref{tab:fusion-crlb,fig:fusion-curve}. For these reported curves, Contract-LP is the underlying modality contract unless explicitly stated; any subset containing a non-passing row in Table~\ref{tab:derivative-convergence-crlb} inherits that row-level diagnostic status. The fusion bound is monotonically non-increasing with subset size under independent noise Fisher additivity. A lateral registration covariance can be supplied to model subpixel cross-channel alignment error before summing Fisher matrices; \cref{tab:registration-degradation} reports the corresponding synthetic degradation check. The full-library row is an algebraic independent-channel diagnostic, not a proposed physically simultaneous instrument. In experimental design, users should only fuse modalities that are independently acquired, mutually compatible with the same sample state, and not alternate reconstructions of the same detected quanta.
+
+\IfFileExists{figures/modality-fusion-crlb-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/modality-fusion-crlb-table} and \input{figures/fusion-contribution-breakdown-table}}
+\caption{Best-$k$ fusion Cram\'{e}r--Rao bound over the configured modality profiles. Rows are selected by lowest fused $\sigma_{xy}$ under the algebraic independent-channel search and inherit the Contract-LP derivative-convergence status of their parent modalities. The fused subsets should not be read as physically simultaneous instrument designs unless the selected channels have independent acquisition budgets, calibrated registration, and sample compatibility.}
+\label{tab:fusion-crlb}
+\end{table}
+}{%
+\generatedfallbacktable{tab:fusion-crlb}{Best-$k$ fusion Cram\'{e}r--Rao bound over the configured modality profiles.}{Required table asset.}
+}
+
+\IfFileExists{figures/modality-fusion-crlb.png}{%
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.85\linewidth]{figures/modality-fusion-crlb.png}
+\caption{Fusion Cram\'{e}r--Rao bound versus subset size. Monotonicity follows from independent noise Fisher additivity. Under this profile, most of the lateral information is already captured by the first few selected modalities; the curve inherits the Contract-LP derivative-convergence status of its selected parent modalities.}
+\label{fig:fusion-curve}
+\end{figure}
+}{%
+\generatedfallbackfigure{fig:fusion-curve}{Fusion Cram\'{e}r--Rao bound versus subset size. The lowest attainable lateral bound is non-increasing as independent modality Fisher matrices are added.}{Required figure asset.}
+}
+
+\IfFileExists{figures/fusion-independence-metadata-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/fusion-independence-metadata-table}}
+\caption{Fusion-independence metadata emitted with representative best-$k$ subsets. The last column answers whether the subset still needs physical design review before interpreting the algebraic Fisher sum as an experimental acquisition.}
+\label{tab:fusion-independence-metadata}
+\end{table}
+}{}
+
+The lowest-bound $k$-subset curve saturates after the selected modalities under this diagnostic profile because the leading scanning-electron, off-axis-holography, and interferometric-scattering terms already account for most of the lateral Fisher contribution in the configured profiles. The flat tail is profile-specific; it does not imply that large modality libraries are generally redundant.
+
+This serial-allocation solution is a boundary solution under fixed per-frame equal costs and the configured profiles; it inherits the Contract-LP derivative-step limitations, including non-passing parent rows in Table~\ref{tab:derivative-convergence-crlb}. It should not be interpreted as a recommendation to replace optical live-particle workflows with SEM or other modalities, because practical compatibility, vacuum, dose, sample preparation, and field-of-view constraints are outside this synthetic objective model.
+
+\IfFileExists{figures/time-allocation-crlb-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/time-allocation-crlb-table}}
+\caption{Serial time-allocation Cram\'{e}r--Rao diagnostic over the configured modality profiles. Each row solves the fixed-time allocation problem for the stated A-, D-, or E-optimal scalarization using the same per-modality Fisher matrices as the lateral Contract-LP diagnostic and therefore inherits their derivative-convergence status. The allocation column reports nonzero time fractions under a unit total-time budget and equal per-frame time costs.}
+\label{tab:time-allocation-crlb}
+\end{table}
+}{}
+
+\IfFileExists{figures/registration-degradation-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/registration-degradation-table}}
+\caption{Registration-covariance degradation diagnostic. Increasing residual cross-channel alignment covariance monotonically weakens the fused bound for the named modality subset. The diagnostic inherits the Contract-LP derivative-convergence status of the fused modalities; the covariance entries are in nm$^2$ on the shared lateral $x/y$ parameter block.}
+\label{tab:registration-degradation}
+\end{table}
+}{}
+
+\paragraph{Per-pixel Fisher density.} The Cram\'{e}r--Rao implementation computes the per-pixel Fisher information integrand rather than only its spatial sum. The maps in \cref{fig:fisher-density-panel} localize the detector pixels with high Fisher contribution for the plotted modality profiles and can serve as optional information-aware training targets when a downstream model is configured for that auxiliary target.
+
+\IfFileExists{figures/fisher-density-panel.png}{%
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figures/fisher-density-panel.png}
+\caption{Per-pixel Fisher information density maps. Each panel visualizes $f_{xx}+f_{yy}$ for one modality profile on the same particle. Each panel is independently log-scaled and percentile-clipped; the magma colorbar runs from dark (low) to bright (high) per-pixel Fisher density, and carries only that direction rather than a shared absolute scale.}
+\label{fig:fisher-density-panel}
+\end{figure}
+}{%
+\generatedfallbackfigure{fig:fisher-density-panel}{Per-pixel Fisher information density maps. Each panel visualizes $f_{xx}+f_{yy}$ for one modality profile on the same particle.}{Required figure asset.}
+}
+
+\paragraph{Implementation consistency diagnostics.} The following deterministic diagnostics are software consistency checks for the implemented Fisher and supervision layers. They verify expected algebraic behavior under controlled synthetic inputs; they are not empirical validation of microscope performance.
+
+\Cref{tab:loewner-dominance} isolates the fixed-budget Loewner-dominance diagnostic with a two-matrix synthetic example.
+
+\IfFileExists{figures/loewner-dominance-summary-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/loewner-dominance-summary-table}}
+\caption{Fixed-budget scheduling diagnostic. The table is a synthetic two-matrix check illustrating Loewner dominance, not a pair of real microscope modalities.}
+\label{tab:loewner-dominance}
+\end{table}
+}{}
+
+\Cref{tab:structured-background-loss} reports the structured-background nuisance projection diagnostic used to check that signed derivative maps, rather than squared information-density maps, are used for Schur-complement information loss.
+
+\IfFileExists{figures/structured-background-loss-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\input{figures/structured-background-loss-table}
+\caption{Structured-background nuisance projection diagnostic. The output is computed from signed lateral derivative maps for the named modality profile, noise-weighted inner products, and Schur-complement projection against the listed nuisance basis maps.}
+\label{tab:structured-background-loss}
+\end{table}
+}{}
+
+\subsection{Measurement-supported supervision}
+
+The supervision consistency evaluation in \cref{tab:supervision-audit} evaluates deterministic particle-frame cases spanning supported, borderline, and singular zero-contrast targets without depending on Segment Anything Model 2. This deterministic evaluation set is not a population estimate for the full training corpus; it tests whether positive object pixels remain supervised while unsupported known-object pixels are routed to the ignore mask rather than silently converted to background.
+
+\IfFileExists{figures/supervision-audit-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{p{0.40\linewidth}p{0.22\linewidth}p{0.28\linewidth}}
+\toprule
+Metric & Value & Check \\
+\midrule
+\input{figures/supervision-audit-table}
+\end{tabular}
+\caption{Supervision-schema consistency evaluation on a deterministic particle-frame set. Count rows are integers; support and exclusion rows are fractions of the deterministic evaluation set.}
+\label{tab:supervision-audit}
+\end{table}
+}{%
+\generatedfallbacktable{tab:supervision-audit}{Supervision-schema consistency evaluation on a deterministic particle-frame set.}{Required table asset.}
+}
+
+\paragraph{Synthetic training corpus.} The synthetic corpus contains raw Syniscopy frames, auxiliary supervision arrays, and a derived Segment Anything Model 2-compatible video-object-segmentation representation. The summary in \cref{tab:e07-dataset-summary} connects the supervision schema to the corpus used for Segment Anything Model 2 fine-tuning: video counts, frame counts, condition families, image sizes, pixel pitch, axial range, train/validation split, and selected supervision target. The condition-family labels identify synthetic rendering regimes; they are dataset coverage descriptors rather than separate performance claims. The 12 hard caustic stress profiles are synthetic conditions at $\lvert z\rvert=6$--9~$\mu$m with low-count, NA, wavelength, texture, vibration, and near-failure variants listed in the training-condition manifest; they are included for coverage in fine-tuning but are not reported as a separate caustic-matched worked example. \Cref{fig:e07-dataset-preview} shows representative frames and auxiliary masks from that corpus.
+
+\IfFileExists{figures/e07-dataset-summary-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/e07-dataset-summary-table}}
+\caption{Synthetic training-corpus summary. The corpus spans the synthetic caustic-video conditions used for Segment Anything Model 2 transfer and records the selected supervision target.}
+\label{tab:e07-dataset-summary}
+\end{table}
+}{}
+
+\IfFileExists{figures/e07-dataset-preview.png}{%
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figures/e07-dataset-preview.png}
+\caption{Representative synthetic corpus frames and auxiliary supervision arrays. Rows show examples from the condition families (upper caustic, lower caustic, and hard caustic stress), including an ignore-mask case when present. Hard caustic stress corresponds to $\lvert z\rvert=6$--9~$\mu$m and low-count, NA, wavelength, texture, vibration, and near-failure variants. Columns show the rendered frame, the geometry mask, and the supported/ignored supervision overlays. Colored overlays mark the geometry mask in green, the supported mask in blue, and ignore pixels in pink.}
+\label{fig:e07-dataset-preview}
+\end{figure}
+}{}
+
+\subsection{Caustic-matched SAM2 worked example}
+
+The Segment Anything Model 2 transfer example uses the Liverpool caustic-particle dataset \cite{schleyer-caustic} and Segment Anything Model 2 \cite{sam2}. Segment Anything Model 2 is fine-tuned on the synthetic corpus above, then the base and fine-tuned models are run on the same reviewed set of Liverpool 50~nm caustic-particle clips with the same prompt records for each clip. The candidate pool is restricted to the defined Liverpool 50~nm source condition, and 30 videos are selected at random from that pool for review. Candidate videos are then screened before inference using promptability and data-quality criteria specified before model comparison. A retained clip must support one stable target identity, one point prompt on the selected prompt frame, and a contiguous evaluation window in which the same target remains interpretable for at least 30 frames. The review criterion is therefore window-level rather than frame-level: exclusion does not mean that no individual frame contains visible particle signal, but that the clip does not provide a well-defined prompt-to-trajectory comparison window. Videos are excluded before model inference when manual review cannot assign that target and window with confidence because the particle is ambiguous or absent, leaves or contacts the field boundary, is affected by severe acquisition artifacts, or otherwise cannot support one prompt record for one particle. Of the 30 reviewed candidates, 19 were retained (3 at 2.5\% FBS, 4 at 5\% FBS, and 12 at 10\% FBS) and 11 were excluded by these pre-inference criteria. No manual segmentation masks from the Liverpool videos are used for training or scoring; manual review supplies only the retained clip window and prompt point.
+
+The transfer analysis is populated from the retained rows of the review manifest rather than a hand-coded single clip, and the E09 batch manifest records per-clip prompt manifests, continuity semantics, and mask-output paths when the inference notebook is run. For each retained clip, the local review records store the source DataCat filename, prompt frame, prompt coordinates, selected end frame, encoded clip path, 0.116~$\mu$m pixel size, and the DataCat 40~fps acquisition timebase \cite{schleyer-caustic}. The source DataCat README records 40~fps acquisition; the retained AVI files play back at 5~fps for review and notebook visualization, so Brownian quantities use the 40~fps acquisition interval recorded by the dataset. The source article describes positively charged BPEI-coated 50~nm gold particles in DMEM with fetal bovine serum, a 37~$^\circ$C incubation stage, 100-frame tracks, and diffusion computed from two-dimensional mean-squared displacement \cite{schleyer2024label}. The overlay panel in \cref{fig:sam2-brownian-transfer} and mask-centroid diffusion summary in \cref{tab:sam2-transfer-motion} show how Syniscopy supervision changes downstream video masks on the same retained experimental clips. The primary transfer effect is mask continuity: the fine-tuned outputs retain the prompted mask across the full reviewed window in all three serum groups, while the base model loses continuity in at least part of each group. The grouped mask-centroid diffusion diagnostic is secondary. It moves closer to the source-reference diffusion means in the 2.5\% and 5\% FBS groups and moves farther from the reference in the 10\% group, so it is reported as a condition-level diagnostic rather than a uniform diffusion-accuracy claim. The group counts are small for 2.5\% and 5\% FBS, so these grouped differences are interpreted with the reported standard deviations and continuity column rather than as precise subgroup diffusion estimates. Because the source study reports diffusion coefficients rather than a per-track diameter ground truth, the summary reports mask-centroid diffusion together with mask coverage and trajectory continuity rather than forcing a Stokes--Einstein diameter inversion.
+
+This transfer result is therefore an existence-and-continuity demonstration for the Syniscopy supervision pipeline under matched review conditions, not a statistically powered benchmark of video-segmentation performance on Liverpool clips.
+
+\IfFileExists{figures/sam2-transfer-motion-table.tex}{%
+\begin{table}[H]
+\centering
+\small
+\resizebox{\linewidth}{!}{\input{figures/sam2-transfer-motion-table}}
+\caption{Mask-centroid diffusion summary for the reviewed caustic-video transfer set \cite{schleyer-caustic,sam2}. Centroids are computed from predicted masks in the base Segment Anything Model 2 and fine-tuned Segment Anything Model 2 output videos using the retained clips and prompt records exported by the review manifest. Diffusion coefficients use the DataCat acquisition rate recorded in that manifest (40~fps), 116~nm pixels, and the first 100 decoded frames of each retained window. The MSD fit uses lags from one frame to $\min(40,N-1)$ frames, includes only frame pairs for which both masks are nonempty, and fits the two-dimensional relation $\langle\Delta r^2\rangle=4D_{\mathrm{MSD}}\Delta t$ by ordinary least squares without static- or dynamic-localization-error correction. Source-reference values are BPEI 50~nm means from Fig.~4 of Schleyer et al. \cite{schleyer2024label}; source-figure uncertainty is not propagated in this grouped diagnostic. The longest-run column penalizes cases where a model loses the prompted particle mask; diffusion values are therefore interpreted together with mask continuity.}
+\label{tab:sam2-transfer-motion}
+\end{table}
+}{}
+
+\IfFileExists{figures/sam2-brownian-transfer.png}{%
+\begin{figure}[H]
+\centering
+\includegraphics[width=\linewidth]{figures/sam2-brownian-transfer.png}
+\caption{Segment Anything Model 2 transfer examples on reviewed Liverpool caustic-particle clips \cite{schleyer-caustic,sam2}. Rows compare base and fine-tuned Segment Anything Model 2 outputs on the same selected frames and prompt records; magenta overlays mark predicted masks. Masks that meet a panel boundary are clipped by the displayed field of view.}
+\label{fig:sam2-brownian-transfer}
+\end{figure}
+}{}

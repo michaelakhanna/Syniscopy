@@ -31,6 +31,7 @@ GITHUB_ROOT_FILES = [
     "LICENSE",
     "README.md",
     "THIRD_PARTY_NOTICES.md",
+    "pyproject.toml",
     "requirements.txt",
 ]
 
@@ -62,10 +63,14 @@ SUPPLEMENTAL_SOURCE_FILES = [
     "supplemental/E08.ipynb",
     "supplemental/E09.ipynb",
     "supplemental/README.md",
+    "supplemental/notebook_source.py",
     "supplemental/package_experiments_for_colab.py",
     "supplemental/package_experiments_for_colab.sh",
     "supplemental/rebuild_liverpool_review_clips.py",
 ]
+
+SUPPLEMENTAL_GENERATED_SOURCE_ZIP = "supplemental/syniscopy_source.zip"
+SAM2_STARTER_GENERATED_SOURCE_ZIP = "sam2_starter/syniscopy_codebase.zip"
 
 ARXIV_FILES = [
     "paper/main.tex",
@@ -218,6 +223,18 @@ def copy_file(src_rel: str | Path, dst_root: Path, summary: BuildSummary) -> Non
     summary.copied_files += 1
 
 
+def copy_required_binary_file(src_rel: str | Path, dst_root: Path, summary: BuildSummary) -> None:
+    """Copy a required generated binary asset even when its suffix is globally skipped."""
+    src_rel = Path(src_rel)
+    src = ensure_inside_repo(REPO_ROOT / src_rel)
+    if not src.exists():
+        raise FileNotFoundError(f"required generated release asset missing: {src_rel}")
+    dst = dst_root / src_rel
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+    summary.copied_files += 1
+
+
 def copy_optional_file(src_rel: str | Path, dst_root: Path, summary: BuildSummary) -> None:
     src_rel = Path(src_rel)
     src = REPO_ROOT / src_rel
@@ -347,6 +364,14 @@ def copy_sanitized_review_data(dst_root: Path, summary: BuildSummary) -> None:
 
 def build_public_source_tree(dst_root: Path, summary: BuildSummary) -> None:
     clean_dir(dst_root)
+    subprocess.check_call(
+        [sys.executable, "supplemental/package_experiments_for_colab.py"],
+        cwd=REPO_ROOT,
+    )
+    subprocess.check_call(
+        [sys.executable, "sam2_starter/package_source_zip.py"],
+        cwd=REPO_ROOT,
+    )
     for src_rel in GITHUB_ROOT_FILES:
         copy_file(src_rel, dst_root, summary)
     for src_rel in GITHUB_SOURCE_DIRS:
@@ -356,6 +381,8 @@ def build_public_source_tree(dst_root: Path, summary: BuildSummary) -> None:
         copy_file(src_rel, dst_root, summary)
     for src_rel in SUPPLEMENTAL_SOURCE_FILES:
         copy_file(src_rel, dst_root, summary)
+    copy_required_binary_file(SUPPLEMENTAL_GENERATED_SOURCE_ZIP, dst_root, summary)
+    copy_required_binary_file(SAM2_STARTER_GENERATED_SOURCE_ZIP, dst_root, summary)
     copy_sanitized_review_data(dst_root, summary)
 
 
@@ -430,6 +457,15 @@ def write_sha256sums(root: Path, summary: BuildSummary) -> None:
     summary.copied_files += 1
 
 
+
+def copy_paper_artifact_provenance_asset(assets_root: Path, version: str, summary: BuildSummary) -> None:
+    provenance = REPO_ROOT / "paper" / "figures" / "artifact-provenance-manifest.json"
+    if provenance.exists():
+        shutil.copy2(provenance, assets_root / f"syniscopy_paper_artifact_provenance_{version}.json")
+        summary.copied_files += 1
+    else:
+        summary.skipped_missing_optional.append("paper/figures/artifact-provenance-manifest.json")
+
 def copy_github_assets(
     assets_root: Path,
     github_source_root: Path,
@@ -449,6 +485,7 @@ def copy_github_assets(
         summary.copied_files += 1
     else:
         summary.skipped_missing_optional.append("paper/main.pdf")
+    copy_paper_artifact_provenance_asset(assets_root, version, summary)
     write_sha256sums(assets_root, summary)
 
 
@@ -474,6 +511,7 @@ def copy_zenodo_assets(assets_root: Path, sanitized_source_root: Path, version: 
         summary.copied_files += 1
     else:
         summary.skipped_missing_optional.append("paper/main.pdf")
+    copy_paper_artifact_provenance_asset(assets_root, version, summary)
 
     review_src = sanitized_source_root / REVIEW_DATA_REL
     review_assets = assets_root / "liverpool_caustic_50nm_review"
@@ -569,7 +607,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--version",
-        default="v1.1.0",
+        default="v1.1.1",
         help="Version label used in generated asset filenames.",
     )
     parser.add_argument(

@@ -17,6 +17,7 @@ from typing import Any, Iterable
 SUPPORTED_MASK_TARGETS = ("mask_supported", "mask_geometry")
 
 ANNOTATION_SCHEMA_VERSION = "syniscopy-supervision-v1"
+MASK_LABEL_ENCODING = "per_particle_binary_png_sidecars"
 ANNOTATION_TARGET_DESCRIPTIONS = {
     "mask_geometry": "projected object and contrast-support mask before support-factor gating",
     "mask_supported": "mask after configured support-factor gating",
@@ -32,7 +33,32 @@ def build_annotation_schema(
 ) -> dict[str, Any]:
     schema: dict[str, Any] = {
         "schema_version": ANNOTATION_SCHEMA_VERSION,
+        "mask_label_encoding": MASK_LABEL_ENCODING,
+        "sidecar_layout": "target_name/particle_N/frame_XXXX.png",
+        "coordinate_frame": "final rendered frame grid, row-major yx pixel coordinates",
+        "binary_mask_value_encoding": "uint8 PNG with 0=absent and 255=present",
+        "loss_weight_value_encoding": "uint8 PNG with 0=ignored/no loss and 1..255=relative positive-pixel weight",
+        "selected_target_relationship": (
+            "mask_supported must be a subset of mask_geometry; ignore_mask is "
+            "mask_geometry AND NOT mask_supported; loss_weight must be positive "
+            "only inside the selected positive target and zero inside ignore_mask."
+        ),
+        "sam2_gt_label_encoding": (
+            "SAM2 conversion stores per-frame GT masks as uint8 instance-label "
+            "maps with 0=background and particle-specific object IDs 1..255; "
+            "overlaps are removed from GT and marked in Ignore."
+        ),
         "targets": dict(ANNOTATION_TARGET_DESCRIPTIONS),
+        "ignore_mask_semantics": (
+            "ignore_mask marks simulated object/support pixels that are not "
+            "valid foreground supervision for the selected target; downstream "
+            "losses must not treat these pixels as background negatives."
+        ),
+        "loss_weight_semantics": (
+            "loss_weight is a uint8 0..255 positive-target weight map. It is "
+            "zero outside selected positive target pixels and must be zeroed "
+            "where ignore_mask is positive."
+        ),
     }
     if selected_target is not None:
         schema["selected_target"] = validate_supervision_target(selected_target)

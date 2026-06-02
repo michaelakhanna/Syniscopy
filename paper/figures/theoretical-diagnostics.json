@@ -1,0 +1,467 @@
+{
+  "provenance": {
+    "artifact_root": "paper/figures",
+    "artifacts": [
+      {
+        "exists": true,
+        "path": "paper/figures/theoretical-support-table.tex",
+        "sha256": "132cc822be8c0546bf606bbfe264ecb2abd2c20f0628310fdc2d32b320bf5bdd"
+      },
+      {
+        "exists": true,
+        "path": "paper/figures/fusion-symmetry-diagnostic-table.tex",
+        "sha256": "54afe82cc6eaa7d81d7b27f1b1ea4ac64e096f87ac8d372d981b372ef054969d"
+      },
+      {
+        "exists": true,
+        "path": "paper/figures/registration-degradation-table.tex",
+        "sha256": "81e1692fc460ce67c23a1adf0db6448f23e99400d28c6e842f869d8f4e999898"
+      },
+      {
+        "exists": true,
+        "path": "paper/figures/loewner-dominance-summary-table.tex",
+        "sha256": "22ad358f1c7c0b563c47cc38afa8d495a87cd30bc2e5a1bf5c2704df35785588"
+      },
+      {
+        "exists": true,
+        "path": "paper/figures/structured-background-loss-table.tex",
+        "sha256": "d0c8a8180c4bb7ae986285596984808765e9d3e212d4a7e8e52f20e4e5d15311"
+      },
+      {
+        "exists": true,
+        "path": "paper/figures/theoretical-diagnostics.json",
+        "sha256": null
+      }
+    ],
+    "generator": "paper/regen_theorem_artifacts.py",
+    "generator_sha256": "143899460d24a2e31aab2b0c5e4eeae57c1c012e2b1878a708086e3425aabb5c",
+    "source": "deterministic diagnostics generated from codebase/fisher/ and codebase/supervision_policy.py",
+    "source_files": [
+      {
+        "exists": true,
+        "path": "codebase/fisher/__init__.py",
+        "sha256": "5f8ca3023419eb09edcff13e799eac440c4b4148ce0410801138b294d23bd8d8"
+      },
+      {
+        "exists": true,
+        "path": "codebase/supervision_policy.py",
+        "sha256": "fec5277f82e6fd46ccdc5dc05b2ff20dad01fc891cb75cd109e4938596b16cc5"
+      }
+    ]
+  },
+  "schema_version": "syniscopy-theorem-outputs-v1",
+  "supporting_diagnostics": {
+    "budget_ranking_invariance": {
+      "invariance_notes": [
+        "modality ordering is invariant across supplied budgets"
+      ],
+      "ordering_by_budget": {
+        "1000.0": [
+          "a",
+          "b"
+        ],
+        "2000.0": [
+          "a",
+          "b"
+        ]
+      },
+      "ordering_invariant": true,
+      "ranking_by_budget": {
+        "1000.0": [
+          "a",
+          "b"
+        ],
+        "2000.0": [
+          "a",
+          "b"
+        ]
+      },
+      "ranking_invariant": true,
+      "readout_limited_modalities": []
+    },
+    "fusion_symmetry_breaking": {
+      "continuous_rotational_symmetry_dim": 0,
+      "continuous_rotational_symmetry_intersection_dim": 0,
+      "fusion_rank_prediction_note": "Fusion nullity is set by the intersection of contrast-functional continuous stabilizers; per-modality stabilizer dimensions alone do not determine that intersection.",
+      "per_modality_continuous_rotational_symmetry_dim": {
+        "axisymmetric_modality": 1,
+        "symmetry_breaking_modality": 0
+      },
+      "predicted_nullity": 0,
+      "predicted_rotational_rank": 3,
+      "predicted_se3_rank": 6,
+      "rotational_dimension": 3,
+      "singular_rotation_axes_body": [],
+      "symmetry_broken_by_fusion": true,
+      "symmetry_nullity_lower_bound": 0,
+      "translation_rank": 3
+    },
+    "loewner_dominance": {
+      "dominance_eigenvalue_min": {
+        "dominant": {
+          "dominated": 2.0
+        },
+        "dominated": {
+          "dominant": -3.0
+        }
+      },
+      "dominated_by": {
+        "dominant": [],
+        "dominated": [
+          "dominant"
+        ]
+      },
+      "dominates": {
+        "dominant": [
+          "dominated"
+        ],
+        "dominated": []
+      },
+      "information_rate_by_modality": {
+        "dominant": [
+          [
+            4.0,
+            0.0
+          ],
+          [
+            0.0,
+            3.0
+          ]
+        ],
+        "dominated": [
+          [
+            1.0,
+            0.0
+          ],
+          [
+            0.0,
+            1.0
+          ]
+        ]
+      },
+      "loewner_maximal_modalities": [
+        "dominant"
+      ]
+    },
+    "quanta_budget_scaling": {
+      "budget_grid": [
+        1000.0,
+        2000.0,
+        4000.0
+      ],
+      "reference_budget": 1000.0,
+      "scaled_fisher_by_budget": {
+        "1000.0": [
+          [
+            2.0,
+            0.0
+          ],
+          [
+            0.0,
+            2.0
+          ]
+        ],
+        "2000.0": [
+          [
+            4.0,
+            0.0
+          ],
+          [
+            0.0,
+            4.0
+          ]
+        ],
+        "4000.0": [
+          [
+            8.0,
+            0.0
+          ],
+          [
+            0.0,
+            8.0
+          ]
+        ]
+      },
+      "scaled_sigma_xy_by_budget": {
+        "1000.0": 1.0,
+        "2000.0": 0.7071067811865476,
+        "4000.0": 0.5
+      },
+      "scaling_assumption": "ideal_count_domain_fisher_linear_in_detected_quanta"
+    },
+    "registration_covariance_monotonicity": {
+      "fusion_gain_xy_by_registration": [
+        1.138550085106622,
+        1.1224484634433232,
+        1.0060078771867145
+      ],
+      "fusion_sigma_xy_nm_by_registration": [
+        0.6708203932499369,
+        0.6804433706319013,
+        0.7592014268932203
+      ],
+      "monotone_degradation_verified": true,
+      "parent_convergence_statuses": {},
+      "parent_status_metadata": {
+        "parent_convergence_statuses": {},
+        "production_grid_diagnostic": true,
+        "safe_for_detected_quanta_ranking": false,
+        "safe_for_fusion": false,
+        "safe_for_ordering": false,
+        "safe_for_registration": false,
+        "safe_for_time_allocation": false,
+        "status_reason": "no parent convergence metadata supplied",
+        "validation_status": "unchecked"
+      },
+      "parent_validation_statuses": {},
+      "perfect_registration_fisher": [
+        [
+          5.0,
+          0.0
+        ],
+        [
+          0.0,
+          4.0
+        ]
+      ],
+      "production_grid_diagnostic": true,
+      "registration_adjusted_per_modality_fisher_by_registration": [
+        {
+          "dominant": [
+            [
+              4.0,
+              0.0
+            ],
+            [
+              0.0,
+              3.0
+            ]
+          ],
+          "dominated": [
+            [
+              1.0,
+              0.0
+            ],
+            [
+              0.0,
+              1.0
+            ]
+          ]
+        },
+        {
+          "dominant": [
+            [
+              3.846153846153846,
+              0.0
+            ],
+            [
+              0.0,
+              2.912621359223301
+            ]
+          ],
+          "dominated": [
+            [
+              0.9900990099009901,
+              0.0
+            ],
+            [
+              0.0,
+              0.9900990099009901
+            ]
+          ]
+        },
+        {
+          "dominant": [
+            [
+              2.857142857142857,
+              0.0
+            ],
+            [
+              0.0,
+              2.3076923076923075
+            ]
+          ],
+          "dominated": [
+            [
+              0.9090909090909091,
+              0.0
+            ],
+            [
+              0.0,
+              0.9090909090909091
+            ]
+          ]
+        }
+      ],
+      "registration_covariance_grid": [
+        [
+          [
+            0.0,
+            0.0
+          ],
+          [
+            0.0,
+            0.0
+          ]
+        ],
+        [
+          [
+            0.01,
+            0.0
+          ],
+          [
+            0.0,
+            0.01
+          ]
+        ],
+        [
+          [
+            0.1,
+            0.0
+          ],
+          [
+            0.0,
+            0.1
+          ]
+        ]
+      ],
+      "registration_degradation_fraction": [
+        0.0,
+        0.014345087714676878,
+        0.1317506660987184
+      ],
+      "registration_validation_status": "unchecked",
+      "safe_for_registration": false,
+      "validation_status": "unchecked"
+    },
+    "structured_background_fisher": {
+      "adjusted_fisher": [
+        [
+          0.0,
+          0.0
+        ],
+        [
+          0.0,
+          50.0
+        ]
+      ],
+      "cross_fisher": [
+        [
+          50.0
+        ],
+        [
+          0.0
+        ]
+      ],
+      "information_loss_fraction": {
+        "x": 1.0,
+        "y": 0.0
+      },
+      "information_loss_matrix": [
+        [
+          50.0,
+          0.0
+        ],
+        [
+          0.0,
+          0.0
+        ]
+      ],
+      "mean_information_loss_fraction": 0.5,
+      "nuisance_basis_names": [
+        "linear_x_background"
+      ],
+      "nuisance_fisher": [
+        [
+          50.0
+        ]
+      ],
+      "nuisance_rank": 1,
+      "parameter_names": [
+        "x",
+        "y"
+      ],
+      "raw_fisher": [
+        [
+          50.0,
+          0.0
+        ],
+        [
+          0.0,
+          50.0
+        ]
+      ],
+      "unit_metadata": {
+        "adjusted_fisher_units_by_entry": {
+          "x": {
+            "x": "model_signal_per_parameter*model_signal_per_parameter/model_signal_squared",
+            "y": "model_signal_per_parameter*model_signal_per_parameter/model_signal_squared"
+          },
+          "y": {
+            "x": "model_signal_per_parameter*model_signal_per_parameter/model_signal_squared",
+            "y": "model_signal_per_parameter*model_signal_per_parameter/model_signal_squared"
+          }
+        },
+        "cross_fisher_units_by_entry": {
+          "x": {
+            "linear_x_background": "model_signal_per_parameter*model_signal_per_nuisance_amplitude/model_signal_squared"
+          },
+          "y": {
+            "linear_x_background": "model_signal_per_parameter*model_signal_per_nuisance_amplitude/model_signal_squared"
+          }
+        },
+        "information_loss_units_by_entry": {
+          "x": {
+            "x": "model_signal_per_parameter*model_signal_per_parameter/model_signal_squared",
+            "y": "model_signal_per_parameter*model_signal_per_parameter/model_signal_squared"
+          },
+          "y": {
+            "x": "model_signal_per_parameter*model_signal_per_parameter/model_signal_squared",
+            "y": "model_signal_per_parameter*model_signal_per_parameter/model_signal_squared"
+          }
+        },
+        "measurement_domain": "model_signal",
+        "noise_variance_units": "model_signal_squared",
+        "nuisance_basis_units_by_basis": {
+          "linear_x_background": "model_signal_per_nuisance_amplitude"
+        },
+        "nuisance_fisher_units_by_entry": {
+          "linear_x_background": {
+            "linear_x_background": "model_signal_per_nuisance_amplitude*model_signal_per_nuisance_amplitude/model_signal_squared"
+          }
+        },
+        "nuisance_units_by_basis": {
+          "linear_x_background": "nuisance_amplitude"
+        },
+        "parameter_derivative_units_by_axis": {
+          "x": "model_signal_per_parameter",
+          "y": "model_signal_per_parameter"
+        },
+        "parameter_units_by_axis": {
+          "x": "parameter",
+          "y": "parameter"
+        },
+        "raw_fisher_units_by_entry": {
+          "x": {
+            "x": "model_signal_per_parameter*model_signal_per_parameter/model_signal_squared",
+            "y": "model_signal_per_parameter*model_signal_per_parameter/model_signal_squared"
+          },
+          "y": {
+            "x": "model_signal_per_parameter*model_signal_per_parameter/model_signal_squared",
+            "y": "model_signal_per_parameter*model_signal_per_parameter/model_signal_squared"
+          }
+        },
+        "signal_units": "model_signal"
+      }
+    },
+    "uniform_ambiguity_special_case": {
+      "ambiguity_support": 1.0,
+      "assignment_competition": 0.0,
+      "assignment_odds_ratio": null,
+      "mask_overlap_pixels": 0,
+      "nearest_competitor_distance_nm": null,
+      "support_evaluated": true,
+      "uniform_ambiguity_special_case": true
+    }
+  }
+}
