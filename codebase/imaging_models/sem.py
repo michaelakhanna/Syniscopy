@@ -8,6 +8,7 @@ from ._shared import (
     np,
 )
 from backend_fidelity import attach_backend_fidelity_metadata
+from config.runtime import SemSettings, param_value
 from .electron_constants import electron_wavelength_m
 from .sem_backends import (
     GaussianProbeSEMProxyBackend,
@@ -73,23 +74,17 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
     supports_spectral_channels = False
 
     def __init__(self, params: dict) -> None:
-        sem_model_explicit = "sem_model" in params
-        sem_backend_explicit = "sem_backend" in params
+        settings = SemSettings.from_params(params)
         _sem_model_raw = str(
-            params.get("sem_model", "gaussian_probe_secondary_yield")
+            param_value(params, "sem_model")
         ).strip().lower()
-        if _sem_model_raw == "gaussian_probe_proxy":
-            _sem_model_raw = "gaussian_probe_secondary_yield"
         self._sem_model = _sem_model_raw
         if self._sem_model not in {"gaussian_probe_secondary_yield", "interaction_volume_proxy"}:
             raise ValueError(
                 "PARAMS['sem_model'] must be 'gaussian_probe_secondary_yield' "
-                "(alias 'gaussian_probe_proxy') or "
-                f"'interaction_volume_proxy'; got {self._sem_model!r}."
+                f"or 'interaction_volume_proxy'; got {self._sem_model!r}."
             )
-        self._sem_backend = str(params.get("sem_backend", "monte_carlo_transport")).strip().lower()
-        if self._sem_backend in {"syniscopy_monte_carlo", "monte_carlo_sem"}:
-            self._sem_backend = "monte_carlo_transport"
+        self._sem_backend = str(param_value(params, "sem_backend")).strip().lower()
         if self._sem_backend not in {
             "gaussian_probe_proxy",
             "interaction_volume_proxy",
@@ -107,22 +102,17 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
         self._sem_reference_kernel_backend = None
         self._sem_reference_backend = None
         self._sem_proxy_backend = None
-        if sem_backend_explicit and not sem_model_explicit and self._sem_backend == "interaction_volume_proxy":
-            self._sem_model = "interaction_volume_proxy"
-        elif sem_model_explicit and not sem_backend_explicit and self._sem_model == "interaction_volume_proxy":
-            self._sem_backend = "interaction_volume_proxy"
-        elif self._sem_backend == "interaction_volume_proxy":
-            self._sem_model = "interaction_volume_proxy"
+        if self._sem_model == "interaction_volume_proxy" and self._sem_backend != "interaction_volume_proxy":
+            raise ValueError(
+                "PARAMS['sem_model']='interaction_volume_proxy' requires "
+                "PARAMS['sem_backend']='interaction_volume_proxy'."
+            )
         if self._sem_backend == "interaction_volume_proxy" and self._sem_model != "interaction_volume_proxy":
             raise ValueError(
                 "PARAMS['sem_backend']='interaction_volume_proxy' requires "
                 "PARAMS['sem_model']='interaction_volume_proxy'."
             )
-        self._sem_source_representation = str(params.get("sem_source_representation", "volume")).strip().lower()
-        if self._sem_source_representation in {"projected_2d", "projected-source", "projected_source"}:
-            self._sem_source_representation = "projected"
-        if self._sem_source_representation in {"sliced_volume", "voxel_volume", "volume_zyx"}:
-            self._sem_source_representation = "volume"
+        self._sem_source_representation = str(param_value(params, "sem_source_representation")).strip().lower()
         if self._sem_source_representation not in {"projected", "volume"}:
             raise ValueError(
                 "PARAMS['sem_source_representation'] must be 'projected' or "
@@ -143,46 +133,26 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
                 else "projected_for_backend_without_volume_transport"
             )
         )
-        self._sem_source_z_origin = str(params.get("sem_source_z_origin", "entry_surface_depth")).strip().lower()
+        self._sem_source_z_origin = settings.source_z_origin
         if self._sem_source_z_origin not in {"entry_surface_depth", "focus_plane_relative"}:
             raise ValueError(
                 "PARAMS['sem_source_z_origin'] must be 'entry_surface_depth' or "
                 "'focus_plane_relative'."
             )
-        self._sem_source_z_offset_nm = float(params.get("sem_source_z_offset_nm", 0.0))
-        if not np.isfinite(self._sem_source_z_offset_nm):
-            raise ValueError("PARAMS['sem_source_z_offset_nm'] must be finite.")
-        self._sem_volume_slices = int(params.get("sem_volume_slices", 8))
-        if self._sem_volume_slices <= 0:
-            raise ValueError("PARAMS['sem_volume_slices'] must be positive.")
-        os_factor = float(params.get("psf_oversampling_factor", 1.0))
-        if not np.isfinite(os_factor) or os_factor <= 0.0:
-            raise ValueError(
-                f"PARAMS['psf_oversampling_factor'] must be positive for SEM; got {os_factor!r}."
-            )
-        canvas_pitch_nm = float(params.get("pixel_size_nm", 1.0)) / os_factor
+        self._sem_source_z_offset_nm = settings.source_z_offset_nm
+        self._sem_volume_slices = settings.volume_slices
+        canvas_pitch_nm = settings.sampling.model_canvas_pixel_size_nm
         if not np.isfinite(canvas_pitch_nm) or canvas_pitch_nm <= 0.0:
             raise ValueError(
                 "PARAMS['pixel_size_nm'] / PARAMS['psf_oversampling_factor'] "
                 f"must resolve to a positive SEM canvas pitch; got {canvas_pitch_nm} nm."
             )
         self._probe_sigma_source = "pixels"
-        sigma_nm_raw = params.get("sem_probe_sigma_nm", None)
-        if sigma_nm_raw is not None:
-            sigma_nm = float(sigma_nm_raw)
-            if sigma_nm < 0.0:
-                raise ValueError(
-                    f"PARAMS['sem_probe_sigma_nm'] must be non-negative; got {sigma_nm}."
-                )
-            self._probe_sigma_px = sigma_nm / canvas_pitch_nm
+        if settings.probe_sigma_nm is not None:
+            self._probe_sigma_px = settings.probe_sigma_nm / canvas_pitch_nm
             self._probe_sigma_source = "nm"
         else:
-            self._probe_sigma_px = float(params.get("sem_probe_sigma_pixels", 1.0))
-        if self._probe_sigma_px < 0.0:
-            raise ValueError(
-                f"PARAMS['sem_probe_sigma_pixels'] must be non-negative; "
-                f"got {self._probe_sigma_px}."
-            )
+            self._probe_sigma_px = settings.probe_sigma_px
         self._probe_sigma_nm = self._probe_sigma_px * canvas_pitch_nm
         self._canvas_pitch_nm = canvas_pitch_nm
 
@@ -205,23 +175,23 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
                 probe_sigma_px=self._probe_sigma_px,
             )
             self._sem_reference_backend = self._sem_reference_kernel_backend
-        self._interaction_volume_nm = float(params.get("sem_interaction_volume_nm", 30.0))
+        self._interaction_volume_nm = float(param_value(params, "sem_interaction_volume_nm"))
         if not np.isfinite(self._interaction_volume_nm) or self._interaction_volume_nm < 0.0:
             raise ValueError(
                 "PARAMS['sem_interaction_volume_nm'] must be finite and non-negative; "
                 f"got {self._interaction_volume_nm}."
             )
-        direction = np.asarray(params.get("sem_detector_direction_xy", [1.0, 0.0]), dtype=float)
+        direction = np.asarray(param_value(params, "sem_detector_direction_xy"), dtype=float)
         if direction.shape != (2,) or not np.all(np.isfinite(direction)):
             raise ValueError("PARAMS['sem_detector_direction_xy'] must be a finite length-2 vector.")
         norm = float(np.linalg.norm(direction))
         if norm <= 0.0:
             raise ValueError("PARAMS['sem_detector_direction_xy'] must have nonzero norm.")
         self._detector_direction_xy = direction / norm
-        self._edge_gain = float(params.get("sem_edge_contrast_gain", 10.0))
-        self._bulk_gain = float(params.get("sem_bulk_contrast_gain", 1.0))
-        self._topography_gain = float(params.get("sem_topography_contrast_gain", 0.0))
-        self._baseline = float(params.get("sem_baseline_yield", 0.05))
+        self._edge_gain = float(param_value(params, "sem_edge_contrast_gain"))
+        self._bulk_gain = float(param_value(params, "sem_bulk_contrast_gain"))
+        self._topography_gain = float(param_value(params, "sem_topography_contrast_gain"))
+        self._baseline = float(param_value(params, "sem_baseline_yield"))
         if self._baseline < 0.0:
             raise ValueError(
                 f"PARAMS['sem_baseline_yield'] must be non-negative; "
@@ -246,9 +216,9 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
                     bulk_gain=self._bulk_gain,
                     baseline=self._baseline,
                 )
-        slice_raw = params.get("sem_volume_slice_thickness_nm", None)
+        slice_raw = param_value(params, "sem_volume_slice_thickness_nm")
         if slice_raw is None:
-            interaction_depth = float(params.get("sem_interaction_volume_nm", 30.0))
+            interaction_depth = float(param_value(params, "sem_interaction_volume_nm"))
             self._sem_volume_slice_thickness_nm = max(
                 interaction_depth / float(self._sem_volume_slices),
                 1e-9,
@@ -287,7 +257,7 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
                     else "Gaussian-probe blurred secondary-electron yield proxy"
                 )
             ),
-            "acceleration_kV": float(params.get("sem_acceleration_kV", 5.0)),
+            "acceleration_kV": float(param_value(params, "sem_acceleration_kV")),
             "probe_sigma_canvas_pixels": self._probe_sigma_px,
             "probe_sigma_nm": self._probe_sigma_nm,
             "interaction_volume_nm": self._interaction_volume_nm,
@@ -297,7 +267,7 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
             "bulk_contrast_gain": self._bulk_gain,
             "topography_contrast_gain": self._topography_gain,
             "baseline_yield": self._baseline,
-            "electrons_per_pixel": float(params.get("sem_electrons_per_pixel", 1000.0)),
+            "electrons_per_pixel": SemSettings.from_params(params).electrons_per_pixel,
             "filter_guard_radius_pixels": self.filter_guard_radius_pixels(params),
             "source_input_kind": (
                 "sliced_sem_source_volume"
@@ -390,11 +360,11 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
         return response
 
     def probe_wavelength_nm(self, params: dict) -> float:
-        acceleration_kV = float(params.get("sem_acceleration_kV", 5.0))
+        acceleration_kV = float(param_value(params, 'sem_acceleration_kV'))
         return float(electron_wavelength_m(acceleration_kV) * 1.0e9)
 
     def filter_guard_radius_pixels(self, params: dict) -> int | None:
-        raw = params.get("sem_filter_guard_pixels", None)
+        raw = param_value(params, 'sem_filter_guard_pixels')
         if raw is None:
             raw = max(4.0 * self._probe_sigma_px, 2.0)
             if self._sem_transport_backend is not None and hasattr(self._sem_transport_backend, "guard_radius_pixels"):
@@ -572,7 +542,7 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
                 "SEM sample-environment maps must match the SEM source image shape; "
                 f"got topography {topo.shape}, yield {yield_map.shape}, expected {tuple(image_shape)}."
             )
-        edge_gain = float(params.get("sem_sample_environment_edge_gain", self._edge_gain))
+        edge_gain = float(param_value(params, "sem_sample_environment_edge_gain"))
         source_2d = yield_map + edge_gain * topo
         if self._sem_effective_source_representation != "volume":
             return source_2d
@@ -661,16 +631,17 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
         material = getattr(particle_instance, "material_properties", None)
         traj = np.asarray(particle_instance.trajectory_nm, dtype=float)
         frame_idx = int(np.clip(int(frame_index), 0, traj.shape[0] - 1))
-        px = float(traj[frame_idx, 0]) / float(params["pixel_size_nm"]) * float(params.get("psf_oversampling_factor", 1))
-        py = float(traj[frame_idx, 1]) / float(params["pixel_size_nm"]) * float(params.get("psf_oversampling_factor", 1))
+        sampling = SemSettings.from_params(params).sampling
+        px = float(traj[frame_idx, 0]) / sampling.detector_pixel_size_nm * float(sampling.psf_oversampling_factor)
+        py = float(traj[frame_idx, 1]) / sampling.detector_pixel_size_nm * float(sampling.psf_oversampling_factor)
         pz = float(traj[frame_idx, 2]) if traj.shape[1] >= 3 else 0.0
         self.accumulate_particle_source(
             source,
             center_x_canvas=px,
             center_y_canvas=py,
             diameter_nm=float(particle_instance.particle_type.diameter_nm),
-            pixel_size_nm=float(params["pixel_size_nm"]),
-            os_factor=int(params.get("psf_oversampling_factor", 1)),
+            pixel_size_nm=sampling.detector_pixel_size_nm,
+            os_factor=sampling.psf_oversampling_factor,
             material_properties=material,
             params=params,
             particle_z_nm=pz,
@@ -705,10 +676,6 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
             return self._sem_transport_backend.electrons_per_pixel() * intensity
         if self._sem_reference_kernel_backend is not None:
             return self._sem_reference_kernel_backend.electrons_per_pixel() * intensity
-        dose = float(params.get(
-            "sem_electrons_per_pixel",
-            float(params.get("background_intensity", 1000.0)),
-        ))
-        return dose * intensity
+        return SemSettings.from_params(params).electrons_per_pixel * intensity
 
 __all__ = ['ScanningElectronMicroscopyImagingModel']

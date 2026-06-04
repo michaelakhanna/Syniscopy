@@ -741,7 +741,12 @@ def compare_modality_orientation_crlb(
     state coordinates --- including rotational ones --- under the same
     Gaussian-noise approximation used throughout.
     """
-    from .lateral import _resolve_modality_scalar_map, _resolve_modality_string_map, _sort_key_finite_then_value
+    from .lateral import (
+        _positive_finite_or_inf,
+        _resolve_modality_scalar_map,
+        _resolve_modality_string_map,
+        _sort_key_finite_then_value,
+    )
 
     if not isinstance(renders_by_modality, dict) or not renders_by_modality:
         raise ValueError(
@@ -821,7 +826,7 @@ def compare_modality_orientation_crlb(
 
     # Build the (modality, sigma_omega_total) tuples and sort.
     items = [
-        (m, float(r.get("sigma_omega_total_rad", float("inf"))))
+        (m, _positive_finite_or_inf(r.get("sigma_omega_total_rad", float("inf"))))
         for m, r in per_modality.items()
     ]
     # Sort ascending; +inf and NaN go last.
@@ -834,11 +839,12 @@ def compare_modality_orientation_crlb(
     best_modality_full_rank: str | None = None
     for modality, sigma in ranking:
         rec = per_modality[modality]
-        if best_modality is None and np.isfinite(sigma):
+        if best_modality is None and np.isfinite(sigma) and sigma > 0.0:
             best_modality = modality
         if (
             best_modality_full_rank is None
             and np.isfinite(sigma)
+            and sigma > 0.0
             and rec.get("rank", 0) == 6
             and not rec.get("axes_singular", [])
         ):
@@ -855,7 +861,7 @@ def compare_modality_orientation_crlb(
         relative = {}
         frames = {}
         for m, s in items:
-            if not np.isfinite(s) or sigma_best <= 0.0:
+            if not np.isfinite(s) or s <= 0.0 or sigma_best <= 0.0:
                 relative[m] = float("inf")
                 frames[m] = float("inf")
             else:

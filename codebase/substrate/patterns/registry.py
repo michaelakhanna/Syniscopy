@@ -1,36 +1,19 @@
 """registry substrate-pattern helpers."""
 
 from __future__ import annotations
+from config import param_value
+from param_schema.sample_environment import PATTERN_DEFAULT_PRESETS
 
 from ._shared import (
     _BAR_MATERIAL_PATTERNS,
     _CIRCULAR_MATERIAL_PATTERNS,
     _CIRCULAR_VOID_PATTERNS,
-    _PATTERN_DEFAULT_PRESETS,
     _bar_solid_mask_from_coordinates,
     _centered_pattern_grid,
+    _substrate_pattern_is_enabled,
+    canonical_sample_environment_pattern_and_preset,
     np,
 )
-
-def _substrate_pattern_is_enabled(params: dict) -> bool:
-    return (
-        bool(params.get("sample_environment_enabled", True))
-        and bool(params.get("sample_environment_pattern_enabled", False))
-    )
-
-def canonical_sample_environment_pattern_and_preset(pattern: object, preset: object = "empty_background") -> tuple[str, str]:
-    """Normalize public sample-environment preset spellings without collapsing geometry."""
-    p = str(pattern).strip().lower()
-    q = str(preset).strip().lower()
-    if p in _PATTERN_DEFAULT_PRESETS and q in {
-        "",
-        "default",
-        p,
-        "default_gold_holes",
-        "default_nanopillars",
-    }:
-        q = _PATTERN_DEFAULT_PRESETS[p]
-    return p, q
 
 def generate_sample_environment_pattern_maps(
     params: dict,
@@ -67,8 +50,8 @@ def generate_sample_environment_pattern_maps(
     if not np.isfinite(layer_thickness_nm):
         raise ValueError("layer_thickness_nm must be finite for sample-environment maps.")
 
-    pattern_model_raw = params.get("sample_environment_pattern", "none")
-    substrate_preset_raw = params.get("sample_environment_pattern_preset", "empty_background")
+    pattern_model_raw = param_value(params, 'sample_environment_pattern')
+    substrate_preset_raw = param_value(params, "sample_environment_pattern_preset")
     pattern_model, substrate_preset = canonical_sample_environment_pattern_and_preset(
         pattern_model_raw, substrate_preset_raw
     )
@@ -76,7 +59,7 @@ def generate_sample_environment_pattern_maps(
     uniform_height = np.zeros((height, width), dtype=float)
     uniform_fraction = np.ones((height, width), dtype=float)
     if (
-        not bool(params.get("sample_environment_enabled", True))
+        not bool(param_value(params, 'sample_environment_enabled'))
         or not _substrate_pattern_is_enabled(params)
         or substrate_preset == "empty_background"
         or pattern_model == "none"
@@ -84,7 +67,7 @@ def generate_sample_environment_pattern_maps(
         return uniform_height, uniform_fraction, "uniform"
 
     if pattern_model in _CIRCULAR_VOID_PATTERNS | _CIRCULAR_MATERIAL_PATTERNS:
-        expected_preset = _PATTERN_DEFAULT_PRESETS.get(pattern_model)
+        expected_preset = PATTERN_DEFAULT_PRESETS.get(pattern_model)
         if substrate_preset != expected_preset:
             raise ValueError(
                 f"sample_environment_pattern={pattern_model!r} received invalid "
@@ -133,7 +116,7 @@ def generate_sample_environment_pattern_maps(
         return height_map.astype(float), material_fraction.astype(float), pattern_model
 
     if pattern_model in _BAR_MATERIAL_PATTERNS:
-        expected_preset = _PATTERN_DEFAULT_PRESETS.get(pattern_model)
+        expected_preset = PATTERN_DEFAULT_PRESETS.get(pattern_model)
         if substrate_preset != expected_preset:
             raise ValueError(
                 f"sample_environment_pattern={pattern_model!r} received invalid "

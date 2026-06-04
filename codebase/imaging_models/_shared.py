@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from config.runtime import param_value
+from optical_params import resolve_probe_wavelength_nm
 from substrate import MaterialProperties, SampleEnvironment, fresnel_reflection_amplitude
 from .base import (
     ImagingModel,
@@ -14,7 +16,6 @@ from .base import (
 from modality_registry import (
     CANONICAL_COHERENT_MODALITIES,
     LABEL_FREE_OPTICAL_MODALITIES,
-    MODALITY_ALIASES,
     RELATIVE_REFERENCE_CONTRAST_MODALITIES,
     SUPPORTED_MODALITIES,
     canonical_modality_name as _canonical_modality_name,
@@ -23,7 +24,7 @@ from modality_registry import (
 
 
 def _ricm_particle_reflection_material(params: dict) -> str | MaterialProperties:
-    explicit = params.get("ricm_particle_material", None)
+    explicit = param_value(params, 'ricm_particle_material')
     if isinstance(explicit, MaterialProperties):
         return explicit
     explicit_text = "" if explicit is None else str(explicit).strip()
@@ -41,10 +42,11 @@ def _ricm_particle_reflection_material(params: dict) -> str | MaterialProperties
         or primary.material_properties is not None
     ):
         return resolve_component_material_properties(params, primary)
-    legacy_material = params.get("particle_material", None)
-    if legacy_material not in (None, ""):
-        return str(legacy_material)
-    return "polystyrene"
+    raise ValueError(
+        "Particle material properties could not be resolved from PARAMS['particles']. "
+        "Set the primary component material/material_properties/refractive_index, "
+        "or use the modality-specific material parameter."
+    )
 
 def _mean_normalized_map(arr: np.ndarray, *, floor: float = 1e-12) -> np.ndarray:
     """Return ``arr`` divided by its positive finite mean."""
@@ -86,8 +88,8 @@ def _optical_pupil_frequency_grid(
     pixel_nm = float(pixel_size_nm)
     if not np.isfinite(pixel_nm) or pixel_nm <= 0.0:
         raise ValueError(f"pixel_size_nm must be finite and positive; got {pixel_size_nm!r}.")
-    wavelength_nm = float(params.get("probe_wavelength_nm") or params.get("wavelength_nm", 532.0))
-    numerical_aperture = float(params.get("numerical_aperture", 1.0))
+    wavelength_nm = resolve_probe_wavelength_nm(params)
+    numerical_aperture = float(param_value(params, "numerical_aperture"))
     if not np.isfinite(wavelength_nm) or wavelength_nm <= 0.0:
         raise ValueError(f"Optical pupil wavelength must be finite and positive; got {wavelength_nm!r}.")
     if not np.isfinite(numerical_aperture) or numerical_aperture <= 0.0:
@@ -105,7 +107,6 @@ __all__ = [
     "CANONICAL_COHERENT_MODALITIES",
     "ImagingModel",
     "LABEL_FREE_OPTICAL_MODALITIES",
-    "MODALITY_ALIASES",
     "MaterialProperties",
     "RELATIVE_REFERENCE_CONTRAST_MODALITIES",
     "SUPPORTED_MODALITIES",

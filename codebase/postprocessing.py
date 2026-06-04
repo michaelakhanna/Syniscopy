@@ -1,11 +1,16 @@
+from __future__ import annotations
 import os
 import logging
 from contextlib import contextmanager
 
 import numpy as np
-import cv2
-from tqdm import tqdm
+try:
+    from tqdm import tqdm
+except ImportError:
+    def tqdm(iterable=None, *args, **kwargs):
+        return iterable if iterable is not None else ()
 
+from config.runtime import param_value, resolved_modality, resolved_qpi_phase_to_count_scale
 from shared_constants import (
     RAW_BACKGROUND_SUBTRACTION_METHODS,
     REFERENCE_BACKGROUND_SUBTRACTION_METHODS,
@@ -14,6 +19,16 @@ from shared_constants import (
 
 logger = logging.getLogger(__name__)
 _RELATIVE_REFERENCE_FLOOR = 1e-9
+CONTRAST_SIGN_CONVENTION = "signal_minus_reference"
+
+try:
+    import cv2 as cv2
+except ImportError:
+    class _MissingCV2:
+        def __getattr__(self, name: str):
+            raise ImportError(f"OpenCV (cv2) is required for postprocessing operation {name!r}.")
+
+    cv2 = _MissingCV2()
 
 
 @contextmanager
@@ -33,13 +48,13 @@ def _suppress_opencv_videoio_warnings():
 def _background_subtraction_method(params) -> str:
     if params is None:
         params = {}
-    return str(params.get("background_subtraction_method", "video_median")).strip().lower()
+    return str(param_value(params, "background_subtraction_method")).strip().lower()
 
 
 def _uses_relative_reference_contrast(params) -> bool:
     if params is None:
         params = {}
-    imaging_model_name = str(params.get("imaging_model", "bright_field")).strip().lower()
+    imaging_model_name = resolved_modality(params)
     from imaging_models import modality_uses_relative_reference_contrast
 
     return modality_uses_relative_reference_contrast(imaging_model_name)
@@ -48,7 +63,7 @@ def _uses_relative_reference_contrast(params) -> bool:
 def _uses_phase_contrast_units(params) -> bool:
     if params is None:
         params = {}
-    imaging_model_name = str(params.get("imaging_model", "bright_field")).strip().lower()
+    imaging_model_name = resolved_modality(params)
     from imaging_models import get_imaging_model_class
 
     return getattr(get_imaging_model_class(imaging_model_name), "output_type", "intensity") == "phase"
@@ -57,12 +72,7 @@ def _uses_phase_contrast_units(params) -> bool:
 def _phase_display_count_scale(params) -> float:
     if params is None:
         params = {}
-    scale = float(
-        params.get(
-            "qpi_phase_to_count_scale",
-            params.get("background_intensity", 100.0),
-        )
-    )
+    scale = resolved_qpi_phase_to_count_scale(params)
     if not np.isfinite(scale) or scale <= 0.0:
         raise ValueError(
             "qpi_phase_to_count_scale must be positive and finite when converting "
@@ -127,6 +137,15 @@ def _relative_reference_denominator(reference_frame: np.ndarray) -> np.ndarray:
     return np.maximum(reference_frame, _RELATIVE_REFERENCE_FLOOR)
 
 
+def _reference_frame_contrast(signal_f: np.ndarray, reference_f: np.ndarray, params) -> np.ndarray:
+    """Apply the canonical contrast sign convention: signal minus reference."""
+    if _uses_relative_reference_contrast(params):
+        return (signal_f - reference_f) / _relative_reference_denominator(reference_f)
+    if _uses_phase_contrast_units(params):
+        return (signal_f - reference_f) / _phase_display_count_scale(params)
+    return signal_f - reference_f
+
+
 
 
 def compute_contrast_frames(signal_frames, reference_frames, params):
@@ -189,13 +208,7 @@ def compute_contrast_frames(signal_frames, reference_frames, params):
             signal_f = _frame_as_float(signal_frame, name="signal_frames", index=idx)
             ref_f = _frame_as_float(ref_frame, name="reference_frames", index=idx)
             _require_same_shape(signal_f, ref_f, index=idx)
-            if use_relative:
-                subtracted = (signal_f - ref_f) / _relative_reference_denominator(ref_f)
-            elif use_phase_units:
-                subtracted = (signal_f - ref_f) / _phase_display_count_scale(params)
-            else:
-                subtracted = signal_f - ref_f
-            contrast_frames.append(subtracted)
+            contrast_frames.append(_reference_frame_contrast(signal_f, ref_f, params))
 
     elif method in VIDEO_BACKGROUND_SUBTRACTION_METHODS:
         logger.info(
@@ -274,13 +287,7 @@ def compute_single_frame_contrast(signal_frame, reference_frame, params):
     _require_same_shape(signal_f, reference_f)
 
     if method in REFERENCE_BACKGROUND_SUBTRACTION_METHODS:
-        if _uses_relative_reference_contrast(params):
-            contrast = (signal_f - reference_f) / _relative_reference_denominator(reference_f)
-        elif _uses_phase_contrast_units(params):
-            contrast = (signal_f - reference_f) / _phase_display_count_scale(params)
-        else:
-            contrast = signal_f - reference_f
-        return contrast
+        return _reference_frame_contrast(signal_f, reference_f, params)
 
     raise ValueError(
         f"Unknown background_subtraction_method for single-frame contrast: {method}."

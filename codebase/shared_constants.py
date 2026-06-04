@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from modality_registry import (
     VECTORIAL_FULL_FIELD_MODALITIES,
-    modality_alias_closure,
+    modality_name_set,
 )
+from param_schema.sample_environment import PATTERN_DEFAULT_PRESETS
 
 KNOWN_INTERNAL_PARAM_KEYS = frozenset(
     {
@@ -20,6 +21,7 @@ KNOWN_INTERNAL_PARAM_KEYS = frozenset(
         "_write_mask_files",
         "_substrate_pattern_layout_cache_token",
         "_substrate_pattern_layout_extent_nm",
+        "_substrate_pattern_layout_rng",
         "_generated_spectral_channels",
         "_spectral_channel_count",
     }
@@ -27,17 +29,7 @@ KNOWN_INTERNAL_PARAM_KEYS = frozenset(
 
 NUM_FRAME_DURATION_SEARCH_STEPS = 32
 
-PATTERN_DEFAULT_PRESETS = {
-    "gold_holes": "default_gold_holes",
-    "holey_carbon": "holey_carbon",
-    "nanopillars": "default_nanopillars",
-    "fiducial_dots": "fiducial_dots",
-    "grid_bars": "grid_bars",
-    "microfluidic_walls": "microfluidic_walls",
-    "patterned_coverslip": "patterned_coverslip",
-}
-
-COHERENT_REFERENCE_MODALITIES = modality_alias_closure(VECTORIAL_FULL_FIELD_MODALITIES)
+COHERENT_REFERENCE_MODALITIES = modality_name_set(VECTORIAL_FULL_FIELD_MODALITIES)
 
 NONNEGATIVE_MATERIAL_PROPERTY_FIELDS = frozenset(
     {

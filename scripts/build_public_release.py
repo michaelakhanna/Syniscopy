@@ -607,7 +607,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--version",
-        default="v1.1.1",
+        default="v1.1.2",
         help="Version label used in generated asset filenames.",
     )
     parser.add_argument(

@@ -6,6 +6,9 @@ from typing import Any
 
 import numpy as np
 
+from config.runtime import param_value
+from optical_params import resolve_probe_wavelength_nm
+
 
 def _finite_float(value: Any, *, key: str) -> float:
     out = float(value)
@@ -27,7 +30,7 @@ def compute_coverslip_aberration_phase(
     renderer.  When the configured actual and design coverslip settings match,
     the returned phase is exactly zero after piston removal.
     """
-    model = str(params.get("coverslip_aberration_model", "none")).strip().lower()
+    model = str(param_value(params, 'coverslip_aberration_model')).strip().lower()
     phase = np.zeros_like(np.asarray(sin_theta, dtype=float), dtype=float)
     metadata: dict[str, Any] = {
         "coverslip_aberration_model": model,
@@ -44,21 +47,21 @@ def compute_coverslip_aberration_phase(
         )
 
     wavelength = _finite_float(
-        wavelength_nm if wavelength_nm is not None else params.get("wavelength_nm", 532.0),
+        wavelength_nm if wavelength_nm is not None else resolve_probe_wavelength_nm(params),
         key="wavelength_nm",
     )
     if wavelength <= 0.0:
         raise ValueError("wavelength_nm must be positive.")
 
-    n_medium = _finite_float(params.get("refractive_index_medium", 1.0), key="refractive_index_medium")
-    n_cs = _finite_float(params.get("coverslip_refractive_index", 1.518), key="coverslip_refractive_index")
+    n_medium = _finite_float(param_value(params, "refractive_index_medium"), key="refractive_index_medium")
+    n_cs = _finite_float(param_value(params, 'coverslip_refractive_index'), key="coverslip_refractive_index")
     n_design = _finite_float(
-        params.get("coverslip_design_refractive_index", n_cs),
+        param_value(params, "coverslip_design_refractive_index"),
         key="coverslip_design_refractive_index",
     )
-    t_nm = 1000.0 * _finite_float(params.get("coverslip_thickness_um", 170.0), key="coverslip_thickness_um")
+    t_nm = 1000.0 * _finite_float(param_value(params, 'coverslip_thickness_um'), key="coverslip_thickness_um")
     t_design_nm = 1000.0 * _finite_float(
-        params.get("coverslip_design_thickness_um", 170.0),
+        param_value(params, 'coverslip_design_thickness_um'),
         key="coverslip_design_thickness_um",
     )
     if n_medium <= 0.0 or n_cs <= 0.0 or n_design <= 0.0:
@@ -75,7 +78,7 @@ def compute_coverslip_aberration_phase(
     phase = (2.0 * np.pi / wavelength) * opd_nm
     phase = np.where(aperture, phase, 0.0)
 
-    if bool(params.get("coverslip_aberration_subtract_piston", True)) and np.any(aperture):
+    if bool(param_value(params, 'coverslip_aberration_subtract_piston')) and np.any(aperture):
         phase = phase.copy()
         phase[aperture] -= float(np.mean(phase[aperture]))
 
@@ -94,7 +97,7 @@ def compute_coverslip_aberration_phase(
             "coverslip_refractive_index": float(n_cs),
             "coverslip_design_refractive_index": float(n_design),
             "coverslip_aberration_subtract_piston": bool(
-                params.get("coverslip_aberration_subtract_piston", True)
+                param_value(params, 'coverslip_aberration_subtract_piston')
             ),
             "coverslip_aberration_phase_rms_rad": rms,
             "coverslip_aberration_phase_peak_to_peak_rad": p2p,
@@ -116,20 +119,20 @@ def _gaussian_weights(wavelengths: np.ndarray, center: float, fwhm: float) -> np
 
 def broadband_quadrature_channels(params: dict) -> list[dict[str, Any]]:
     """Build normalized spectral channels for broadband quadrature rendering."""
-    model = str(params.get("spectral_integration_model", "single_wavelength")).strip().lower()
+    model = str(param_value(params, 'spectral_integration_model')).strip().lower()
     if model != "broadband_quadrature":
         raise ValueError("broadband_quadrature_channels requires spectral_integration_model='broadband_quadrature'.")
 
-    explicit = params.get("broadband_wavelengths_nm", None)
+    explicit = param_value(params, 'broadband_wavelengths_nm')
     if explicit is not None:
         wavelengths = np.asarray(explicit, dtype=float).reshape(-1)
     else:
         center = _finite_float(
-            params.get("illumination_spectrum_center_nm", params.get("wavelength_nm", 532.0)),
+            param_value(params, "illumination_spectrum_center_nm"),
             key="illumination_spectrum_center_nm",
         )
-        fwhm = _finite_float(params.get("illumination_spectrum_fwhm_nm", 40.0), key="illumination_spectrum_fwhm_nm")
-        sample_count = int(params.get("illumination_spectrum_num_samples", 5))
+        fwhm = _finite_float(param_value(params, 'illumination_spectrum_fwhm_nm'), key="illumination_spectrum_fwhm_nm")
+        sample_count = int(param_value(params, 'illumination_spectrum_num_samples'))
         if sample_count <= 0:
             raise ValueError("illumination_spectrum_num_samples must be positive.")
         half_width = max(0.5 * fwhm, 1.0)
@@ -137,7 +140,7 @@ def broadband_quadrature_channels(params: dict) -> list[dict[str, Any]]:
     if wavelengths.size == 0 or not np.all(np.isfinite(wavelengths)) or np.any(wavelengths <= 0.0):
         raise ValueError("broadband wavelengths must be a non-empty positive finite sequence.")
 
-    explicit_weights = params.get("broadband_weights", None)
+    explicit_weights = param_value(params, 'broadband_weights')
     if explicit_weights is not None:
         weights = np.asarray(explicit_weights, dtype=float).reshape(-1)
         if weights.shape != wavelengths.shape:
@@ -149,13 +152,13 @@ def broadband_quadrature_channels(params: dict) -> list[dict[str, Any]]:
             raise ValueError("broadband_weights must have positive sum.")
         weights = weights / total
     else:
-        center = float(params.get("illumination_spectrum_center_nm", params.get("wavelength_nm", float(np.mean(wavelengths)))))
-        fwhm = float(params.get("illumination_spectrum_fwhm_nm", max(np.ptp(wavelengths), 1.0)))
+        center = float(param_value(params, "illumination_spectrum_center_nm"))
+        fwhm = float(param_value(params, "illumination_spectrum_fwhm_nm"))
         weights = _gaussian_weights(wavelengths, center, fwhm)
 
-    detector_model = str(params.get("detector_spectral_response_model", "rgb_heuristic")).strip().lower()
+    detector_model = str(param_value(params, 'detector_spectral_response_model')).strip().lower()
     channels: list[dict[str, Any]] = []
-    for idx, (wl, weight) in enumerate(zip(wavelengths, weights, strict=True)):
+    for idx, (wl, weight) in enumerate(zip(wavelengths, weights)):
         entry: dict[str, Any] = {
             "name": f"broadband_{idx + 1}_{wl:.1f}nm",
             "wavelength_nm": float(wl),
@@ -200,4 +203,3 @@ def expand_broadband_quadrature(params: dict) -> dict:
         "spectral_integration_model must be 'single_wavelength', 'configured_channels', "
         f"or 'broadband_quadrature'; got {model!r}."
     )
-

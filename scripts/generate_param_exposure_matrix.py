@@ -189,7 +189,7 @@ def _record_for_param(
 
 
 def build_matrix() -> dict[str, Any]:
-    internal_keys = set(config._KNOWN_INTERNAL_PARAM_KEYS)
+    internal_keys = set(config.KNOWN_INTERNAL_PARAM_KEYS)
     params_keys = set(config.PARAMS.keys())
     schema_by_base = _schema_key_by_base()
 

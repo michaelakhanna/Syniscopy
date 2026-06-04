@@ -10,6 +10,8 @@ from ._shared import (
     np,
     reference_vector_for_scattered,
 )
+from config.runtime import IscatSettings, param_value
+from optical_params import resolve_probe_wavelength_nm
 
 class InterferometricImagingModel(ImagingModel):
     """
@@ -35,7 +37,7 @@ class InterferometricImagingModel(ImagingModel):
     supports_spectral_channels = True
 
     def __init__(self, params: dict) -> None:
-        E_ref_amplitude = float(params.get("reference_field_amplitude", 0.0))
+        E_ref_amplitude = IscatSettings.from_params(params).reference_field_amplitude
         if E_ref_amplitude <= 0.0:
             raise ValueError(
                 "PARAMS['reference_field_amplitude'] must be positive for "
@@ -46,24 +48,20 @@ class InterferometricImagingModel(ImagingModel):
     @staticmethod
     def _fresnel_reference_coefficient(params: dict) -> complex:
         """Normal-incidence Fresnel amplitude for optional iSCAT calibration profiles."""
-        wavelength_nm = float(params.get("wavelength_nm", 532.0))
-        top_name = params.get(
-            "iscat_reference_medium_material",
-            params.get("medium_material", "water"),
-        )
-        bottom_name = params.get(
-            "iscat_reference_substrate_material",
-            params.get("bulk_substrate_material", "glass"),
-        )
+        wavelength_nm = resolve_probe_wavelength_nm(params)
+        settings = IscatSettings.from_params(params)
+        top_name = settings.reference_medium_material
+        bottom_name = settings.reference_substrate_material
         return fresnel_reflection_amplitude(top_name, bottom_name, wavelength_nm)
 
     @classmethod
     def _reference_field_scale(cls, params: dict) -> complex:
         """Return the opt-in complex scale applied to the renderer reference field."""
-        model = str(params.get("iscat_reference_model", "renderer")).strip().lower()
-        phase = float(params.get("iscat_reference_phase_rad", 0.0))
+        settings = IscatSettings.from_params(params)
+        model = settings.reference_model
+        phase = settings.reference_phase_rad
         amplitude_scale = _complex_from_param(
-            params.get("iscat_reference_amplitude_scale", 1.0),
+            settings.reference_amplitude_scale,
             default=1.0 + 0.0j,
         )
         phase_scale = np.exp(1j * phase)
@@ -71,27 +69,27 @@ class InterferometricImagingModel(ImagingModel):
             return amplitude_scale * phase_scale
         if model in {"fresnel", "fresnel_normal", "normal_incidence_fresnel"}:
             coeff = cls._fresnel_reference_coefficient(params)
-            if bool(params.get("iscat_reference_normalize_fresnel_phase_only", False)):
+            if settings.reference_normalize_fresnel_phase_only:
                 mag = abs(coeff)
                 coeff = 1.0 + 0.0j if mag <= 1e-12 else coeff / mag
             return amplitude_scale * phase_scale * coeff
         if model in {"explicit", "complex"}:
             coeff = _complex_from_param(
-                params.get("iscat_reference_coefficient", 1.0 + 0.0j),
+                settings.reference_coefficient,
                 default=1.0 + 0.0j,
             )
             return amplitude_scale * phase_scale * coeff
         raise ValueError(
             "Unsupported PARAMS['iscat_reference_model'] "
-            f"{params.get('iscat_reference_model')!r}. Supported values are "
+            f"{param_value(params, 'iscat_reference_model')!r}. Supported values are "
             "'renderer', 'fresnel', and 'explicit'."
         )
 
     @staticmethod
     def _dipole_collection_fraction(params: dict) -> float:
         """Collected fraction for a transverse electric dipole over a cone."""
-        NA = float(params.get("numerical_aperture", 1.0))
-        n_medium = float(params.get("refractive_index_medium", 1.33))
+        NA = float(param_value(params, "numerical_aperture"))
+        n_medium = float(param_value(params, "refractive_index_medium"))
         if n_medium <= 0.0:
             raise ValueError("PARAMS['refractive_index_medium'] must be positive.")
         sin_theta = float(np.clip(NA / n_medium, 0.0, 1.0))
@@ -102,14 +100,13 @@ class InterferometricImagingModel(ImagingModel):
     @classmethod
     def _scattered_field_scale(cls, params: dict) -> float:
         """Return optional collected-field scaling for native iSCAT profiles."""
-        model = str(params.get("iscat_collection_model", "scalar")).strip().lower()
+        settings = IscatSettings.from_params(params)
+        model = settings.collection_model
         if model in {"scalar", "renderer", "none"}:
             return 1.0
         if model in {"dipole", "dipole_high_na", "rayleigh_dipole"}:
             fraction = cls._dipole_collection_fraction(params)
-            reference_fraction = float(
-                params.get("iscat_collection_reference_fraction", 1.0)
-            )
+            reference_fraction = settings.collection_reference_fraction
             if not np.isfinite(reference_fraction) or reference_fraction <= 0.0:
                 raise ValueError(
                     "PARAMS['iscat_collection_reference_fraction'] must be positive."
@@ -117,7 +114,7 @@ class InterferometricImagingModel(ImagingModel):
             return float(np.sqrt(max(fraction, 1e-30) / reference_fraction))
         raise ValueError(
             "Unsupported PARAMS['iscat_collection_model'] "
-            f"{params.get('iscat_collection_model')!r}. Supported values are "
+            f"{param_value(params, 'iscat_collection_model')!r}. Supported values are "
             "'scalar' and 'dipole_high_na'."
         )
 
@@ -200,27 +197,28 @@ class InterferometricImagingModel(ImagingModel):
     def compute_response_function(self, shape: tuple[int, int], params: dict) -> dict:
         ref_scale = self._reference_field_scale(params)
         collection_scale = self._scattered_field_scale(params)
+        settings = IscatSettings.from_params(params)
         response = super().compute_response_function(shape, params)
         response.update(
             kind="interferometric_scattering",
-            iscat_reference_model=str(params.get("iscat_reference_model", "renderer")),
+            iscat_reference_model=settings.reference_model,
             iscat_reference_scale_real=float(np.real(ref_scale)),
             iscat_reference_scale_imag=float(np.imag(ref_scale)),
             iscat_reference_intensity_scale=float(abs(ref_scale) ** 2),
-            iscat_collection_model=str(params.get("iscat_collection_model", "scalar")),
+            iscat_collection_model=settings.collection_model,
             iscat_scattered_field_scale=float(collection_scale),
         )
-        if str(params.get("iscat_reference_model", "renderer")).strip().lower() in {
+        if settings.reference_model in {
             "fresnel",
             "fresnel_normal",
             "normal_incidence_fresnel",
         }:
             response.update(
                 iscat_reference_medium_material=str(
-                    params.get("iscat_reference_medium_material", params.get("medium_material", "water"))
+                    settings.reference_medium_material
                 ),
                 iscat_reference_substrate_material=str(
-                    params.get("iscat_reference_substrate_material", params.get("bulk_substrate_material", "glass"))
+                    settings.reference_substrate_material
                 ),
             )
         return response

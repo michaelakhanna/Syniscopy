@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from config import param_value
 import logging
 
 import numpy as np
@@ -95,7 +96,7 @@ def _include_axial_render_perturbation(
     z_max = float(np.max(z))
 
     drift_velocity = np.asarray(
-        params.get("drift_velocity_nm_per_s", [0.0, 0.0, 0.0]),
+        param_value(params, 'drift_velocity_nm_per_s'),
         dtype=float,
     )
     if drift_velocity.size == 1:
@@ -109,8 +110,8 @@ def _include_axial_render_perturbation(
     z_min += min(0.0, drift_end_nm)
     z_max += max(0.0, drift_end_nm)
 
-    if bool(params.get("vibration_include_axial", False)):
-        vibration_std_nm = float(params.get("vibration_jitter_std_nm", 0.0))
+    if bool(param_value(params, 'vibration_include_axial')):
+        vibration_std_nm = float(param_value(params, 'vibration_jitter_std_nm'))
         if vibration_std_nm > 0.0:
             vibration_margin_nm = 4.0 * vibration_std_nm
             z_min -= vibration_margin_nm
@@ -127,9 +128,6 @@ def _simulate_latent_scene(params: dict) -> dict:
     optical constants and PSFs are intentionally not built here; those are built
     per spectral sample against this same latent scene.
     """
-    if params.get("random_seed", None) is not None:
-        np.random.seed(int(params["random_seed"]))
-
     normalize_particle_specs(params, mutate=True)
     trajectories_nm = simulate_trajectories(params)
 
@@ -195,13 +193,13 @@ def _build_particle_instances_for_scene(params: dict, latent_scene: dict):
     z_step_nm = float(params["z_stack_step_nm"])
     if z_step_nm <= 0.0:
         raise ValueError("PARAMS['z_stack_step_nm'] must be positive.")
-    max_psf_z_slices_raw = params.get("max_psf_z_slices", None)
+    max_psf_z_slices_raw = param_value(params, "max_psf_z_slices")
     max_psf_z_slices = None if max_psf_z_slices_raw is None else int(max_psf_z_slices_raw)
 
     psf_interpolators_by_type = {}
-    default_z_range_nm = float(params.get("z_stack_range_nm", 30500.0))
+    default_z_range_nm = float(param_value(params, 'z_stack_range_nm'))
     default_half_span_nm = 0.5 * default_z_range_nm
-    use_shared_psf_z_grid = bool(params.get("shared_psf_z_grid_enabled", False))
+    use_shared_psf_z_grid = bool(param_value(params, 'shared_psf_z_grid_enabled'))
     trajectories_nm = latent_scene["trajectories_nm"]
     duration_seconds = float(params["duration_seconds"])
 

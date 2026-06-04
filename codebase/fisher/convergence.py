@@ -11,9 +11,9 @@ from experiment_contracts import (
     ConvergenceStatus,
     ValidationStatus,
     combine_parent_statuses,
+    fisher_result_from_crlb_result,
     normalize_convergence_status,
     stable_hash,
-    wrap_legacy_crlb_result,
 )
 
 from ._constants import (
@@ -75,7 +75,9 @@ def annotate_fisher_result_status(result: dict[str, Any], *, convergence_status:
     out = dict(result)
     rid = result_id or "fisher:" + stable_hash({"modality": modality, "contract": source_contract, "result": result})[:16]
     convergence_status = normalize_convergence_status(convergence_status)
-    wrapped = wrap_legacy_crlb_result(out, result_id=rid, source_contract=source_contract, modality=modality, convergence_status=convergence_status)
+    if "derivative_method" not in out and "lateral_derivative_mode" in out:
+        out["derivative_method"] = out["lateral_derivative_mode"]
+    wrapped = fisher_result_from_crlb_result(out, result_id=rid, source_contract=source_contract, modality=modality, convergence_status=convergence_status)
     out["fisher_result"] = wrapped.to_dict()
     out["result_id"] = rid
     out["convergence_status"] = convergence_status

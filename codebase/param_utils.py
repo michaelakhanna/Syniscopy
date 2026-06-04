@@ -5,7 +5,7 @@ import json
 from typing import Any, Dict
 import math
 
-from config import PARAMS
+from config import PARAMS, param_value
 from param_schema import PARAM_SCHEMA, ParamSpec
 
 
@@ -144,10 +144,7 @@ def get_default_control_values() -> Dict[str, Any]:
     """
     Return a dict of schema_key -> default control value.
 
-    The default for each control is taken from, in order of precedence:
-      1. PARAMS at the underlying config key, if present.
-      2. The schema's 'default' field.
-
+    The default for each control is taken from the canonical PARAMS object.
     Particle controls read from the first particle object's first component.
     """
     defaults: Dict[str, Any] = {}
@@ -155,11 +152,11 @@ def get_default_control_values() -> Dict[str, Any]:
         base_key = spec["key"]
 
         if schema_key in ("particle_diameter_nm", "particle_material"):
-            raw = _first_particle_control_default(schema_key, spec.get("default"))
+            raw = _first_particle_control_value(schema_key)
         elif base_key in PARAMS:
             raw = PARAMS[base_key]
         else:
-            raw = spec.get("default")
+            raise KeyError(f"PARAM_SCHEMA[{schema_key!r}] points to non-PARAMS key {base_key!r}.")
 
         defaults[schema_key] = _validate_and_normalize_value(spec, raw)
     return defaults
@@ -181,9 +178,7 @@ def build_params_from_controls(control_values: Dict[str, Any]) -> Dict[str, Any]
     - For each entry in PARAM_SCHEMA:
         * Determine a value to use:
             - If control_values contains the schema key, use that.
-            - Else, if PARAMS already has the underlying config key,
-              use PARAMS[key].
-            - Else, fall back to the schema's "default".
+            - Else, use the value from canonical PARAMS.
         * Validate and normalize the value according to the spec["type"].
         * Write particle controls into the first particle object's first
           component; write other controls into the PARAMS dictionary under
@@ -208,11 +203,11 @@ def build_params_from_controls(control_values: Dict[str, Any]) -> Dict[str, Any]
         if schema_key in control_values:
             raw_value = control_values[schema_key]
         elif schema_key in ("particle_diameter_nm", "particle_material"):
-            raw_value = _first_particle_control_default(schema_key, spec.get("default"))
+            raw_value = _first_particle_control_value(schema_key)
         elif base_key in params:
             raw_value = params[base_key]
         else:
-            raw_value = spec.get("default")
+            raise KeyError(f"PARAM_SCHEMA[{schema_key!r}] points to non-PARAMS key {base_key!r}.")
 
         value = _validate_and_normalize_value(spec, raw_value)
 
@@ -231,7 +226,7 @@ def build_params_from_controls(control_values: Dict[str, Any]) -> Dict[str, Any]
 
     return params
 def _first_particle_component(params: Dict[str, Any]) -> Dict[str, Any]:
-    particles = params.get("particles")
+    particles = param_value(params, "particles")
     if not isinstance(particles, list):
         raise ValueError("PARAMS['particles'] must be a list of particle objects.")
     if not particles:
@@ -247,13 +242,10 @@ def _first_particle_component(params: Dict[str, Any]) -> Dict[str, Any]:
     return components[0]
 
 
-def _first_particle_control_default(schema_key: str, fallback: Any) -> Any:
-    try:
-        component = _first_particle_component(deepcopy(PARAMS))
-        if schema_key == "particle_diameter_nm":
-            return component.get("diameter_nm", fallback)
-        if schema_key == "particle_material":
-            return component.get("material", fallback)
-    except (KeyError, TypeError, ValueError):
-        return fallback
-    return fallback
+def _first_particle_control_value(schema_key: str) -> Any:
+    component = _first_particle_component(deepcopy(PARAMS))
+    if schema_key == "particle_diameter_nm":
+        return component["diameter_nm"]
+    if schema_key == "particle_material":
+        return component["material"]
+    raise KeyError(f"Unknown particle control schema key: {schema_key!r}.")

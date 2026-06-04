@@ -8,6 +8,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from config import param_value
+
 __all__ = ["_clear_managed_outputs", "_format_float", "_write_csv", "_write_report"]
 
 
@@ -56,14 +58,14 @@ def _write_report(
         "",
         "## Configuration",
         "",
-        f"- Pixel size: `{_format_float(params.get('pixel_size_nm'))}` nm",
-        f"- Wavelength: `{_format_float(params.get('wavelength_nm'))}` nm",
-        f"- Numerical aperture: `{_format_float(params.get('numerical_aperture'))}`",
+        f"- Pixel size: `{_format_float(param_value(params, 'pixel_size_nm'))}` nm",
+        f"- Wavelength: `{_format_float(param_value(params, 'wavelength_nm'))}` nm",
+        f"- Numerical aperture: `{_format_float(param_value(params, 'numerical_aperture'))}`",
         f"- Frames per modality: `{int(num_frames)}`",
-        f"- Background intensity: `{_format_float(params.get('background_intensity'))}` counts",
-        f"- Read noise: `{_format_float(params.get('read_noise_counts'))}` counts RMS",
-        f"- Camera gain: `{_format_float(params.get('camera_gain_e_per_count'))}` e-/count",
-        f"- Background subtraction: `{params.get('background_subtraction_method')}`",
+        f"- Background intensity: `{_format_float(param_value(params, 'background_intensity'))}` counts",
+        f"- Read noise: `{_format_float(param_value(params, 'read_noise_counts'))}` counts RMS",
+        f"- Camera gain: `{_format_float(param_value(params, 'camera_gain_e_per_count'))}` e-/count",
+        f"- Background subtraction: `{param_value(params, 'background_subtraction_method')}`",
         f"- Modalities requested: `{', '.join(modalities)}`",
         f"- Dynamic Bayesian CRLB requested: `{bool(dynamic_requested)}`",
         "",

@@ -1,18 +1,10 @@
-"""CLI and compatibility wrapper for Syniscopy dataset generation."""
+"""CLI wrapper for Syniscopy dataset generation."""
 
 from __future__ import annotations
 
 import argparse
 import logging
 
-from dataset import (
-    apply_parameter_overrides,
-    build_dataset_video_params,
-    generate_dataset,
-    get_dataset_preset_names,
-    get_default_dataset_params,
-    write_default_params_template,
-)
 from json_utils import load_typed_json
 
 
@@ -35,7 +27,7 @@ def _parse_args() -> argparse.Namespace:
         "--preset",
         type=str,
         default="default",
-        help="Dataset preset. Public options: " + ", ".join(get_dataset_preset_names()),
+        help="Dataset preset. Default: default.",
     )
     parser.add_argument("--instrument", type=str, default=None)
     parser.add_argument("--output", "--output_dir", dest="output_dir", type=str, default=None)
@@ -53,6 +45,9 @@ def _parse_args() -> argparse.Namespace:
 def main() -> None:
     args = _parse_args()
     configure_logging(verbose=args.verbose)
+
+    from dataset import generate_dataset, write_default_params_template
+
     if args.write_params_template:
         path = write_default_params_template(args.write_params_template)
         logger.info("Wrote PARAMS template to %s", path)
@@ -90,14 +85,8 @@ def main() -> None:
 
 
 __all__ = [
-    "apply_parameter_overrides",
-    "build_dataset_video_params",
     "configure_logging",
-    "generate_dataset",
-    "get_dataset_preset_names",
-    "get_default_dataset_params",
     "main",
-    "write_default_params_template",
 ]
 
 

@@ -1,14 +1,18 @@
 """geometry substrate-pattern helpers."""
 
 from __future__ import annotations
+from config import param_value
+from param_schema.sample_environment import PATTERN_DEFAULT_PRESETS
 
 from ._shared import (
     _BAR_MATERIAL_PATTERNS,
     _CIRCULAR_MATERIAL_PATTERNS,
     _CIRCULAR_VOID_PATTERNS,
-    _PATTERN_DEFAULT_PRESETS,
     _REFLECTION_BOUNDARY_BISECTION_STEPS,
     _bar_solid_mask_from_coordinates,
+    _canonical_bar_orientation,
+    _substrate_pattern_is_enabled,
+    canonical_sample_environment_pattern_and_preset,
     math,
     np,
 )
@@ -80,17 +84,12 @@ def is_position_in_substrate_solid(
     from .gold_holes import _circular_feature_geometry
     from .layout import _classify_point_against_layout, _get_feature_layout_for_params
     from .nanopillars import _bar_geometry
-    from .registry import (
-        _substrate_pattern_is_enabled,
-        canonical_sample_environment_pattern_and_preset,
-    )
 
     substrate_enabled = _substrate_pattern_is_enabled(params)
     clearance_um = max(float(clearance_nm), 0.0) * 1e-3
 
-    pattern_model_raw = params.get("sample_environment_pattern", "none"
-    )
-    substrate_preset_raw = params.get("sample_environment_pattern_preset", "empty_background"
+    pattern_model_raw = param_value(params, 'sample_environment_pattern')
+    substrate_preset_raw = param_value(params, "sample_environment_pattern_preset"
     )
     pattern_model, substrate_preset = canonical_sample_environment_pattern_and_preset(
         pattern_model_raw, substrate_preset_raw
@@ -192,10 +191,6 @@ def project_position_to_fluid_region(
         _nearest_feature_and_vector,
     )
     from .nanopillars import _bar_geometry, _resolve_nanopillar_parameters
-    from .registry import (
-        _substrate_pattern_is_enabled,
-        canonical_sample_environment_pattern_and_preset,
-    )
 
     clearance_um = max(float(clearance_nm), 0.0) * 1e-3
     if not is_position_in_substrate_solid(
@@ -207,9 +202,8 @@ def project_position_to_fluid_region(
         return float(x_nm), float(y_nm)
 
     substrate_enabled = _substrate_pattern_is_enabled(params)
-    pattern_model_raw = params.get("sample_environment_pattern", "none"
-    )
-    substrate_preset_raw = params.get("sample_environment_pattern_preset", "empty_background"
+    pattern_model_raw = param_value(params, 'sample_environment_pattern')
+    substrate_preset_raw = param_value(params, "sample_environment_pattern_preset"
     )
     pattern_model, substrate_preset = canonical_sample_environment_pattern_and_preset(
         pattern_model_raw, substrate_preset_raw
@@ -219,7 +213,7 @@ def project_position_to_fluid_region(
         return float(x_nm), float(y_nm)
 
     if pattern_model in _CIRCULAR_VOID_PATTERNS | _CIRCULAR_MATERIAL_PATTERNS:
-        expected_preset = _PATTERN_DEFAULT_PRESETS.get(pattern_model)
+        expected_preset = PATTERN_DEFAULT_PRESETS.get(pattern_model)
         if substrate_preset != expected_preset:
             return float(x_nm), float(y_nm)
         geom = _circular_feature_geometry(params, pattern_model)
@@ -280,13 +274,13 @@ def project_position_to_fluid_region(
         return float(new_x_nm), float(new_y_nm)
 
     if pattern_model in _BAR_MATERIAL_PATTERNS:
-        expected_preset = _PATTERN_DEFAULT_PRESETS.get(pattern_model)
+        expected_preset = PATTERN_DEFAULT_PRESETS.get(pattern_model)
         if substrate_preset != expected_preset:
             return float(x_nm), float(y_nm)
         geom = _bar_geometry(params, pattern_model)
         pitch_um = float(geom["pitch_um"])
         width_um = float(geom["width_um"])
-        orientation = str(geom["orientation"])
+        orientation = _canonical_bar_orientation(geom["orientation"])
         _, _, _, x_um, y_um, center_nm = _map_position_nm_to_pattern_unit_cell(
             params, x_nm, y_nm, pitch_um
         )
@@ -385,7 +379,7 @@ def project_position_to_fluid_region(
     # --- Nanopillars: project from pillar interior to background fluid ---
     if (
         pattern_model == "nanopillars"
-        and substrate_preset in ("nanopillars", "default_nanopillars")
+        and substrate_preset == "default_nanopillars"
     ):
         geom = _resolve_nanopillar_parameters(params)
         pitch_um = geom["pitch_um"]
@@ -511,7 +505,6 @@ def reflect_position_across_substrate_boundary(
     from .gold_holes import _circular_feature_geometry, _resolve_gold_hole_parameters
     from .layout import _get_feature_layout_for_params, _nearest_feature_and_vector
     from .nanopillars import _bar_geometry, _resolve_nanopillar_parameters
-    from .registry import canonical_sample_environment_pattern_and_preset
 
     if not is_position_in_substrate_solid(
         params,
@@ -559,9 +552,9 @@ def reflect_position_across_substrate_boundary(
 
     # Wall normal at B. Look up the nearest feature in the unit-cell frame and
     # compute the radial direction from feature center to B.
-    pattern_model = str(params.get("sample_environment_pattern", "none")).strip().lower()
+    pattern_model = str(param_value(params, 'sample_environment_pattern')).strip().lower()
     substrate_preset = str(
-        params.get("sample_environment_pattern_preset", "empty_background")
+        param_value(params, "sample_environment_pattern_preset")
     ).strip().lower()
     pattern_model, substrate_preset = canonical_sample_environment_pattern_and_preset(
         pattern_model,
@@ -571,7 +564,7 @@ def reflect_position_across_substrate_boundary(
     n_x_world = 0.0
     n_y_world = 0.0
     if pattern_model in _CIRCULAR_VOID_PATTERNS | _CIRCULAR_MATERIAL_PATTERNS:
-        expected_preset = _PATTERN_DEFAULT_PRESETS.get(pattern_model)
+        expected_preset = PATTERN_DEFAULT_PRESETS.get(pattern_model)
         if substrate_preset == expected_preset:
             geom = _circular_feature_geometry(params, pattern_model)
             pitch_um = float(geom["pitch_um"])
@@ -596,12 +589,12 @@ def reflect_position_across_substrate_boundary(
                         n_x_world = dx_um / r
                         n_y_world = dy_um / r
     elif pattern_model in _BAR_MATERIAL_PATTERNS:
-        expected_preset = _PATTERN_DEFAULT_PRESETS.get(pattern_model)
+        expected_preset = PATTERN_DEFAULT_PRESETS.get(pattern_model)
         if substrate_preset == expected_preset:
             geom = _bar_geometry(params, pattern_model)
             pitch_um = float(geom["pitch_um"])
             half_width = 0.5 * float(geom["width_um"]) + max(float(clearance_nm), 0.0) * 1.0e-3
-            orientation = str(geom["orientation"])
+            orientation = _canonical_bar_orientation(geom["orientation"])
             _, _, _, x_um, y_um, _center_nm = _map_position_nm_to_pattern_unit_cell(
                 params, bx_nm, by_nm, pitch_um,
             )
@@ -644,7 +637,7 @@ def reflect_position_across_substrate_boundary(
                 n_y_world = dy_um / r
     elif (
         pattern_model == "nanopillars"
-        and substrate_preset in ("nanopillars", "default_nanopillars")
+        and substrate_preset == "default_nanopillars"
     ):
         geom = _resolve_nanopillar_parameters(params)
         pitch_um = geom["pitch_um"]

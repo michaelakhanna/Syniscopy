@@ -64,9 +64,13 @@ def _lateral_coordinate_derivatives(
 
 def _sort_key_finite_then_value(pair: tuple[str, float]) -> tuple[int, float]:
     v = pair[1]
-    if v != v or v == float("inf"):  # NaN or +inf should sort last.
+    if not np.isfinite(v) or v <= 0.0:
         return (1, 0.0)
     return (0, v)
+
+def _positive_finite_or_inf(value: Any) -> float:
+    v = float(value)
+    return v if np.isfinite(v) and v > 0.0 else float("inf")
 
 def _build_symmetric_fisher_from_gradients(
     grads: tuple[np.ndarray, ...],
@@ -588,28 +592,33 @@ def compare_modality_information_content(
         per_modality[modality] = res
 
     # Lateral ordering (always valid: 2D and 3D both report sigma_xy_nm).
-    def _xy_key(item: tuple[str, dict[str, Any]]) -> tuple[float, int]:
+    def _xy_key(item: tuple[str, dict[str, Any]]) -> tuple[int, float, int]:
         modality, res = item
-        sigma = res["sigma_xy_nm"]
+        sigma = float(res["sigma_xy_nm"])
         # sort order stable in input-dict order for ties
         idx = list(contrast_by_modality.keys()).index(modality)
-        return (float(sigma), idx)
+        invalid, value = _sort_key_finite_then_value((modality, sigma))
+        return (invalid, value, idx)
 
     ordered_xy = sorted(per_modality.items(), key=_xy_key)
-    ranking_xy = [(m, float(r["sigma_xy_nm"])) for m, r in ordered_xy]
+    ranking_xy = [(m, _positive_finite_or_inf(r["sigma_xy_nm"])) for m, r in ordered_xy]
 
     best_modality_xy: str | None
     best_sigma_xy = ordered_xy[0][1]["sigma_xy_nm"] if ordered_xy else float("inf")
     if np.isfinite(best_sigma_xy) and best_sigma_xy > 0.0:
         best_modality_xy = ordered_xy[0][0]
         relative_sigma_xy = {
-            m: float(r["sigma_xy_nm"]) / float(best_sigma_xy)
+            m: (
+                float(r["sigma_xy_nm"]) / float(best_sigma_xy)
+                if np.isfinite(float(r["sigma_xy_nm"])) and float(r["sigma_xy_nm"]) > 0.0
+                else float("inf")
+            )
             for m, r in per_modality.items()
         }
         frames_to_match_best_xy = {
             m: (
                 float("inf")
-                if not np.isfinite(float(r["sigma_xy_nm"]))
+                if not np.isfinite(float(r["sigma_xy_nm"])) or float(r["sigma_xy_nm"]) <= 0.0
                 else (float(r["sigma_xy_nm"]) / float(best_sigma_xy)) ** 2
             )
             for m, r in per_modality.items()
@@ -638,22 +647,28 @@ def compare_modality_information_content(
 
     if z_step_nm is not None:
         # Full-3D ordering.
-        def _xyz_key(item: tuple[str, dict[str, Any]]) -> tuple[float, int]:
+        def _xyz_key(item: tuple[str, dict[str, Any]]) -> tuple[int, float, int]:
             modality, res = item
-            sigma = res.get("sigma_xyz_nm", float("inf"))
+            sigma = float(res.get("sigma_xyz_nm", float("inf")))
             idx = list(contrast_by_modality.keys()).index(modality)
-            return (float(sigma), idx)
+            invalid, value = _sort_key_finite_then_value((modality, sigma))
+            return (invalid, value, idx)
 
         ordered_xyz = sorted(per_modality.items(), key=_xyz_key)
         ranking_xyz = [
-            (m, float(r.get("sigma_xyz_nm", float("inf"))))
+            (m, _positive_finite_or_inf(r.get("sigma_xyz_nm", float("inf"))))
             for m, r in ordered_xyz
         ]
         best_sigma_xyz = ordered_xyz[0][1].get("sigma_xyz_nm", float("inf"))
         if np.isfinite(best_sigma_xyz) and best_sigma_xyz > 0.0:
             best_modality_xyz = ordered_xyz[0][0]
             relative_sigma_xyz = {
-                m: float(r.get("sigma_xyz_nm", float("inf"))) / float(best_sigma_xyz)
+                m: (
+                    float(r.get("sigma_xyz_nm", float("inf"))) / float(best_sigma_xyz)
+                    if np.isfinite(float(r.get("sigma_xyz_nm", float("inf"))))
+                    and float(r.get("sigma_xyz_nm", float("inf"))) > 0.0
+                    else float("inf")
+                )
                 for m, r in per_modality.items()
             }
         else:
@@ -708,13 +723,10 @@ def compute_likelihood_fisher_information(
         if arr.shape != mean.shape:
             raise ValueError(f"derivative image {key!r} shape {arr.shape} does not match mean image {mean.shape}")
     requested_mode = str(fisher_mode).strip().lower()
-    mode_aliases = {
-        FisherMode.POISSON_GAUSSIAN_PLUGIN.value: FisherMode.POISSON_GAUSSIAN_APPROX.value,
-        "poisson_gaussian_plugin": FisherMode.POISSON_GAUSSIAN_APPROX.value,
-        "poisson_gaussian_approx": FisherMode.POISSON_GAUSSIAN_APPROX.value,
-        "mean_fisher_diagnostic": FisherMode.GAUSSIAN_FIXED_VARIANCE.value,
-    }
-    mode = mode_aliases.get(requested_mode, requested_mode)
+    if requested_mode == FisherMode.MEAN_FISHER_DIAGNOSTIC.value:
+        mode = FisherMode.GAUSSIAN_FIXED_VARIANCE.value
+    else:
+        mode = requested_mode
     warnings = []
     exact_or_diagnostic = "diagnostic" if requested_mode == "mean_fisher_diagnostic" else "exact"
     if requested_mode == "mean_fisher_diagnostic":
@@ -995,17 +1007,18 @@ def compare_modality_information_content_from_crlb_results(
         sigma = float(row.get("sigma_xy_nm", float("inf")))
         if bool(row.get("singular", row.get("fisher_singular", False))):
             sigma = float("inf")
+        sigma = _positive_finite_or_inf(sigma)
         per_modality[modality] = row
         ordering_values.append((modality, sigma))
 
-    ordering_xy = sorted(ordering_values, key=lambda item: (not np.isfinite(item[1]), item[1]))
+    ordering_xy = sorted(ordering_values, key=_sort_key_finite_then_value)
     finite_ordering = [(m, s) for m, s in ordering_xy if np.isfinite(s) and s > 0.0]
     best_modality_xy = finite_ordering[0][0] if finite_ordering else None
     best_sigma_xy = finite_ordering[0][1] if finite_ordering else float("inf")
     relative_sigma_xy = {
         modality: (
             float(sigma / best_sigma_xy)
-            if np.isfinite(sigma) and np.isfinite(best_sigma_xy) and best_sigma_xy > 0.0
+            if np.isfinite(sigma) and sigma > 0.0 and np.isfinite(best_sigma_xy) and best_sigma_xy > 0.0
             else float("inf")
         )
         for modality, sigma in ordering_xy

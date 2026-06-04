@@ -33,6 +33,13 @@ from __future__ import annotations
 
 import numpy as np
 
+from config.runtime import (
+    AnnularDarkFieldSettings,
+    KohlerBrightFieldSettings,
+    OpticalModeSettings,
+    SamplingGeometry,
+    param_value,
+)
 from .base import (
     ImagingModel,
     field_intensity,
@@ -40,6 +47,10 @@ from .base import (
     reference_vector_for_scattered,
 )
 from substrate import SampleEnvironment
+
+
+def _uses_full_vector_field(params: dict) -> bool:
+    return OpticalModeSettings.from_params(params).uses_full_vector_field
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +110,7 @@ class _AbbeKohlerBase(ImagingModel):
     supports_spectral_channels = True
 
     def __init__(self, params: dict) -> None:
-        E_amp = float(params.get("reference_field_amplitude", 0.0))
+        E_amp = OpticalModeSettings.from_params(params).reference_field_amplitude
         if E_amp <= 0.0:
             raise ValueError(
                 "PARAMS['reference_field_amplitude'] must be positive for "
@@ -110,10 +121,7 @@ class _AbbeKohlerBase(ImagingModel):
     # --- helpers ---
 
     def _physical_pixel_size_nm(self, params: dict) -> float:
-        oversample = float(params.get("psf_oversampling_factor", 1.0))
-        if oversample <= 0.0:
-            oversample = 1.0
-        return float(params.get("pixel_size_nm", 65.0)) / oversample
+        return SamplingGeometry.from_params(params).model_canvas_pixel_size_nm
 
     @staticmethod
     def _frequency_grids(shape: tuple[int, int], dx_m: float):
@@ -177,7 +185,7 @@ class _AbbeKohlerBase(ImagingModel):
         params: dict,
     ) -> np.ndarray:
         wavelength_m = self.probe_wavelength_nm(params) * 1e-9
-        NA_obj = float(params.get("numerical_aperture", 1.0))
+        NA_obj = float(param_value(params, "numerical_aperture"))
         cutoff = NA_obj / wavelength_m
         dx_m = self._physical_pixel_size_nm(params) * 1e-9
         E_sca_total = np.asarray(E_sca_total, dtype=np.complex128)
@@ -216,7 +224,7 @@ class _AbbeKohlerBase(ImagingModel):
         params: dict,
     ) -> np.ndarray:
         wavelength_m = self.probe_wavelength_nm(params) * 1e-9
-        NA_obj = float(params.get("numerical_aperture", 1.0))
+        NA_obj = float(param_value(params, "numerical_aperture"))
         cutoff = NA_obj / wavelength_m
         dx_m = self._physical_pixel_size_nm(params) * 1e-9
         E_sca_particle = np.asarray(E_sca_particle, dtype=np.complex128)
@@ -254,8 +262,8 @@ class _AbbeKohlerBase(ImagingModel):
         response = super().compute_response_function(shape, params)
         pts = self._source_points(params)
         response.update(
-            scalar_vectorial_backend=str(params.get("optical_field_backend", "vectorial_debye")),
-            objective_NA=float(params.get("numerical_aperture", 1.0)),
+            scalar_vectorial_backend=OpticalModeSettings.from_params(params).optical_field_backend,
+            objective_NA=float(param_value(params, "numerical_aperture")),
             wavelength_nm=float(self.probe_wavelength_nm(params)),
             source_point_count_actual=int(pts.shape[0]),
             source_sampling_scheme="deterministic_hex_disc_or_annulus",
@@ -294,9 +302,10 @@ class PartiallyCoherentBrightfieldImagingModel(_AbbeKohlerBase):
     """
 
     def _source_points(self, params: dict) -> np.ndarray:
-        sigma = float(params.get("kohler_coherence_factor", 0.7))
+        settings = KohlerBrightFieldSettings.from_params(params)
+        sigma = settings.coherence_factor
         sigma = max(0.0, min(sigma, 1.0))
-        n_target = int(params.get("kohler_source_samples", 19))
+        n_target = settings.source_samples
         return sigma * _hex_disc_samples(n_target)
 
     def apply_sample_environment(
@@ -318,18 +327,16 @@ class PartiallyCoherentBrightfieldImagingModel(_AbbeKohlerBase):
         response = super().compute_response_function(shape, params)
         response.update(
             kind="abbe_kohler_bright_field",
-            condenser_sigma=float(params.get("kohler_coherence_factor", 0.7)),
-            kohler_source_points=int(params.get("kohler_source_samples", 19)),
+            condenser_sigma=KohlerBrightFieldSettings.from_params(params).coherence_factor,
+            kohler_source_points=KohlerBrightFieldSettings.from_params(params).source_samples,
             field_representation=(
                 "vectorial_full_field"
-                if str(params.get("optical_field_backend", "vectorial_debye")).strip().lower() == "vectorial_debye"
-                and str(params.get("vectorial_detection_mode", "full_vector")).strip().lower() == "full_vector"
+                if _uses_full_vector_field(params)
                 else "scalar_or_analyzer_component_field"
             ),
             fidelity_label=(
                 "vectorial_abbe_kohler_bright_field"
-                if str(params.get("optical_field_backend", "vectorial_debye")).strip().lower() == "vectorial_debye"
-                and str(params.get("vectorial_detection_mode", "full_vector")).strip().lower() == "full_vector"
+                if _uses_full_vector_field(params)
                 else "scalar_abbe_kohler_bright_field"
             ),
         )
@@ -361,16 +368,14 @@ class AnnularDarkFieldImagingModel(_AbbeKohlerBase):
     """
 
     def _source_points(self, params: dict) -> np.ndarray:
-        n_target = int(params.get("annular_dark_field_source_samples", 24))
-        r_inner = float(params.get("annular_dark_field_inner_sigma", 1.05))
-        r_outer = float(params.get("annular_dark_field_outer_sigma", 1.30))
-        return _annulus_samples(n_target, r_inner, r_outer)
+        settings = AnnularDarkFieldSettings.from_params(params)
+        return _annulus_samples(settings.source_samples, settings.inner_sigma, settings.outer_sigma)
 
     def _coherent_intensity_at_source(self, E_sca_eff, E_bg_eff, params):
         # Direct illumination is OUTSIDE the objective NA, so the unscattered
         # zero-order is rejected. Only the scattered + substrate-edge field
         # that couples through the objective pupil is detected.
-        field_gain = float(params.get("dark_field_field_gain", 1.0))
+        field_gain = AnnularDarkFieldSettings.from_params(params).dark_field.field_gain
         if field_gain <= 0.0:
             raise ValueError("PARAMS['dark_field_field_gain'] must be positive.")
         return field_intensity(field_gain * E_sca_eff + E_bg_eff)
@@ -385,32 +390,28 @@ class AnnularDarkFieldImagingModel(_AbbeKohlerBase):
         E_ref_intensity_final: np.ndarray,
         params: dict,
     ) -> np.ndarray:
-        illumination_count = float(params.get(
-            "dark_field_illumination_count",
-            float(params.get("background_intensity", 1.0)),
-        ))
-        background_count = float(params.get("dark_field_background_count", 0.0))
+        settings = AnnularDarkFieldSettings.from_params(params).dark_field
+        illumination_count = settings.illumination_count
+        background_count = settings.background_count
         return illumination_count * intensity + background_count
 
     def compute_response_function(self, shape: tuple[int, int], params: dict) -> dict:
         response = super().compute_response_function(shape, params)
         response.update(
             kind="abbe_annular_kohler_dark_field",
-            annulus_inner_sigma=float(params.get("annular_dark_field_inner_sigma", 1.05)),
-            annulus_outer_sigma=float(params.get("annular_dark_field_outer_sigma", 1.30)),
-            kohler_source_points=int(params.get("annular_dark_field_source_samples", 24)),
+            annulus_inner_sigma=AnnularDarkFieldSettings.from_params(params).inner_sigma,
+            annulus_outer_sigma=AnnularDarkFieldSettings.from_params(params).outer_sigma,
+            kohler_source_points=AnnularDarkFieldSettings.from_params(params).source_samples,
             direct_beam_blocked=True,
             substrate_background_handling="substrate_edge_field_retained",
             field_representation=(
                 "vectorial_full_field"
-                if str(params.get("optical_field_backend", "vectorial_debye")).strip().lower() == "vectorial_debye"
-                and str(params.get("vectorial_detection_mode", "full_vector")).strip().lower() == "full_vector"
+                if _uses_full_vector_field(params)
                 else "scalar_or_analyzer_component_field"
             ),
             fidelity_label=(
                 "vectorial_abbe_annular_kohler_dark_field"
-                if str(params.get("optical_field_backend", "vectorial_debye")).strip().lower() == "vectorial_debye"
-                and str(params.get("vectorial_detection_mode", "full_vector")).strip().lower() == "full_vector"
+                if _uses_full_vector_field(params)
                 else "scalar_abbe_annular_kohler_dark_field"
             ),
         )

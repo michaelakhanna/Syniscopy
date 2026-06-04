@@ -8,6 +8,7 @@ from ._shared import (
     np,
 )
 from backend_fidelity import attach_backend_fidelity_metadata
+from config.runtime import TemSettings, param_value
 from .electron_constants import (
     electron_interaction_parameter_rad_per_V_nm,
     electron_wavelength_m,
@@ -100,40 +101,25 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
     _TEM_POTENTIAL_SOURCE_COMPOSITE = "material_plus_sample_environment"
 
     def __init__(self, params: dict) -> None:
-        tem_model_explicit = "tem_model" in params
-        tem_backend_explicit = "tem_backend" in params
-        self._tem_model = str(params.get("tem_model", "syniscopy_multislice")).strip().lower()
-        if self._tem_model in {"weak_phase", "ctf_proxy"}:
-            self._tem_model = "weak_phase_ctf"
+        settings = TemSettings.from_params(params)
+        self._tem_model = str(param_value(params, "tem_model")).strip().lower()
         if self._tem_model not in {"weak_phase_ctf", "multislice_lite", "syniscopy_multislice"}:
             raise ValueError(
-                "PARAMS['tem_model'] must be 'weak_phase_ctf' (or legacy alias "
-                "'ctf_proxy'), 'multislice_lite', or 'syniscopy_multislice'; "
+                "PARAMS['tem_model'] must be 'weak_phase_ctf', "
+                "'multislice_lite', or 'syniscopy_multislice'; "
                 f"got {self._tem_model!r}."
             )
-        self._tem_backend = str(params.get("tem_backend", "syniscopy_multislice")).strip().lower()
-        if self._tem_backend in {"weak_phase_ctf", "weak_phase"}:
-            self._tem_backend = "ctf_proxy"
+        self._tem_backend = str(param_value(params, "tem_backend")).strip().lower()
         if self._tem_backend not in {"ctf_proxy", "multislice_lite", "syniscopy_multislice"}:
             raise ValueError(
-                "PARAMS['tem_backend'] must be 'ctf_proxy' (or legacy alias "
-                "'weak_phase_ctf' / 'weak_phase'), 'multislice_lite', "
+                "PARAMS['tem_backend'] must be 'ctf_proxy', 'multislice_lite', "
                 f"'syniscopy_multislice'; got {self._tem_backend!r}."
             )
-        if tem_backend_explicit and not tem_model_explicit:
-            if self._tem_backend == "ctf_proxy":
-                self._tem_model = "weak_phase_ctf"
-            else:
-                self._tem_model = self._tem_backend
-        elif tem_model_explicit and not tem_backend_explicit:
-            if self._tem_model == "weak_phase_ctf":
-                self._tem_backend = "ctf_proxy"
-            else:
-                self._tem_backend = self._tem_model
-        if self._tem_backend == "multislice_lite":
-            self._tem_model = "multislice_lite"
-        if self._tem_backend == "syniscopy_multislice":
-            self._tem_model = "syniscopy_multislice"
+        if self._tem_backend == "multislice_lite" and self._tem_model != "multislice_lite":
+            raise ValueError(
+                "PARAMS['tem_backend']='multislice_lite' requires "
+                "PARAMS['tem_model']='multislice_lite'."
+            )
         if self._tem_model == "syniscopy_multislice" and self._tem_backend != "syniscopy_multislice":
             raise ValueError(
                 "PARAMS['tem_model']='syniscopy_multislice' requires "
@@ -144,20 +130,25 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
                 "PARAMS['tem_model']='weak_phase_ctf' requires "
                 "PARAMS['tem_backend']='ctf_proxy'."
             )
+        if self._tem_backend == "ctf_proxy" and self._tem_model != "weak_phase_ctf":
+            raise ValueError(
+                "PARAMS['tem_backend']='ctf_proxy' requires "
+                "PARAMS['tem_model']='weak_phase_ctf'."
+            )
         self._tem_potential_source = self._resolve_tem_potential_source(
-            params.get("tem_potential_source", self._TEM_POTENTIAL_SOURCE_MATERIAL)
+            param_value(params, "tem_potential_source")
         )
-        self._V_kV = float(params.get("tem_acceleration_kV", 300.0))
+        self._V_kV = float(param_value(params, "tem_acceleration_kV"))
         if self._V_kV <= 0.0:
             raise ValueError(
                 f"PARAMS['tem_acceleration_kV'] must be positive; got {self._V_kV}."
             )
-        self._Cs_mm = float(params.get("tem_Cs_mm", 0.5))
+        self._Cs_mm = float(param_value(params, "tem_Cs_mm"))
         if self._Cs_mm < 0.0:
             raise ValueError(
                 f"PARAMS['tem_Cs_mm'] must be non-negative; got {self._Cs_mm}."
             )
-        self._alpha_mrad = float(params.get("tem_partial_coherence_alpha_mrad", 0.1))
+        self._alpha_mrad = float(param_value(params, "tem_partial_coherence_alpha_mrad"))
         if self._alpha_mrad < 0.0:
             raise ValueError(
                 f"PARAMS['tem_partial_coherence_alpha_mrad'] must be non-negative; "
@@ -171,7 +162,7 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
         else:
             self._defocus_m = scherzer_defocus_m(self._V_kV, self._Cs_mm)
 
-        phase_shift_raw = params.get("tem_phase_shift_per_volt_nm", None)
+        phase_shift_raw = param_value(params, "tem_phase_shift_per_volt_nm")
         if phase_shift_raw is None:
             self._phase_shift_per_volt_nm = electron_interaction_parameter_rad_per_V_nm(self._V_kV)
         else:
@@ -185,12 +176,7 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
                 f"non-negative; got {self._phase_shift_per_volt_nm}."
             )
 
-        os_factor = int(params.get("psf_oversampling_factor", 1))
-        if os_factor <= 0:
-            raise ValueError(
-                f"PARAMS['psf_oversampling_factor'] must be positive; got {os_factor}."
-            )
-        canvas_pitch_nm = float(params["pixel_size_nm"]) / float(os_factor)
+        canvas_pitch_nm = settings.sampling.model_canvas_pixel_size_nm
         if not np.isfinite(canvas_pitch_nm) or canvas_pitch_nm <= 0.0:
             raise ValueError(
                 "PARAMS['pixel_size_nm'] / PARAMS['psf_oversampling_factor'] must "
@@ -220,26 +206,16 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
                 f"to a positive pixel pitch; got {self._pixel_size_m} m."
             )
 
-        self._dose_per_pixel = float(params.get(
-            "tem_dose_per_pixel",
-            100.0,
-        ))
-        if not np.isfinite(self._dose_per_pixel) or self._dose_per_pixel < 0.0:
-            raise ValueError(
-                "PARAMS['tem_dose_per_pixel'] must be finite and non-negative; "
-                f"got {self._dose_per_pixel}."
-            )
-        self._multislice_slices = int(params.get("tem_multislice_slices", 8))
-        if self._multislice_slices <= 0:
-            raise ValueError("PARAMS['tem_multislice_slices'] must be positive.")
-        self._objective_aperture_mrad = params.get("tem_objective_aperture_mrad", None)
+        self._dose_per_pixel = settings.dose_per_pixel
+        self._multislice_slices = settings.multislice_slices
+        self._objective_aperture_mrad = param_value(params, "tem_objective_aperture_mrad")
         if self._objective_aperture_mrad is not None:
             self._objective_aperture_mrad = float(self._objective_aperture_mrad)
             if not np.isfinite(self._objective_aperture_mrad) or self._objective_aperture_mrad <= 0.0:
                 raise ValueError(
                     "PARAMS['tem_objective_aperture_mrad'] must be positive when set."
                 )
-        slice_thickness_raw = params.get("tem_slice_thickness_nm", None)
+        slice_thickness_raw = param_value(params, "tem_slice_thickness_nm")
         self._slice_thickness_nm = None if slice_thickness_raw is None else float(slice_thickness_raw)
         if self._slice_thickness_nm is not None and (
             not np.isfinite(self._slice_thickness_nm) or self._slice_thickness_nm <= 0.0
@@ -319,7 +295,7 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
                 "TEM potential synthesis requested sample-environment terms "
                 "but sample_environment is not configured."
             )
-        scale = float(params.get("tem_sample_environment_potential_scale", 1.0))
+        scale = float(param_value(params, "tem_sample_environment_potential_scale"))
         if not np.isfinite(scale) or scale < 0.0:
             raise ValueError(
                 "PARAMS['tem_sample_environment_potential_scale'] must be finite "
@@ -408,7 +384,7 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
         return self._ctf_backend.contrast_from_projected_phase(source)
 
     def filter_guard_radius_pixels(self, params: dict) -> int | None:
-        raw = params.get("tem_filter_guard_pixels", 64)
+        raw = param_value(params, 'tem_filter_guard_pixels')
         if raw is None:
             return 64
         guard = float(raw)
@@ -654,7 +630,7 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
         mip = float(getattr(material_properties, "mean_inner_potential_V", 0.0))
         if mip <= 0.0 or self._phase_shift_per_volt_nm <= 0.0:
             return
-        scale = float(params.get("tem_projected_potential_scale", 1.0))
+        scale = float(param_value(params, 'tem_projected_potential_scale'))
         if not np.isfinite(scale) or scale < 0.0:
             raise ValueError(
                 "PARAMS['tem_projected_potential_scale'] must be finite and "
@@ -750,7 +726,7 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
         mip = float(getattr(material_properties, "mean_inner_potential_V", 0.0))
         if mip <= 0.0 or self._phase_shift_per_volt_nm <= 0.0:
             return
-        scale = float(params.get("tem_projected_potential_scale", 1.0))
+        scale = float(param_value(params, 'tem_projected_potential_scale'))
         if not np.isfinite(scale) or scale < 0.0:
             raise ValueError(
                 "PARAMS['tem_projected_potential_scale'] must be finite and "
@@ -889,16 +865,17 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
         shape = E_sca_particle.shape
         traj = np.asarray(particle_instance.trajectory_nm, dtype=float)
         frame_idx = int(np.clip(int(frame_index), 0, traj.shape[0] - 1))
-        os_factor = int(params.get("psf_oversampling_factor", 1))
-        px = float(traj[frame_idx, 0]) / float(params["pixel_size_nm"]) * float(os_factor)
-        py = float(traj[frame_idx, 1]) / float(params["pixel_size_nm"]) * float(os_factor)
+        sampling = TemSettings.from_params(params).sampling
+        os_factor = sampling.psf_oversampling_factor
+        px = float(traj[frame_idx, 0]) / sampling.detector_pixel_size_nm * float(os_factor)
+        py = float(traj[frame_idx, 1]) / sampling.detector_pixel_size_nm * float(os_factor)
         pz = float(traj[frame_idx, 2]) if traj.shape[1] >= 3 else 0.0
         source = self._projected_phase_source(
             shape=shape,
             center_x_canvas=px,
             center_y_canvas=py,
             diameter_nm=float(particle_instance.particle_type.diameter_nm),
-            pixel_size_nm=float(params["pixel_size_nm"]),
+            pixel_size_nm=sampling.detector_pixel_size_nm,
             os_factor=os_factor,
             material_properties=getattr(particle_instance, "material_properties", None),
             params=params,
@@ -932,14 +909,10 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
 
         The TEM model's compute_intensity returns a dimensionless image
         normalized such that the unscattered direct beam has intensity
-        one.  We convert to detector counts by multiplying by the mean
-        electron dose per pixel, falling back to the generic
-        background_intensity if ``tem_dose_per_pixel`` is not set.
+        one. We convert to detector counts by multiplying by the resolved
+        TEM electron dose per pixel.
         """
-        dose = float(params.get(
-            "tem_dose_per_pixel",
-            self._dose_per_pixel,
-        ))
+        dose = TemSettings.from_params(params).dose_per_pixel
         if not np.isfinite(dose) or dose < 0.0:
             raise ValueError(
                 "PARAMS['tem_dose_per_pixel'] must be finite and non-negative; "

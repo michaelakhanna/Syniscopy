@@ -5,12 +5,23 @@ from __future__ import annotations
 import math
 import os
 
-from shared_constants import KNOWN_INTERNAL_PARAM_KEYS, PATTERN_DEFAULT_PRESETS
+from shared_constants import KNOWN_INTERNAL_PARAM_KEYS
 
 
 _PHASE_QUADRATURE_RAD = 0.5 * math.pi
 _PHASE_REVERSAL_RAD = math.pi
 _KNOWN_INTERNAL_PARAM_KEYS = set(KNOWN_INTERNAL_PARAM_KEYS)
+
+RUNTIME_INTERNAL_DEFAULTS = {
+    "_particle_specs": None,
+    "_particle_specs_fingerprint": None,
+    "_return_mask_arrays": False,
+    "_write_mask_files": True,
+    "_substrate_pattern_layout_cache_token": None,
+    "_substrate_pattern_layout_extent_nm": None,
+    "_substrate_pattern_layout_rng": None,
+    "_generated_spectral_channels": False,
+}
 
 # --- SIMULATION PARAMETERS ---
 # This dictionary centralizes all configurable parameters for the simulation.
@@ -135,9 +146,11 @@ PARAMS = {
     # required mode for structured sample-environment comparisons.
     "fisher_lateral_step_nm": 5.0,
     "fisher_lateral_derivative_mode": "stationary_shift",
+    "fisher_particle_index": 0,
     "fisher_likelihood_model": "mean_fisher_diagnostic",
     "sequence_fisher_enabled": False,
     "detected_quanta_derivative_target": "signed_contrast_scaled",
+    "profile_fidelity_label": "model_conditional_profile",
     "tem_backend": "syniscopy_multislice",
     "sem_backend": "monte_carlo_transport",
     "sem_source_representation": "volume",
@@ -218,6 +231,7 @@ PARAMS = {
                 "initial_position_nm": None,
             },
             "signal_multiplier": 0.5,
+            "source_multiplier": 1.0,
             "components": [
                 {
                     "shape": "sphere",
@@ -226,6 +240,7 @@ PARAMS = {
                     "material": "Gold",
                     "refractive_index": None,
                     "signal_multiplier": 1.0,
+                    "source_multiplier": 1.0,
                     "material_properties": None,
                 }
             ],
@@ -237,6 +252,7 @@ PARAMS = {
                 "initial_position_nm": None,
             },
             "signal_multiplier": 0.5,
+            "source_multiplier": 1.0,
             "components": [
                 {
                     "shape": "sphere",
@@ -245,6 +261,7 @@ PARAMS = {
                     "material": "Gold",
                     "refractive_index": None,
                     "signal_multiplier": 1.0,
+                    "source_multiplier": 1.0,
                     "material_properties": None,
                 }
             ],
@@ -433,8 +450,6 @@ PARAMS = {
     "scmos_variance_map": None,
     "scmos_read_noise_map": None,
     "nonlinearity_calibration": None,
-    "prnu_map": None,
-    "dsnu_map": None,
     "flat_field_map": None,
     "dark_frame_map": None,
     #
@@ -470,6 +485,12 @@ PARAMS = {
     #
     # Noise parameterization identifier consumed by camera_noise_metadata().
     "noise_parameterization": "camera_counts",
+    # Optional detector-noise input-domain override. None derives from the
+    # canonical modality: electron modalities use electron_count, all others
+    # use camera_counts.
+    "detector_noise_input_domain": None,
+    # How per-pixel read-noise maps combine with scalar read noise.
+    "read_noise_map_mode": "replace",
     #
     # Optional per-modality camera-noise overrides consumed by camera_noise.py, e.g.
     # {"sem_secondary_electron": {"scan_line_noise_counts": 2.0}}.
@@ -483,7 +504,7 @@ PARAMS = {
     # fixed_pattern_gain_std, fixed_pattern_gain_map, fixed_pattern_offset_counts,
     # fixed_pattern_offset_map, scmos_gain_map, hot_pixel_fraction, hot_pixel_mask,
     # hot_pixel_value_counts, scmos_variance_map, scmos_read_noise_map,
-    # flat_field_map, dark_frame_map, prnu_map, dsnu_map,
+    # flat_field_map, dark_frame_map,
     # scan_line_noise_counts,
     # clip_output_to_nonnegative, and noise_parameterization.
     "noise_model": {},
@@ -618,7 +639,7 @@ PARAMS = {
     "tem_sample_environment_potential_scale": 1.0e-4,
     "tem_dose_per_pixel": 100.0,
     "sem_acceleration_kV": 5.0,
-    "sem_model": "gaussian_probe_proxy",
+    "sem_model": "gaussian_probe_secondary_yield",
     "sem_interaction_volume_nm": 30.0,
     "sem_detector_direction_xy": [1.0, 0.0],
     "sem_topography_contrast_gain": 0.0,
@@ -708,14 +729,24 @@ PARAMS = {
 
         # Defaults for additional public sample-environment pattern families.
         "fiducial_dot_diameter_um": 0.5,
+        "fiducial_dot_edge_to_edge_spacing_um": 2.0,
         "fiducial_dot_pitch_um": 5.0,
+        "fiducial_dot_intensity_factor": 1.5,
+        "fiducial_background_intensity_factor": 1.0,
         "grid_pitch_um": 5.0,
         "grid_bar_width_um": 0.5,
+        "grid_bar_intensity_factor": 1.25,
+        "grid_background_intensity_factor": 1.0,
         "microfluidic_channel_pitch_um": 10.0,
         "microfluidic_wall_width_um": 1.0,
         "microfluidic_wall_orientation": "vertical",
+        "microfluidic_wall_intensity_factor": 1.2,
+        "microfluidic_channel_intensity_factor": 1.0,
         "coverslip_patch_diameter_um": 5.0,
         "coverslip_patch_edge_to_edge_spacing_um": 5.0,
+        "coverslip_patch_pitch_um": 10.0,
+        "coverslip_patch_intensity_factor": 1.08,
+        "coverslip_background_intensity_factor": 1.0,
         "dot_height_nm": 20.0,
         "bar_height_nm": 20.0,
         "wall_height_nm": 20.0,
@@ -841,6 +872,7 @@ PARAMS = {
 __all__ = [
     "KNOWN_INTERNAL_PARAM_KEYS",
     "PARAMS",
+    "RUNTIME_INTERNAL_DEFAULTS",
     "_KNOWN_INTERNAL_PARAM_KEYS",
     "_PHASE_QUADRATURE_RAD",
     "_PHASE_REVERSAL_RAD",

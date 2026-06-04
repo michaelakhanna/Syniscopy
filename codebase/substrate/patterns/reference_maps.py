@@ -1,11 +1,14 @@
 """reference maps substrate-pattern helpers."""
 
 from __future__ import annotations
+from config import param_value
 
 from ._shared import (
     _BAR_MATERIAL_PATTERNS,
     _CIRCULAR_MATERIAL_PATTERNS,
     _CIRCULAR_VOID_PATTERNS,
+    _substrate_pattern_is_enabled,
+    canonical_sample_environment_pattern_and_preset,
     _pattern_intensity_from_material_fraction,
     np,
 )
@@ -30,20 +33,15 @@ def generate_reference_and_background_maps(
     """
     from .gold_holes import _circular_feature_geometry
     from .nanopillars import _bar_geometry
-    from .registry import (
-        _substrate_pattern_is_enabled,
-        canonical_sample_environment_pattern_and_preset,
-        generate_sample_environment_pattern_maps,
-    )
+    from .registry import generate_sample_environment_pattern_maps
 
     E_ref_amplitude = float(params["reference_field_amplitude"])
     background_intensity = float(params["background_intensity"])
 
     substrate_enabled = _substrate_pattern_is_enabled(params)
 
-    pattern_model_raw = params.get("sample_environment_pattern", "none"
-    )
-    substrate_preset_raw = params.get("sample_environment_pattern_preset", "empty_background"
+    pattern_model_raw = param_value(params, 'sample_environment_pattern')
+    substrate_preset_raw = param_value(params, "sample_environment_pattern_preset"
     )
 
     pattern_model, substrate_preset = canonical_sample_environment_pattern_and_preset(
@@ -66,7 +64,7 @@ def generate_reference_and_background_maps(
     if pixel_size_nm <= 0.0:
         raise ValueError("PARAMS['pixel_size_nm'] must be positive.")
 
-    os_factor = float(params.get("psf_oversampling_factor", 1.0))
+    os_factor = float(param_value(params, "psf_oversampling_factor"))
     if os_factor <= 0.0:
         raise ValueError("PARAMS['psf_oversampling_factor'] must be positive.")
 
@@ -136,16 +134,14 @@ def compute_contrast_scale_for_frame(
             f"frame_index={frame_index} is out of range for num_frames={num_frames}."
         )
 
-    model_raw = params.get("sample_environment_pattern_contrast_model", "static"
-    )
+    model_raw = param_value(params, 'sample_environment_pattern_contrast_model')
     model = str(model_raw).strip().lower()
 
     if model == "static":
         return 1.0
 
     if model == "time_dependent":
-        amplitude = float(params.get("sample_environment_pattern_contrast_amplitude", 0.0,
-        ))
+        amplitude = float(param_value(params, 'sample_environment_pattern_contrast_amplitude'))
         if amplitude <= 0.0:
             return 1.0
         if amplitude > 1.0:

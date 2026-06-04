@@ -65,7 +65,7 @@ def run_report(args: argparse.Namespace) -> Path:
     profile_cards_by_modality: dict[str, dict[str, Any]] = {}
 
     for modality in modalities:
-        print(f"Rendering {modality} ({int(params.get('num_frames', 1))} frame(s))...")
+        print(f"Rendering {modality} ({int(params['num_frames'])} frame(s))...")
         try:
             rendered, render_meta = _render_modality(params, modality)
         except Exception as exc:  # keep other modalities useful
@@ -272,7 +272,7 @@ def run_report(args: argparse.Namespace) -> Path:
         "modalities_failed": sorted(errors),
         "fusion_modalities_used": list(fusion_contrasts),
         "fusion_duplicate_profiles_excluded": fusion_duplicates,
-        "sequence_frames": int(params.get("num_frames", 1)),
+        "sequence_frames": int(params["num_frames"]),
         "dynamic_bayesian_enabled": bool(args.dynamic_bayesian),
         "allow_partial": bool(args.allow_partial),
         "output_files": {
@@ -303,7 +303,7 @@ def run_report(args: argparse.Namespace) -> Path:
         ranking_rows=ranking,
         fusion_rows=fusion,
         fusion_duplicates=fusion_duplicates,
-        num_frames=int(params.get("num_frames", 1)),
+        num_frames=int(params["num_frames"]),
         dynamic_requested=bool(args.dynamic_bayesian),
         sequence_summary_rows=len(sequence_rows),
         dynamic_summary_exists=bool(dynamic_summaries),

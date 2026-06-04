@@ -9,6 +9,11 @@ from typing import Any, Mapping
 import numpy as np
 
 from backend_fidelity import attach_backend_fidelity_metadata
+# Single-source the elementary charge from the one electron-optics constants
+# home instead of re-declaring the literal here (Phase 1: remove value shadows).
+from imaging_models.electron_constants import (
+    _ELEMENTARY_CHARGE_C as _E_CHARGE_C,
+)
 
 
 class SEMTransportBackendError(RuntimeError):
@@ -16,7 +21,6 @@ class SEMTransportBackendError(RuntimeError):
 
 
 SEM_REFERENCE_KERNEL_SCHEMA_VERSION = "syniscopy-sem-reference-kernel-v1"
-_E_CHARGE_C = 1.602176634e-19
 
 
 @dataclass(frozen=True)

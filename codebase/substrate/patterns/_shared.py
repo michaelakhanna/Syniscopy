@@ -1,41 +1,67 @@
 """Shared imports, constants, and scalar helpers for substrate patterns."""
+from __future__ import annotations
 import math
-import cv2
 import os
 import numpy as np
 from threading import RLock
 from typing import Dict, Tuple, Optional
 
-from config import PARAMS
-from shared_constants import PATTERN_DEFAULT_PRESETS
+from config import param_value
+from config.runtime import (
+    resolved_sample_environment_pattern_dimension,
+    resolved_sample_environment_pattern_dimensions,
+)
+from param_schema.sample_environment import BAR_ORIENTATION_CHOICES, PATTERN_DEFAULT_PRESETS
 
 _MAX_SHAPE_AXIS_DISTORTION_FRAC = 0.25
 _MIN_SHAPE_RADIUS_FACTOR = 0.5
 _MIN_EDGE_RADIUS_FACTOR = 0.05
 _REFLECTION_BOUNDARY_BISECTION_STEPS = 20
-_PATTERN_DEFAULT_PRESETS = PATTERN_DEFAULT_PRESETS
 _CIRCULAR_VOID_PATTERNS = {"gold_holes", "holey_carbon"}
 _CIRCULAR_MATERIAL_PATTERNS = {"nanopillars", "fiducial_dots", "patterned_coverslip"}
 _BAR_MATERIAL_PATTERNS = {"grid_bars", "microfluidic_walls"}
 _LAYOUT_CACHE: Dict[Tuple, object] = {}
 _LAYOUT_CACHE_LOCK = RLock()
 
-def _param_default(key: str):
-    return PARAMS[key]
+try:
+    import cv2 as cv2
+except ImportError:
+    class _MissingCV2:
+        def __getattr__(self, name: str):
+            raise ImportError(
+                "OpenCV (cv2) is required for substrate roughness/image IO "
+                f"operation {name!r}."
+            )
+
+    cv2 = _MissingCV2()
 
 def _pattern_dimensions(params: dict) -> dict:
-    dims = params.get("sample_environment_pattern_dimensions", {})
-    if not isinstance(dims, dict):
-        raise TypeError("PARAMS['sample_environment_pattern_dimensions'] must be a dictionary.")
-    return dims
+    return resolved_sample_environment_pattern_dimensions(params)
 
-def _read_positive_pattern_dimension(params: dict, key: str, default: float) -> float:
-    value = float(_pattern_dimensions(params).get(key, default))
+def _substrate_pattern_is_enabled(params: dict) -> bool:
+    return (
+        bool(param_value(params, 'sample_environment_enabled'))
+        and bool(param_value(params, 'sample_environment_pattern_enabled'))
+    )
+
+def canonical_sample_environment_pattern_and_preset(pattern: object, preset: object) -> tuple[str, str]:
+    """Return stripped canonical sample-environment pattern and preset values."""
+    p = str(pattern).strip().lower()
+    q = str(preset).strip().lower()
+    return p, q
+
+def _read_positive_pattern_dimension(params: dict, key: str, default: float | None = None) -> float:
+    if default is None:
+        value = resolved_sample_environment_pattern_dimension(params, key)
+    else:
+        dims = _pattern_dimensions(params)
+        value = dims[key] if key in dims and dims[key] is not None else default
+    value = float(value)
     if not np.isfinite(value) or value <= 0.0:
         raise ValueError(f"sample_environment_pattern_dimensions[{key!r}] must be finite and positive.")
     return value
 
-def _dimension_um(params: dict, key: str, default: float) -> float:
+def _dimension_um(params: dict, key: str, default: float | None = None) -> float:
     return _read_positive_pattern_dimension(params, key, default)
 
 def _dimension_um_from_keys(
@@ -54,7 +80,7 @@ def _dimension_um_from_keys(
         return value
     return float(default_um)
 
-def _dimension_factor(params: dict, key: str, default: float) -> float:
+def _dimension_factor(params: dict, key: str, default: float | None = None) -> float:
     return _read_positive_pattern_dimension(params, key, default)
 
 def _centered_pattern_grid(shape: tuple, pixel_size_nm: float) -> tuple[np.ndarray, np.ndarray]:
@@ -63,6 +89,12 @@ def _centered_pattern_grid(shape: tuple, pixel_size_nm: float) -> tuple[np.ndarr
     x_um = (np.arange(width, dtype=float) - width / 2.0 + 0.5) * pixel_size_um
     y_um = (np.arange(height, dtype=float) - height / 2.0 + 0.5) * pixel_size_um
     return np.meshgrid(x_um, y_um)
+
+def _canonical_bar_orientation(orientation: object) -> str:
+    normalized = str(orientation).strip().lower()
+    if normalized in BAR_ORIENTATION_CHOICES:
+        return normalized
+    raise ValueError(f"Bar/wall orientation must be one of {BAR_ORIENTATION_CHOICES!r}.")
 
 def _bar_solid_mask_from_coordinates(
     x_um: np.ndarray,
@@ -79,14 +111,14 @@ def _bar_solid_mask_from_coordinates(
         return np.ones_like(np.asarray(x_um, dtype=float), dtype=bool)
     x_mod = (np.asarray(x_um, dtype=float) + half_pitch) % float(pitch_um) - half_pitch
     y_mod = (np.asarray(y_um, dtype=float) + half_pitch) % float(pitch_um) - half_pitch
-    orientation = str(orientation).strip().lower()
-    if orientation in {"vertical", "x"}:
+    orientation = _canonical_bar_orientation(orientation)
+    if orientation == "vertical":
         return np.abs(x_mod) <= half_width
-    if orientation in {"horizontal", "y"}:
+    if orientation == "horizontal":
         return np.abs(y_mod) <= half_width
-    if orientation in {"both", "grid", "xy"}:
+    if orientation == "both":
         return (np.abs(x_mod) <= half_width) | (np.abs(y_mod) <= half_width)
-    raise ValueError("Bar/wall orientation must be 'vertical', 'horizontal', or 'both'.")
+    raise ValueError(f"Bar/wall orientation must be one of {BAR_ORIENTATION_CHOICES!r}.")
 
 def _pattern_intensity_from_material_fraction(
     material_fraction: np.ndarray,
@@ -107,7 +139,6 @@ def _pattern_intensity_from_material_fraction(
 __all__ = [
     "Dict",
     "Optional",
-    "PARAMS",
     "PATTERN_DEFAULT_PRESETS",
     "RLock",
     "Tuple",
@@ -119,17 +150,18 @@ __all__ = [
     "_MAX_SHAPE_AXIS_DISTORTION_FRAC",
     "_MIN_EDGE_RADIUS_FACTOR",
     "_MIN_SHAPE_RADIUS_FACTOR",
-    "_PATTERN_DEFAULT_PRESETS",
     "_REFLECTION_BOUNDARY_BISECTION_STEPS",
     "_bar_solid_mask_from_coordinates",
+    "_canonical_bar_orientation",
     "_centered_pattern_grid",
     "_dimension_factor",
     "_dimension_um",
     "_dimension_um_from_keys",
-    "_param_default",
     "_pattern_dimensions",
     "_pattern_intensity_from_material_fraction",
     "_read_positive_pattern_dimension",
+    "_substrate_pattern_is_enabled",
+    "canonical_sample_environment_pattern_and_preset",
     "cv2",
     "math",
     "np",

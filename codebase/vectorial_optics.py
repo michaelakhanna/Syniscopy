@@ -6,8 +6,13 @@ import hashlib
 import numpy as np
 from scipy.fft import fftshift, ifft2, ifftshift
 
+from config.runtime import (
+    VectorialOpticsSettings,
+    param_value,
+)
 from mie_scattering import mie_S1_S2_from_coefficients, mie_an_bn
 from optical_extensions import compute_coverslip_aberration_phase
+from optical_params import resolve_probe_wavelength_nm
 
 
 def _polarization_vector(model: str, rotation_deg: float = 0.0) -> np.ndarray:
@@ -37,39 +42,28 @@ def _rotate_linear_polarization(
     return np.array([c * x - s * y, s * x + c * y, z], dtype=float)
 
 
-def _coerce_non_negative_float(
-    params: dict,
-    key: str,
-    *,
-    default: float,
-) -> float:
-    value = float(params.get(key, default))
-    if not np.isfinite(value):
-        raise ValueError(f"{key} must be finite; got {value!r}.")
-    return float(value)
-
-
 def _deterministic_seed_from_params(params: dict) -> int:
     """Create a deterministic random seed from vectorial optics inputs."""
+    settings = VectorialOpticsSettings.from_params(params)
     parts: list[str] = [
-        f"wavelength_nm={params.get('wavelength_nm')!r}",
-        f"refractive_index_medium={params.get('refractive_index_medium')!r}",
-        f"numerical_aperture={params.get('numerical_aperture')!r}",
-        f"random_seed={params.get('random_seed')!r}",
+        f"wavelength_nm={param_value(params, 'wavelength_nm')!r}",
+        f"refractive_index_medium={param_value(params, 'refractive_index_medium')!r}",
+        f"numerical_aperture={param_value(params, 'numerical_aperture')!r}",
+        f"random_seed={param_value(params, 'random_seed')!r}",
         f"particle_diameter_nm={params.get('particle_diameter_nm')!r}",
         f"particle_refractive_index={params.get('particle_refractive_index')!r}",
-        f"vectorial_pupil_samples={params.get('vectorial_pupil_samples')!r}",
-        f"pupil_samples={params.get('pupil_samples')!r}",
-        f"vectorial_polarization_rotation_deg={params.get('vectorial_polarization_rotation_deg')!r}",
-        f"vectorial_obliquity_apodization={params.get('vectorial_obliquity_apodization')!r}",
-        f"apodization_factor={params.get('apodization_factor')!r}",
-        f"spherical_aberration_strength={params.get('spherical_aberration_strength')!r}",
-        f"random_aberration_strength={params.get('random_aberration_strength')!r}",
-        f"coverslip_aberration_model={params.get('coverslip_aberration_model')!r}",
-        f"coverslip_thickness_um={params.get('coverslip_thickness_um')!r}",
-        f"coverslip_design_thickness_um={params.get('coverslip_design_thickness_um')!r}",
-        f"coverslip_refractive_index={params.get('coverslip_refractive_index')!r}",
-        f"coverslip_design_refractive_index={params.get('coverslip_design_refractive_index')!r}",
+        f"vectorial_pupil_samples={settings.sampling.vectorial_pupil_samples!r}",
+        f"pupil_samples={param_value(params, 'pupil_samples')!r}",
+        f"vectorial_polarization_rotation_deg={param_value(params, 'vectorial_polarization_rotation_deg')!r}",
+        f"vectorial_obliquity_apodization={param_value(params, 'vectorial_obliquity_apodization')!r}",
+        f"apodization_factor={settings.apodization_factor!r}",
+        f"spherical_aberration_strength={settings.spherical_aberration_strength!r}",
+        f"random_aberration_strength={settings.random_aberration_strength!r}",
+        f"coverslip_aberration_model={param_value(params, 'coverslip_aberration_model')!r}",
+        f"coverslip_thickness_um={param_value(params, 'coverslip_thickness_um')!r}",
+        f"coverslip_design_thickness_um={param_value(params, 'coverslip_design_thickness_um')!r}",
+        f"coverslip_refractive_index={param_value(params, 'coverslip_refractive_index')!r}",
+        f"coverslip_design_refractive_index={param_value(params, 'coverslip_design_refractive_index')!r}",
     ]
     seed_src = "|".join(parts)
     return int(hashlib.sha256(seed_src.encode("utf-8")).hexdigest()[:16], 16)
@@ -82,8 +76,9 @@ def _component_stack_for_polarization(
     particle_diameter_nm: float | None = None,
     particle_refractive_index: complex | None = None,
 ) -> dict[str, np.ndarray]:
-    wavelength_nm = float(params["wavelength_nm"])
-    n_medium = float(params.get("refractive_index_medium", 1.0))
+    wavelength_nm = resolve_probe_wavelength_nm(params)
+    settings = VectorialOpticsSettings.from_params(params)
+    n_medium = float(param_value(params, "refractive_index_medium"))
     NA = float(params["numerical_aperture"])
     if wavelength_nm <= 0.0 or n_medium <= 0.0 or NA <= 0.0:
         raise ValueError("wavelength_nm, refractive_index_medium, and numerical_aperture must be positive.")
@@ -93,14 +88,11 @@ def _component_stack_for_polarization(
             f"got {NA} > {n_medium}."
         )
 
-    samples_raw = params.get("vectorial_pupil_samples", None)
-    samples = int(samples_raw if samples_raw is not None else params.get("pupil_samples", 256))
+    samples = settings.sampling.vectorial_pupil_samples
     if samples <= 0:
         raise ValueError("vectorial_pupil_samples/pupil_samples must be positive.")
 
-    os_factor = float(params.get("psf_oversampling_factor", 1.0))
-    detector_pixel_nm = float(params.get("pixel_size_nm", 1.0))
-    canvas_pixel_nm = detector_pixel_nm / os_factor
+    canvas_pixel_nm = settings.sampling.model_canvas_pixel_size_nm
     if canvas_pixel_nm <= 0.0:
         raise ValueError("pixel_size_nm / psf_oversampling_factor must be positive.")
 
@@ -166,7 +158,6 @@ def _component_stack_for_polarization(
         mu = np.zeros_like(cos_theta, dtype=float)
         mu[aperture] = cos_theta[aperture]
         radius_nm = 0.5 * float(particle_diameter_nm)
-        wavelength_nm = float(params["wavelength_nm"])
         medium_wavelength_nm = wavelength_nm / n_medium
         x = 2.0 * np.pi * radius_nm / medium_wavelength_nm
         if np.isfinite(x) and x > 0.0:
@@ -200,18 +191,10 @@ def _component_stack_for_polarization(
     if max_sin_theta <= 0.0:
         raise ValueError("numerical_aperture and refractive_index_medium imply invalid cone.")
 
-    apodization_factor = _coerce_non_negative_float(
-        params,
-        "apodization_factor",
-        default=0.0,
-    )
+    apodization_factor = settings.apodization_factor
     pupil_radial_apodization = np.exp(-apodization_factor * rho * rho)
 
-    spherical_aberration_strength = _coerce_non_negative_float(
-        params,
-        "spherical_aberration_strength",
-        default=0.0,
-    )
+    spherical_aberration_strength = settings.spherical_aberration_strength
     zernike_spherical = np.sqrt(5.0) * (6.0 * rho ** 4 - 6.0 * rho ** 2 + 1.0)
     spherical_phase = spherical_aberration_strength * zernike_spherical * 2.0 * np.pi
     coverslip_phase, _coverslip_metadata = compute_coverslip_aberration_phase(
@@ -221,11 +204,7 @@ def _component_stack_for_polarization(
         wavelength_nm=wavelength_nm,
     )
 
-    random_aberration_strength = _coerce_non_negative_float(
-        params,
-        "random_aberration_strength",
-        default=0.0,
-    )
+    random_aberration_strength = settings.random_aberration_strength
     if random_aberration_strength != 0.0:
         rng = np.random.default_rng(_deterministic_seed_from_params(params))
         random_phase = (rng.random((samples, samples)) - 0.5) * (
@@ -234,7 +213,7 @@ def _component_stack_for_polarization(
     else:
         random_phase = 0.0
 
-    if bool(params.get("vectorial_obliquity_apodization", True)):
+    if settings.obliquity_apodization:
         obliquity = np.sqrt(np.maximum(cos_theta, 0.0))
     else:
         obliquity = np.ones_like(cos_theta)
@@ -263,7 +242,11 @@ def _component_stack_for_polarization(
     }
     for zi, z_nm in enumerate(z_positions):
         phase = np.exp(1j * kz * float(z_nm))
-        for name, pupil in zip(("Ex", "Ey", "Ez"), pupil_components, strict=True):
+        if len(pupil_components) != 3:
+            raise RuntimeError(
+                "Vectorial Debye pupil construction must produce Ex/Ey/Ez components."
+            )
+        for name, pupil in zip(("Ex", "Ey", "Ez"), pupil_components):
             stacks[name][zi] = fftshift(ifft2(ifftshift(pupil * phase)))
     return stacks
 
@@ -287,12 +270,13 @@ def compute_vectorial_debye_psf(
     z_positions = np.asarray(z_positions_nm, dtype=float).reshape(-1)
     if z_positions.size == 0 or not np.all(np.isfinite(z_positions)):
         raise ValueError("z_positions_nm must be a non-empty finite 1D sequence.")
+    wavelength_nm = resolve_probe_wavelength_nm(params)
 
-    polarization_model = str(params.get("polarization_model", "linear_x")).strip().lower()
+    polarization_model = str(param_value(params, 'polarization_model')).strip().lower()
     if polarization_model == "scalar":
         polarization_model = "linear_x"
 
-    rotation_deg = float(params.get("vectorial_polarization_rotation_deg", 0.0))
+    rotation_deg = float(param_value(params, 'vectorial_polarization_rotation_deg'))
     if polarization_model == "unpolarized":
         x_components = _component_stack_for_polarization(
             params,
@@ -331,20 +315,19 @@ def compute_vectorial_debye_psf(
         unpolarized_average = False
 
     components = _normalize_components(components)
+    settings = VectorialOpticsSettings.from_params(params)
     metadata = {
         "backend": "vectorial_debye",
         "polarization_model": polarization_model,
-        "vectorial_detection_mode": str(params.get("vectorial_detection_mode", "incoherent_sum")),
-        "vectorial_pupil_samples": int(
-            params.get("vectorial_pupil_samples") or params.get("pupil_samples", 256)
-        ),
-        "wavelength_nm": float(params["wavelength_nm"]),
+        "vectorial_detection_mode": settings.optical.vectorial_detection_mode,
+        "vectorial_pupil_samples": settings.sampling.vectorial_pupil_samples,
+        "wavelength_nm": wavelength_nm,
         "numerical_aperture": float(params["numerical_aperture"]),
-        "refractive_index_medium": float(params.get("refractive_index_medium", 1.0)),
-        "obliquity_apodization": bool(params.get("vectorial_obliquity_apodization", True)),
-        "apodization_factor": float(params.get("apodization_factor", 0.0)),
-        "spherical_aberration_strength": float(params.get("spherical_aberration_strength", 0.0)),
-        "random_aberration_strength": float(params.get("random_aberration_strength", 0.0)),
+        "refractive_index_medium": float(param_value(params, "refractive_index_medium")),
+        "obliquity_apodization": settings.obliquity_apodization,
+        "apodization_factor": settings.apodization_factor,
+        "spherical_aberration_strength": settings.spherical_aberration_strength,
+        "random_aberration_strength": settings.random_aberration_strength,
         **coverslip_metadata,
         "vectorial_polarization_rotation_deg": float(rotation_deg),
         "unpolarized_mode_averages_x_and_y": bool(unpolarized_average),

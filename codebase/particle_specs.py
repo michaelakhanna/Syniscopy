@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 
+from config.runtime import internal_param_value, resolved_particles
 from shared_constants import NONNEGATIVE_MATERIAL_PROPERTY_FIELDS, SE3_STATE_AXES
 
 
@@ -155,6 +156,7 @@ def _build_component(
         "material",
         "refractive_index",
         "signal_multiplier",
+        "source_multiplier",
         "material_properties",
     }
     missing = sorted(required_keys.difference(raw_component))
@@ -186,12 +188,7 @@ def _build_component(
             f"Particle {particle_index} component {component_index} signal_multiplier "
             f"must be a finite non-negative number; got {signal_multiplier!r}."
         )
-    source_multiplier = float(
-        raw_component.get(
-            "source_multiplier",
-            raw_component.get("material_source_multiplier", 1.0),
-        )
-    )
+    source_multiplier = float(raw_component["source_multiplier"])
     if not np.isfinite(source_multiplier) or source_multiplier < 0.0:
         raise ValueError(
             f"Particle {particle_index} component {component_index} source_multiplier "
@@ -263,7 +260,7 @@ def normalize_particle_specs(params: dict, *, mutate: bool = True) -> list[Parti
     ``params['particles']`` so downstream code sees normalized values.
     """
 
-    particles = params.get("particles", None)
+    particles = resolved_particles(params)
     if not isinstance(particles, list) or len(particles) == 0:
         raise ValueError("PARAMS['particles'] must be a non-empty list of particle objects.")
 
@@ -272,7 +269,13 @@ def normalize_particle_specs(params: dict, *, mutate: bool = True) -> list[Parti
         if not isinstance(raw_particle, dict):
             raise TypeError(f"PARAMS['particles'][{p_idx}] must be a dictionary.")
 
-        required_particle_keys = {"name", "motion", "signal_multiplier", "components"}
+        required_particle_keys = {
+            "name",
+            "motion",
+            "signal_multiplier",
+            "source_multiplier",
+            "components",
+        }
         missing_particle_keys = sorted(required_particle_keys.difference(raw_particle))
         if missing_particle_keys:
             raise ValueError(
@@ -314,12 +317,7 @@ def normalize_particle_specs(params: dict, *, mutate: bool = True) -> list[Parti
                 f"Particle {p_idx} signal_multiplier must be a finite non-negative "
                 f"number; got {particle_signal_multiplier!r}."
             )
-        particle_source_multiplier = float(
-            raw_particle.get(
-                "source_multiplier",
-                raw_particle.get("material_source_multiplier", 1.0),
-            )
-        )
+        particle_source_multiplier = float(raw_particle["source_multiplier"])
         if not np.isfinite(particle_source_multiplier) or particle_source_multiplier < 0.0:
             raise ValueError(
                 f"Particle {p_idx} source_multiplier must be a finite non-negative "
@@ -416,10 +414,10 @@ def particle_specs_to_public_dicts(specs: list[ParticleSpec]) -> list[dict[str, 
 
 
 def get_particle_specs(params: dict) -> list[ParticleSpec]:
-    particles = params.get("particles", None)
+    particles = resolved_particles(params)
     current_fingerprint = _particles_fingerprint(particles)
-    cached = params.get("_particle_specs", None)
-    cached_fingerprint = params.get("_particle_specs_fingerprint", None)
+    cached = internal_param_value(params, "_particle_specs")
+    cached_fingerprint = internal_param_value(params, "_particle_specs_fingerprint")
     if isinstance(cached, list) and cached and cached_fingerprint == current_fingerprint:
         return cached
     return normalize_particle_specs(params, mutate=True)

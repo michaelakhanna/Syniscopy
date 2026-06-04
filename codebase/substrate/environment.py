@@ -1,9 +1,12 @@
 """Substrate pattern, substrate, and sample-environment containers."""
 from __future__ import annotations
 
+from config import param_value
+from config.runtime import internal_param_value
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Any, Callable
+from param_schema.sample_environment import PATTERN_PRESET_SPECS
 
 from .materials import (
     MaterialProperties,
@@ -196,47 +199,37 @@ def sample_environment_from_params(
     """Build a lightweight environment from PARAMS."""
 
     px = float(pixel_size_nm if pixel_size_nm is not None else params["pixel_size_nm"])
-    environment_enabled = bool(params.get("sample_environment_enabled", True))
-    pattern_enabled = bool(params.get("sample_environment_pattern_enabled", False))
+    environment_enabled = bool(param_value(params, 'sample_environment_enabled'))
+    pattern_enabled = bool(param_value(params, 'sample_environment_pattern_enabled'))
     enabled = environment_enabled and pattern_enabled
-    dims = params.get("sample_environment_pattern_dimensions", {})
+    dims = param_value(params, "sample_environment_pattern_dimensions")
     if not isinstance(dims, dict):
         raise TypeError("PARAMS['sample_environment_pattern_dimensions'] must be a dictionary.")
 
-    def _dimension_nm(key: str, default: float) -> float:
-        value = float(dims.get(key, default))
+    def _dimension_nm(key: str) -> float:
+        value = float(dims[key])
         if not np.isfinite(value) or value < 0.0:
             raise ValueError(f"sample_environment_pattern_dimensions[{key!r}] must be finite and non-negative.")
         return value
 
     def _pattern_layer_defaults(kind: str) -> tuple[str, float]:
-        base_thickness = float(params["mounting_interface_thickness_nm"])
-        material_override = (
-            dims.get("pattern_material")
-            or params.get("sample_environment_pattern_material")
-            or params.get("mounting_interface_pattern_material")
-        )
-        default_by_kind = {
-            "gold_holes": ("gold", _dimension_nm("hole_depth_nm", 20.0)),
-            "holey_carbon": ("carbon", _dimension_nm("carbon_film_thickness_nm", _dimension_nm("hole_depth_nm", 20.0))),
-            "nanopillars": ("glass", _dimension_nm("pillar_height_nm", 20.0)),
-            "fiducial_dots": ("gold", _dimension_nm("dot_height_nm", _dimension_nm("pillar_height_nm", 20.0))),
-            "grid_bars": ("gold", _dimension_nm("bar_height_nm", _dimension_nm("pillar_height_nm", 20.0))),
-            "microfluidic_walls": ("glass", _dimension_nm("wall_height_nm", _dimension_nm("pillar_height_nm", 20.0))),
-            "patterned_coverslip": ("glass", _dimension_nm("coverslip_patch_height_nm", base_thickness)),
-        }
-        material_name, thickness_nm = default_by_kind.get(kind, ("glass", base_thickness))
-        return str(material_override or material_name), float(thickness_nm)
+        if kind not in PATTERN_PRESET_SPECS:
+            raise ValueError(f"Unsupported sample_environment_pattern {kind!r}.")
+        spec = PATTERN_PRESET_SPECS[kind]
+        material_override = param_value(params, "sample_environment_pattern_material")
+        material_name = material_override if material_override is not None else spec["material"]
+        thickness_nm = _dimension_nm(str(spec["thickness_dimension_key"]))
+        return str(material_name), float(thickness_nm)
 
     layer_thickness_nm = float(params["mounting_interface_thickness_nm"])
-    layer_material_name = params.get("mounting_interface_material", "glass")
+    layer_material_name = param_value(params, 'mounting_interface_material')
     medium = _material_with_param_overrides(
-        material_from_name(params.get("medium_material", "water"), WATER),
+        material_from_name(param_value(params, 'medium_material'), WATER),
         params,
         "medium",
     )
     base = _material_with_param_overrides(
-        material_from_name(params.get("bulk_substrate_material", "glass"), SIO2),
+        material_from_name(param_value(params, 'bulk_substrate_material'), SIO2),
         params,
         "support",
     )
@@ -249,14 +242,14 @@ def sample_environment_from_params(
             generate_sample_environment_pattern_maps,
         )
 
-        kind_raw = params.get("sample_environment_pattern", "none")
-        preset_raw = params.get("sample_environment_pattern_preset", "empty_background")
+        kind_raw = param_value(params, 'sample_environment_pattern')
+        preset_raw = param_value(params, "sample_environment_pattern_preset")
         kind, preset = canonical_sample_environment_pattern_and_preset(kind_raw, preset_raw)
         if kind == "none" or preset == "empty_background":
             pattern = Pattern.uniform(shape, px, height_nm=0.0)
         else:
             layer_material_name, layer_thickness_nm = _pattern_layer_defaults(kind)
-            layout_extent_nm = params.get("_substrate_pattern_layout_extent_nm", None)
+            layout_extent_nm = internal_param_value(params, "_substrate_pattern_layout_extent_nm")
             height_map, material_fraction_map, pattern_kind = generate_sample_environment_pattern_maps(
                 params,
                 shape,

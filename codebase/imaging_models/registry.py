@@ -3,20 +3,18 @@
 from __future__ import annotations
 
 from .base import ImagingModel
+from config.runtime import resolved_modality
 from modality_registry import (
     CANONICAL_COHERENT_MODALITIES,
     LABEL_FREE_OPTICAL_MODALITIES,
-    MODALITY_ALIASES,
+    MODALITY_SPECS,
     RELATIVE_REFERENCE_CONTRAST_MODALITIES,
     SUPPORTED_MODALITIES,
     canonical_modality_name as _canonical_modality_name,
     modality_uses_relative_reference_contrast,
 )
 from registry_utils import ObjectRegistry
-from .kohler import (
-    AnnularDarkFieldImagingModel,
-    PartiallyCoherentBrightfieldImagingModel,
-)
+from .kohler import AnnularDarkFieldImagingModel, PartiallyCoherentBrightfieldImagingModel
 
 from .coherent_brightfield import CoherentBrightfieldImagingModel
 from .coherent_darkfield import CoherentDarkFieldImagingModel
@@ -32,23 +30,38 @@ from .tem import TransmissionElectronMicroscopyImagingModel
 from .zernike_phase import ZernikePhaseContrastImagingModel
 
 
-_MODEL_REGISTRY: dict[str, type[ImagingModel]] = {
-    "bright_field": PartiallyCoherentBrightfieldImagingModel,
-    "fluorescence_widefield": FluorescenceWidefieldImagingModel,
-    "tirf_fluorescence": TIRFFluorescenceImagingModel,
-    "dark_field": AnnularDarkFieldImagingModel,
-    "zernike_phase_contrast": ZernikePhaseContrastImagingModel,
-    "differential_phase_contrast": DifferentialPhaseContrastImagingModel,
-    "quantitative_phase": QuantitativePhaseImagingModel,
-    "off_axis_holography": OffAxisHolographyImagingModel,
-    "ricm": ReflectionInterferenceContrastImagingModel,
-    "interferometric": InterferometricImagingModel,
-    "tem_phase_contrast": TransmissionElectronMicroscopyImagingModel,
-    "sem_secondary_electron": ScanningElectronMicroscopyImagingModel,
-    "partially_coherent_bright_field": PartiallyCoherentBrightfieldImagingModel,
-    "coherent_bright_field": CoherentBrightfieldImagingModel,
-    "coherent_dark_field": CoherentDarkFieldImagingModel,
+_IMPLEMENTATION_CLASSES: dict[str, type[ImagingModel]] = {
+    "imaging_models.kohler:PartiallyCoherentBrightfieldImagingModel": PartiallyCoherentBrightfieldImagingModel,
+    "imaging_models.fluorescence_widefield:FluorescenceWidefieldImagingModel": FluorescenceWidefieldImagingModel,
+    "imaging_models.fluorescence_tirf:TIRFFluorescenceImagingModel": TIRFFluorescenceImagingModel,
+    "imaging_models.kohler:AnnularDarkFieldImagingModel": AnnularDarkFieldImagingModel,
+    "imaging_models.zernike_phase:ZernikePhaseContrastImagingModel": ZernikePhaseContrastImagingModel,
+    "imaging_models.dpc:DifferentialPhaseContrastImagingModel": DifferentialPhaseContrastImagingModel,
+    "imaging_models.qpi:QuantitativePhaseImagingModel": QuantitativePhaseImagingModel,
+    "imaging_models.off_axis_holography:OffAxisHolographyImagingModel": OffAxisHolographyImagingModel,
+    "imaging_models.ricm:ReflectionInterferenceContrastImagingModel": ReflectionInterferenceContrastImagingModel,
+    "imaging_models.interferometric:InterferometricImagingModel": InterferometricImagingModel,
+    "imaging_models.tem:TransmissionElectronMicroscopyImagingModel": TransmissionElectronMicroscopyImagingModel,
+    "imaging_models.sem:ScanningElectronMicroscopyImagingModel": ScanningElectronMicroscopyImagingModel,
+    "imaging_models.coherent_brightfield:CoherentBrightfieldImagingModel": CoherentBrightfieldImagingModel,
+    "imaging_models.coherent_darkfield:CoherentDarkFieldImagingModel": CoherentDarkFieldImagingModel,
 }
+
+
+def _build_model_registry() -> dict[str, type[ImagingModel]]:
+    registry: dict[str, type[ImagingModel]] = {}
+    for modality_id, spec in MODALITY_SPECS.items():
+        try:
+            registry[modality_id] = _IMPLEMENTATION_CLASSES[spec.implementation_class]
+        except KeyError as exc:
+            raise RuntimeError(
+                f"No imaging-model implementation registered for {modality_id!r}: "
+                f"{spec.implementation_class!r}."
+            ) from exc
+    return registry
+
+
+_MODEL_REGISTRY: dict[str, type[ImagingModel]] = _build_model_registry()
 
 _IMAGING_MODEL_REGISTRY = ObjectRegistry[type[ImagingModel]](
     entries=_MODEL_REGISTRY,
@@ -70,7 +83,7 @@ def modality_uses_sample_environment_pattern(model_name: str) -> bool:
 
 def get_imaging_model(params: dict) -> ImagingModel:
     """Instantiate and return the imaging model specified by ``params``."""
-    model_name = _canonical_modality_name(params.get("imaging_model", "bright_field"))
+    model_name = resolved_modality(params)
     return get_imaging_model_class(model_name)(params)
 
 
@@ -79,7 +92,6 @@ __all__ = [
     "CANONICAL_COHERENT_MODALITIES",
     "RELATIVE_REFERENCE_CONTRAST_MODALITIES",
     "SUPPORTED_MODALITIES",
-    "MODALITY_ALIASES",
     "_IMAGING_MODEL_REGISTRY",
     "_MODEL_REGISTRY",
     "get_imaging_model_class",

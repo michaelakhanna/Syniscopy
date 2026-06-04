@@ -13,12 +13,13 @@ from tqdm import tqdm
 
 from backend_fidelity import extract_backend_fidelity_metadata
 from camera_noise import DetectorNoiseRuntime, contrast_noise_variance_counts
-from config import RenderRuntimeConfig
+from config import OpticalModeSettings, RenderRuntimeConfig, param_value
+from config.runtime import internal_param_value, resolved_modality
 from imaging_models import get_imaging_model
 from json_utils import json_safe
 from mask_generation import generate_central_lobe_mask
 from modality_profiles import profile_card_for_model
-from modality_registry import VECTORIAL_FULL_FIELD_MODALITIES, canonical_modality_name
+from modality_registry import is_vectorial_full_field_modality
 from particle_model import ParticleInstance
 from particle_specs import particle_count
 from substrate import sample_environment_from_params
@@ -103,7 +104,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
     render_config = RenderRuntimeConfig.from_params(params)
     fps = render_config.fps
     num_frames = resolve_num_frames(params)
-    if bool(params.get("supervision_stop_when_all_temporally_unsupported", False)) and render_config.mask_generation_enabled:
+    if bool(param_value(params, 'supervision_stop_when_all_temporally_unsupported')) and render_config.mask_generation_enabled:
         raise ValueError(
             "supervision_stop_when_all_temporally_unsupported is incompatible "
             "with fixed-length video and dataset manifests. Set it to False and "
@@ -189,8 +190,8 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
     # do not consume optical substrate patterns can explicitly bypass them while
     # leaving the caller's PARAMS untouched.
     pattern_requested = (
-        bool(params.get("sample_environment_enabled", True))
-        and bool(params.get("sample_environment_pattern_enabled", False))
+        bool(param_value(params, 'sample_environment_enabled'))
+        and bool(param_value(params, 'sample_environment_pattern_enabled'))
     )
     pattern_active = (
         pattern_requested
@@ -212,9 +213,15 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
         else None
     )
     if pattern_active and layout_extent_nm is not None:
+        current_layout_extent_nm = internal_param_value(
+            reference_map_params,
+            "_substrate_pattern_layout_extent_nm",
+        )
         reference_map_params["_substrate_pattern_layout_extent_nm"] = max(
             float(layout_extent_nm),
-            float(reference_map_params.get("_substrate_pattern_layout_extent_nm", layout_extent_nm)),
+            float(current_layout_extent_nm)
+            if current_layout_extent_nm is not None
+            else float(layout_extent_nm),
         )
     sample_environment_model = (
         sample_environment_from_params(
@@ -222,7 +229,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
             model_shape_os,
             pixel_size_nm=float(pixel_size_nm) / float(os_factor),
         )
-        if bool(params.get("sample_environment_enabled", True))
+        if bool(param_value(params, 'sample_environment_enabled'))
         else None
     )
     if pre_crop_optical_filtering:
@@ -252,21 +259,18 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
     E_ref_intensity_final_base = np.abs(E_ref_final_base) ** 2
     E_ref_intensity_model_base = np.abs(E_ref_model_base) ** 2
 
-    roughness_model_raw = params.get(
-        "sample_environment_pattern_roughness_model",
-        "none",
-    )
+    roughness_model_raw = param_value(params, 'sample_environment_pattern_roughness_model')
     roughness_model = str(roughness_model_raw).strip().lower()
     roughness_amplitude = float(
-        params.get("sample_environment_pattern_roughness_amplitude", 0.0)
+        param_value(params, 'sample_environment_pattern_roughness_amplitude')
     )
     roughness_correlation_pixels = float(
-        params.get("sample_environment_pattern_roughness_correlation_pixels", 4.0)
+        param_value(params, 'sample_environment_pattern_roughness_correlation_pixels')
     )
     roughness_phase_std = float(
-        params.get("sample_environment_pattern_roughness_phase_std", 0.0)
+        param_value(params, 'sample_environment_pattern_roughness_phase_std')
     )
-    roughness_source = params.get("sample_environment_pattern_roughness_source", None)
+    roughness_source = param_value(params, 'sample_environment_pattern_roughness_source')
     roughness_source_tag = (
         "none"
         if roughness_source is None
@@ -277,7 +281,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
         )
     )
     roughness_source_coupling_mode = str(
-        params.get("sample_environment_pattern_roughness_source_coupling", "channel_weighted")
+        param_value(params, 'sample_environment_pattern_roughness_source_coupling')
     ).strip().lower()
     if roughness_source_coupling_mode not in {
         "independent",
@@ -292,7 +296,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
             "'scene_weighted', or 'channel_weighted'."
         )
     use_roughness = (
-        bool(params.get("sample_environment_enabled", True))
+        bool(param_value(params, 'sample_environment_enabled'))
         and roughness_model != "none"
         and (
             roughness_amplitude > 0.0
@@ -320,7 +324,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
         roughness_final_base = _resize_complex_area(roughness_os_base, final_size)
 
     empirical_background_enabled = bool(
-        params.get("empirical_background_enabled", False)
+        param_value(params, 'empirical_background_enabled')
     )
     if empirical_background_enabled:
         if pre_crop_optical_filtering:
@@ -360,7 +364,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
         empirical_background_sqrt_os = None
         empirical_background_sqrt_model = None
 
-    contrast_model_raw = params.get("sample_environment_pattern_contrast_model", "static")
+    contrast_model_raw = param_value(params, 'sample_environment_pattern_contrast_model')
     contrast_model = str(contrast_model_raw).strip().lower()
     if contrast_model not in ("static", "time_dependent"):
         raise ValueError(
@@ -442,7 +446,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
         )
     )
     render_metadata = {
-        "imaging_model": str(params.get("imaging_model", "")),
+        "imaging_model": resolved_modality(params),
         "model_class": imaging_model.__class__.__name__,
         "output_type": getattr(imaging_model, "output_type", "intensity"),
         "uses_particle_material_sources": uses_particle_sources,
@@ -469,9 +473,8 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
     vectorial_dpc_enabled = bool(
         getattr(imaging_model, "_vectorial_dpc_enabled", lambda *_: False)(params)
     )
-    vectorial_detection_mode = str(
-        params.get("vectorial_detection_mode", "full_vector")
-    ).strip().lower()
+    optical_settings = OpticalModeSettings.from_params(params)
+    vectorial_detection_mode = optical_settings.vectorial_detection_mode
     if vectorial_detection_mode not in {
         "analyzer_x",
         "analyzer_y",
@@ -486,10 +489,8 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
             f"{vectorial_detection_mode!r}."
         )
     vectorial_full_field_enabled = (
-        str(params.get("optical_field_backend", "vectorial_debye")).strip().lower()
-        == "vectorial_debye"
-        and vectorial_detection_mode == "full_vector"
-        and canonical_modality_name(params.get("imaging_model", "")) in VECTORIAL_FULL_FIELD_MODALITIES
+        optical_settings.uses_full_vector_field
+        and is_vectorial_full_field_modality(resolved_modality(params))
     )
     vectorial_field_enabled = bool(vectorial_dpc_enabled or vectorial_full_field_enabled)
     render_metadata["vectorial_field_pipeline"] = {
@@ -908,8 +909,8 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
             params=params,
         )
 
-    return_mask_arrays = bool(params.get("_return_mask_arrays", False))
-    write_mask_files = bool(params.get("_write_mask_files", True))
+    return_mask_arrays = bool(internal_param_value(params, "_return_mask_arrays"))
+    write_mask_files = bool(internal_param_value(params, "_write_mask_files"))
     returned_mask_arrays: list[dict] = []
 
     if render_config.mask_generation_enabled:
@@ -1002,7 +1003,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
         particle_frame_states = _new_particle_frame_states()
 
         drift_velocity = np.asarray(
-            params.get("drift_velocity_nm_per_s", [0.0, 0.0, 0.0]),
+            param_value(params, 'drift_velocity_nm_per_s'),
             dtype=float,
         )
         if drift_velocity.size == 1:
@@ -1011,10 +1012,10 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
             raise ValueError("drift_velocity_nm_per_s must be a scalar or length-3 sequence.")
 
         frame_vibration_nm = np.zeros(3, dtype=float)
-        vibration_std_nm = float(params.get("vibration_jitter_std_nm", 0.0))
+        vibration_std_nm = float(param_value(params, 'vibration_jitter_std_nm'))
         if vibration_std_nm > 0.0:
             frame_vibration_nm = rng.normal(scale=vibration_std_nm, size=3)
-            if not bool(params.get("vibration_include_axial", False)):
+            if not bool(param_value(params, 'vibration_include_axial')):
                 frame_vibration_nm[2] = 0.0
 
         intensity_os_sum = None
@@ -1111,9 +1112,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
                             particle_x_canvas = float(center_x_canvas)
                             particle_y_canvas = float(center_y_canvas)
                             nm_per_pixel_canvas = pixel_size_nm / os_factor
-                            nm_per_pixel_psf = (
-                                img_size * pixel_size_nm
-                            ) / (os_factor * pupil_samples)
+                            nm_per_pixel_psf = nm_per_pixel_canvas
                             amplitude_scale = (
                                 instance.signal_multiplier * local_multiplier
                             )
@@ -1356,7 +1355,6 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
                 for states, counts_all in zip(
                     subsample_states_by_exposure,
                     subsample_all_counts,
-                    strict=False,
                 ):
                     states_without_particle = [
                         state for idx, state in enumerate(states) if idx != i
@@ -1407,9 +1405,9 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
                 lobe_mask, lobe_status = generate_central_lobe_mask(
                     contrast_final_counts,
                     center_yx=center_yx,
-                    outer_ring_count=0 if is_composite else int(params.get("mask_outer_ring_count", 0)),
+                    outer_ring_count=0 if is_composite else int(param_value(params, 'mask_outer_ring_count')),
                     use_floodfill=is_composite,
-                    max_area_fraction=float(params.get("mask_max_area_fraction", 0.25)),
+                    max_area_fraction=float(param_value(params, 'mask_max_area_fraction')),
                     return_status=True,
                 )
                 geometry_mask = np.maximum(projected_geometry_mask, lobe_mask).astype(np.uint8)
@@ -1419,8 +1417,8 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
                     "mask_geometry_algorithm": "floodfill_contrast_support" if is_composite else "radial_sign_change_contrast_support",
                     "projected_geometry_pixels": int(np.count_nonzero(projected_geometry_mask)),
                     "contrast_support_pixels": int(np.count_nonzero(lobe_mask)),
-                    "mask_outer_ring_count": 0 if is_composite else int(params.get("mask_outer_ring_count", 0)),
-                    "mask_max_area_fraction": float(params.get("mask_max_area_fraction", 0.25)),
+                    "mask_outer_ring_count": 0 if is_composite else int(param_value(params, 'mask_outer_ring_count')),
+                    "mask_max_area_fraction": float(param_value(params, 'mask_max_area_fraction')),
                 }
                 mask_geometry_metadata.update(lobe_status)
 

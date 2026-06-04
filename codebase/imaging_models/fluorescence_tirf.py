@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from config.runtime import param_value
+
 from ._shared import np
 from .fluorescence_widefield import FluorescenceWidefieldImagingModel
 
@@ -10,11 +12,11 @@ class TIRFFluorescenceImagingModel(FluorescenceWidefieldImagingModel):
 
     @staticmethod
     def penetration_depth_nm(params: dict) -> float:
-        if params.get("tirf_use_angle_derived_penetration_depth", False):
-            wavelength_nm = float(params.get("fluorescence_excitation_wavelength_nm", 488.0))
-            n_prism = float(params.get("tirf_prism_refractive_index", 1.518))
-            n_sample = float(params.get("tirf_sample_refractive_index", params.get("refractive_index_medium", 1.333)))
-            angle_rad = np.deg2rad(float(params.get("tirf_incident_angle_deg", 66.0)))
+        if param_value(params, 'tirf_use_angle_derived_penetration_depth'):
+            wavelength_nm = float(param_value(params, "fluorescence_excitation_wavelength_nm"))
+            n_prism = float(param_value(params, "tirf_prism_refractive_index"))
+            n_sample = float(param_value(params, "tirf_sample_refractive_index"))
+            angle_rad = np.deg2rad(float(param_value(params, "tirf_incident_angle_deg")))
             sin_term = n_prism * np.sin(angle_rad)
             under_root = sin_term * sin_term - n_sample * n_sample
             if under_root <= 0.0:
@@ -23,21 +25,21 @@ class TIRFFluorescenceImagingModel(FluorescenceWidefieldImagingModel):
                     "'tirf_use_angle_derived_penetration_depth' is enabled."
                 )
             return float(wavelength_nm / (4.0 * np.pi * np.sqrt(under_root)))
-        penetration_nm = float(params.get("tirf_penetration_depth_nm", 120.0))
+        penetration_nm = float(param_value(params, "tirf_penetration_depth_nm"))
         if penetration_nm <= 0.0:
             raise ValueError("PARAMS['tirf_penetration_depth_nm'] must be positive.")
         return penetration_nm
 
     def __init__(self, params: dict) -> None:
         super().__init__(params)
-        effective_na = params.get("tirf_effective_numerical_aperture", None)
+        effective_na = param_value(params, "tirf_effective_numerical_aperture")
         if effective_na is None:
             self._tirf_emission_sigma_multiplier = 1.0
         else:
             effective_na = float(effective_na)
             if effective_na <= 0.0:
                 raise ValueError("PARAMS['tirf_effective_numerical_aperture'] must be positive when set.")
-            detection_na = float(params.get("numerical_aperture", effective_na))
+            detection_na = float(param_value(params, "numerical_aperture"))
             if detection_na <= 0.0:
                 raise ValueError(
                     "PARAMS['numerical_aperture'] must be positive when TIRF "
@@ -79,9 +81,9 @@ class TIRFFluorescenceImagingModel(FluorescenceWidefieldImagingModel):
         )
         penetration_nm = self.penetration_depth_nm(params)
         if particle_z_nm is None:
-            particle_height_nm = float(params.get("tirf_particle_height_nm", 0.0))
+            particle_height_nm = float(param_value(params, 'tirf_particle_height_nm'))
         else:
-            particle_height_nm = float(particle_z_nm) + float(params.get("tirf_height_offset_nm", 0.0))
+            particle_height_nm = float(particle_z_nm) + float(param_value(params, 'tirf_height_offset_nm'))
         excitation_factor = np.exp(-max(particle_height_nm, 0.0) / penetration_nm)
         return float(base * excitation_factor)
 
@@ -153,9 +155,9 @@ class TIRFFluorescenceImagingModel(FluorescenceWidefieldImagingModel):
             np.maximum(radius_nm * radius_nm - lateral_nm[inside] ** 2, 0.0)
         )
         if particle_z_nm is None:
-            center_height_nm = float(params.get("tirf_particle_height_nm", 0.0))
+            center_height_nm = float(param_value(params, 'tirf_particle_height_nm'))
         else:
-            center_height_nm = float(particle_z_nm) + float(params.get("tirf_height_offset_nm", 0.0))
+            center_height_nm = float(particle_z_nm) + float(param_value(params, 'tirf_height_offset_nm'))
         excitation_integral_nm = self._evanescent_chord_integral_nm(
             center_height_nm,
             half_chord_nm,
@@ -180,22 +182,22 @@ class TIRFFluorescenceImagingModel(FluorescenceWidefieldImagingModel):
         response.update(
             kind="tirf_evanescent_fluorescence",
             penetration_depth_nm=self.penetration_depth_nm(params),
-            tirf_incident_angle_deg=float(params.get("tirf_incident_angle_deg", 66.0)),
+            tirf_incident_angle_deg=float(param_value(params, "tirf_incident_angle_deg")),
             tirf_critical_angle_deg=float(
                 np.rad2deg(
                     np.arcsin(
                         min(
-                            float(params.get("tirf_sample_refractive_index", params.get("refractive_index_medium", 1.333)))
-                            / max(float(params.get("tirf_prism_refractive_index", 1.518)), 1e-12),
+                            float(param_value(params, "tirf_sample_refractive_index"))
+                            / max(float(param_value(params, "tirf_prism_refractive_index")), 1e-12),
                             1.0,
                         )
                     )
                 )
             ),
-            tirf_prism_refractive_index=float(params.get("tirf_prism_refractive_index", 1.518)),
-            tirf_sample_refractive_index=float(params.get("tirf_sample_refractive_index", params.get("refractive_index_medium", 1.333))),
-            tirf_particle_height_nm=float(params.get("tirf_particle_height_nm", 0.0)),
-            tirf_height_offset_nm=float(params.get("tirf_height_offset_nm", 0.0)),
+            tirf_prism_refractive_index=float(param_value(params, "tirf_prism_refractive_index")),
+            tirf_sample_refractive_index=float(param_value(params, "tirf_sample_refractive_index")),
+            tirf_particle_height_nm=float(param_value(params, "tirf_particle_height_nm")),
+            tirf_height_offset_nm=float(param_value(params, "tirf_height_offset_nm")),
             emission_sigma_multiplier=self._tirf_emission_sigma_multiplier,
             source_input_kind="projected_2d_tirf_evanescently_weighted_emitter_density",
             source_projection_policy="evanescent_excitation_line_integrated_over_particle_chord_before_emission_psf",

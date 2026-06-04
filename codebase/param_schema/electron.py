@@ -12,16 +12,15 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
     default="syniscopy_multislice",
     choices=[
         "weak_phase_ctf",
-        "ctf_proxy",
         "multislice_lite",
         "syniscopy_multislice",
     ],
     ui_label="TEM model",
     group="Advanced modality",
     description=(
-        "Syniscopy-native high-fidelity multislice by default; legacy weak-phase CTF "
-        "(alias 'ctf_proxy') and projected-phase multislice-lite are available for "
-        "reduced-fidelity benchmarking."
+        "Syniscopy-native high-fidelity multislice by default; weak-phase CTF "
+        "and projected-phase multislice-lite are available for reduced-fidelity "
+        "benchmarking."
     ),
 ),
 "tem_backend": ParamSpec(
@@ -203,18 +202,15 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 "sem_model": ParamSpec(
     key="sem_model",
     type="enum",
-    default="gaussian_probe_proxy",
+    default="gaussian_probe_secondary_yield",
     choices=[
-        "gaussian_probe_proxy",
         "gaussian_probe_secondary_yield",
         "interaction_volume_proxy",
     ],
     ui_label="SEM model",
     group="Advanced modality",
     description=(
-        "Gaussian-probe secondary-yield proxy. ``gaussian_probe_proxy`` and "
-        "``gaussian_probe_secondary_yield`` are aliases; use "
-        "``interaction_volume_proxy`` for the interaction-volume proxy."
+        "Gaussian-probe secondary-yield proxy or interaction-volume proxy."
     ),
 ),
 "sem_backend": ParamSpec(

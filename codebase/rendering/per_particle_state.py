@@ -103,8 +103,8 @@ def _iter_subparticle_render_info(
             (
                 np.asarray(base_position_nm, dtype=float),
                 ptype.ipsf_interpolator,
-                1.0,
-                1.0,
+                float(instance.component_signal_multiplier),
+                float(instance.component_source_multiplier),
                 float(ptype.diameter_nm),
                 instance.material_properties,
             )

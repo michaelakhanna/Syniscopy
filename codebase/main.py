@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 
 from config import PARAMS
-from simulation import run_simulation
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -22,6 +21,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None):
     args = parse_args(argv)
+    from simulation import run_simulation
+
     return run_simulation(PARAMS, return_frames=bool(args.return_frames))
 
 

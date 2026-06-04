@@ -8,6 +8,7 @@ from ._shared import (
     np,
     reference_vector_for_scattered,
 )
+from config.runtime import CountBudgetSettings, OpticalModeSettings, param_value
 
 class QuantitativePhaseImagingModel(ImagingModel):
     """
@@ -44,7 +45,7 @@ class QuantitativePhaseImagingModel(ImagingModel):
     supports_spectral_channels = True
 
     def __init__(self, params: dict) -> None:
-        E_ref_amplitude = float(params.get("reference_field_amplitude", 0.0))
+        E_ref_amplitude = OpticalModeSettings.from_params(params).reference_field_amplitude
         if E_ref_amplitude <= 0.0:
             raise ValueError(
                 "PARAMS['reference_field_amplitude'] must be positive for "
@@ -86,11 +87,11 @@ class QuantitativePhaseImagingModel(ImagingModel):
 
     def compute_response_function(self, shape: tuple[int, int], params: dict) -> dict:
         response = super().compute_response_function(shape, params)
-        phase_noise = params.get("qpi_phase_noise_std_rad", None)
-        visibility = float(params.get("qpi_visibility", 1.0))
-        detected_quanta_raw = params.get("qpi_detected_quanta_per_pixel", None)
+        phase_noise = param_value(params, 'qpi_phase_noise_std_rad')
+        visibility = float(param_value(params, 'qpi_visibility'))
+        detected_quanta_raw = param_value(params, 'qpi_detected_quanta_per_pixel')
         if detected_quanta_raw is None:
-            detected_quanta_raw = params.get("background_intensity", 100.0)
+            detected_quanta_raw = CountBudgetSettings.from_params(params).background_intensity
         detected_quanta = float(detected_quanta_raw)
         readout_variance = 0.0 if phase_noise is None else float(phase_noise) ** 2
         shot_variance = (
@@ -109,12 +110,7 @@ class QuantitativePhaseImagingModel(ImagingModel):
             qpi_phase_readout_variance_rad2=readout_variance,
             qpi_phase_variance_rad2=float(shot_variance + readout_variance),
             phase_noise_model="1/(V^2 nQ)+sigma_phi_readout^2",
-            qpi_phase_to_count_scale=float(
-                params.get(
-                    "qpi_phase_to_count_scale",
-                    params.get("background_intensity", 100.0),
-                )
-            ),
+            qpi_phase_to_count_scale=CountBudgetSettings.from_params(params).qpi_phase_to_count_scale,
             qpi_phase_noise_std_rad=(
                 None if phase_noise is None else float(phase_noise)
             ),
@@ -139,12 +135,7 @@ class QuantitativePhaseImagingModel(ImagingModel):
         paths continue to use the actual phase contrast image.
         """
         del E_ref_intensity_final
-        phase_to_count = float(
-            params.get(
-                "qpi_phase_to_count_scale",
-                params.get("background_intensity", 100.0),
-            )
-        )
+        phase_to_count = CountBudgetSettings.from_params(params).qpi_phase_to_count_scale
         return np.asarray(background_final, dtype=float) + phase_to_count * np.asarray(intensity, dtype=float)
 
 __all__ = ['QuantitativePhaseImagingModel']

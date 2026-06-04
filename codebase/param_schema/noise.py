@@ -256,11 +256,33 @@ NOISE_SCHEMA: dict[str, ParamSpec] = {
 ),
 "noise_parameterization": ParamSpec(
     key="noise_parameterization",
-    type="string",
+    type="enum",
     default="camera_counts",
+    choices=["camera_counts"],
     ui_label="Noise parameterization",
     group="Noise",
     description="Top-level noise domain; only 'camera_counts' is currently implemented.",
+),
+"detector_noise_input_domain": ParamSpec(
+    key="detector_noise_input_domain",
+    type="enum",
+    default=None,
+    choices=["camera_counts", "electron_count"],
+    ui_label="Detector-noise input domain",
+    group="Noise",
+    description=(
+        "Optional detector-noise input-domain override. None derives from the "
+        "canonical modality."
+    ),
+),
+"read_noise_map_mode": ParamSpec(
+    key="read_noise_map_mode",
+    type="enum",
+    default="replace",
+    choices=["replace", "add"],
+    ui_label="Read-noise map mode",
+    group="Noise",
+    description="How per-pixel read-noise maps combine with scalar read noise.",
 ),
 "modality_noise": ParamSpec(
     key="modality_noise",
@@ -350,22 +372,6 @@ NOISE_SCHEMA: dict[str, ParamSpec] = {
     ui_label="Dark-frame map",
     group="Noise",
     description="Path or scalar dark-frame offset map added in detector counts.",
-),
-"prnu_map": ParamSpec(
-    key="prnu_map",
-    type="string",
-    default=None,
-    ui_label="PRNU map",
-    group="Noise",
-    description="Alias for fixed-pattern gain map (multiplicative map in gain space).",
-),
-"dsnu_map": ParamSpec(
-    key="dsnu_map",
-    type="string",
-    default=None,
-    ui_label="DSNU map",
-    group="Noise",
-    description="Alias for fixed-pattern offset map (additive dark/offset map).",
 ),
 }
 

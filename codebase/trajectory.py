@@ -1,5 +1,6 @@
+from __future__ import annotations
 import numpy as np
-from config import BOLTZMANN_CONSTANT
+from config import BOLTZMANN_CONSTANT, param_value
 from shared_constants import NUM_FRAME_DURATION_SEARCH_STEPS
 from particle_specs import (
     get_particle_specs,
@@ -7,6 +8,7 @@ from particle_specs import (
     initial_positions_from_specs_nm,
 )
 from substrate.patterns import (
+    canonical_sample_environment_pattern_and_preset,
     is_position_in_substrate_solid,
     project_position_to_fluid_region,
     reflect_position_across_substrate_boundary,
@@ -16,7 +18,7 @@ _INITIAL_POSITION_MAX_ATTEMPTS = 1000
 
 
 def _rng_from_params(params: dict, stream: int) -> np.random.Generator:
-    seed = params.get("random_seed", None)
+    seed = param_value(params, 'random_seed')
     if seed is None:
         return np.random.default_rng()
     return np.random.default_rng(np.random.SeedSequence([int(seed) % (2**32), int(stream)]))
@@ -32,7 +34,7 @@ def _positive_finite_param(params: dict, key: str) -> float:
 def resolve_num_frames(params: dict) -> int:
     """Resolve the positive frame count from ``num_frames`` or ``fps * duration_seconds``."""
     fps = _positive_finite_param(params, "fps")
-    raw_num_frames = params.get("num_frames", None)
+    raw_num_frames = param_value(params, 'num_frames')
     if raw_num_frames is not None:
         if isinstance(raw_num_frames, bool):
             raise ValueError("PARAMS['num_frames'] must be a positive integer, not bool.")
@@ -72,7 +74,7 @@ def resolve_public_num_frames(
         If true and ``duration_seconds`` is present, require the provided value to
         remain numerically consistent with the requested frame count.
     """
-    raw_num_frames = params.get("num_frames", None)
+    raw_num_frames = param_value(params, 'num_frames')
     if raw_num_frames is None:
         return
     if isinstance(raw_num_frames, bool):
@@ -86,7 +88,7 @@ def resolve_public_num_frames(
     if requested_num_frames <= 0:
         raise ValueError("PARAMS['num_frames'] must be positive.")
 
-    fps = float(params.get("fps", 0.0))
+    fps = float(param_value(params, "fps"))
     if fps <= 0.0:
         raise ValueError("PARAMS['fps'] must be positive when num_frames is set.")
 
@@ -202,22 +204,11 @@ def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
           ``sample_environment_pattern`` == "none", the motion is fully
           unconstrained in x and y.
 
-        - When a gold film with circular holes is enabled via
-          ``sample_environment_pattern`` == "gold_holes" and
-          ``sample_environment_pattern_preset`` == "default_gold_holes",
-          lateral positions
-          whose projection lies in the gold film are corrected after each
-          Brownian step by the configured exclusion method. This enforces
-          excluded volume without resampling steps.
-
-        - When a nanopillar array is enabled via
-          ``sample_environment_pattern`` == "nanopillars" and
-          ``sample_environment_pattern_preset`` in {"nanopillars", "default_nanopillars"},
-          lateral positions whose
-          projection lies inside a nanopillar are deterministically mapped
-          back into the nearest fluid region just outside the pillar boundary,
-          again using project_position_to_fluid_region. This enforces excluded
-          volume without introducing trapping or non-random motion.
+        - When any supported solid sample-environment pattern is enabled,
+          lateral positions inside the rendered solid region are corrected
+          after each Brownian step by the configured exclusion method. This
+          includes gold films, holey carbon, nanopillars, fiducial dots,
+          grid bars, microfluidic walls, and patterned coverslips.
 
     Z-axis motion constraint model
     ------------------------------
@@ -286,7 +277,7 @@ def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
     num_particles = len(particle_specs)
 
     # --- Z-motion constraint model selection and validation ---
-    z_model_raw = params.get("z_motion_constraint_model", "unconstrained")
+    z_model_raw = param_value(params, 'z_motion_constraint_model')
     z_model_key = str(z_model_raw).strip().lower()
 
     if z_model_key == "unconstrained":
@@ -304,23 +295,21 @@ def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
 
     # Determine once per simulation whether to enforce lateral excluded volume
     # against solid regions of the configured substrate pattern.
-    sample_environment_enabled = bool(params.get("sample_environment_enabled", True))
-    substrate_enabled = bool(params.get("sample_environment_pattern_enabled", False))
-    pattern_model_raw = params.get("sample_environment_pattern", "none")
-    pattern_model = str(pattern_model_raw).strip().lower()
-    substrate_preset_raw = params.get("sample_environment_pattern_preset", "empty_background")
-    substrate_preset = str(substrate_preset_raw).strip().lower()
-
-    apply_substrate_exclusion = sample_environment_enabled and substrate_enabled and (
-        (
-            pattern_model == "gold_holes"
-            and substrate_preset == "default_gold_holes"
-        )
-        or (
-            pattern_model == "nanopillars"
-            and substrate_preset in ("nanopillars", "default_nanopillars")
-        )
+    sample_environment_enabled = bool(param_value(params, 'sample_environment_enabled'))
+    substrate_enabled = bool(param_value(params, 'sample_environment_pattern_enabled'))
+    pattern_model, substrate_preset = canonical_sample_environment_pattern_and_preset(
+        param_value(params, 'sample_environment_pattern'),
+        param_value(params, "sample_environment_pattern_preset"),
     )
+    apply_substrate_exclusion = (
+        sample_environment_enabled
+        and substrate_enabled
+        and substrate_preset != "empty_background"
+        and pattern_model != "none"
+    )
+    exclusion_method = str(
+        param_value(params, 'sample_environment_exclusion_method')
+    ).strip().lower()
 
     # Field-of-view extents used for sampling initial positions. These are
     # needed regardless of whether substrate exclusion is active.
@@ -463,9 +452,6 @@ def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
                 # diffusion at an impenetrable feature. Projection is an
                 # endpoint-clamping approximation and is kept as an explicit
                 # alternative for users who want that geometry.
-                exclusion_method = str(
-                    params.get("sample_environment_exclusion_method", "reflection")
-                ).strip().lower()
                 if exclusion_method == "projection":
                     x_nm_new, y_nm_new = project_position_to_fluid_region(
                         params,
@@ -486,7 +472,7 @@ def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
                     raise ValueError(
                         "PARAMS['sample_environment_exclusion_method'] must be either "
                         "'reflection' or 'projection'; got "
-                        f"{params.get('sample_environment_exclusion_method')!r}."
+                        f"{exclusion_method!r}."
                     )
             else:
                 x_nm_new, y_nm_new = proposed_x_nm, proposed_y_nm
@@ -608,7 +594,7 @@ def resolve_rotational_step_std_rad(params: dict, num_particles: int) -> np.ndar
         np.ndarray: 1D float64 array of shape (num_particles,) with the per-
         particle standard deviation of the per-frame rotation angle in radians.
     """
-    rotational_enabled = bool(params.get("rotational_diffusion_enabled", False))
+    rotational_enabled = bool(param_value(params, "rotational_diffusion_enabled"))
 
     num_particles = int(num_particles)
     if num_particles <= 0:
@@ -618,7 +604,7 @@ def resolve_rotational_step_std_rad(params: dict, num_particles: int) -> np.ndar
         )
 
     # Empirical scalar step standard deviation in degrees.
-    step_std_deg = float(params.get("rotational_step_std_deg", 10.0))
+    step_std_deg = float(param_value(params, 'rotational_step_std_deg'))
     if not np.isfinite(step_std_deg) or step_std_deg < 0.0:
         raise ValueError(
             "PARAMS['rotational_step_std_deg'] must be finite and non-negative if provided."
@@ -646,7 +632,7 @@ def resolve_rotational_step_std_rad(params: dict, num_particles: int) -> np.ndar
     # resolve_translational_diameters_nm so rotational and translational
     # diffusion use the same motion diameter.
     # "empirical" mode uses the configured scalar angular step.
-    mode = str(params.get("rotational_diffusion_mode", "empirical")).lower()
+    mode = str(param_value(params, 'rotational_diffusion_mode')).lower()
     if mode == "stokes_einstein":
         temp_K = _positive_finite_param(params, "temperature_K")
         viscosity_Pa_s = _positive_finite_param(params, "viscosity_Pa_s")
@@ -750,7 +736,7 @@ def simulate_orientations(
               (num_particles, num_frames, 3, 3) with dtype float, where each
               [i, t] entry is an SO(3) rotation matrix.
     """
-    rotational_enabled = bool(params.get("rotational_diffusion_enabled", False))
+    rotational_enabled = bool(param_value(params, "rotational_diffusion_enabled"))
     if not rotational_enabled:
         return None
     rng = _rng_from_params(params, 0x4F524945) if rng is None else rng

@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+from config import param_value
+from config.runtime import (
+    resolved_image_size_pixels,
+    resolved_model_canvas_shape,
+    resolved_pixel_size_nm,
+    resolved_psf_oversampling_factor,
+)
 import json
 from pathlib import Path
 from typing import Any
@@ -12,35 +19,17 @@ from experiment_contracts import (
     detector_model_from_params,
     model_card_from_profile_card,
 )
-from imaging_models import (
-    get_imaging_model,
-    modality_uses_relative_reference_contrast,
-)
+from imaging_models import get_imaging_model
 from json_utils import json_safe_with_nonfinite_tags
-from modality_registry import canonical_modality_name
+from measurement_units import canonical_measurement_domain_and_signal_units_for_output
+from modality_registry import (
+    canonical_modality_name,
+    is_electron_modality,
+    modality_display_name,
+)
 
 
 PROFILE_SCHEMA_VERSION = "syniscopy-modality-profile-v1"
-
-
-_DISPLAY_NAMES = {
-    "bright_field": "Partially Coherent Bright-Field",
-    "partially_coherent_bright_field": "Partially Coherent Bright-Field",
-    "coherent_bright_field": "Coherent Bright-Field",
-    "dark_field": "Annular Dark-Field",
-    "coherent_dark_field": "Coherent Dark-Field",
-    "dpc": "Differential Phase Contrast",
-    "differential_phase_contrast": "Differential Phase Contrast",
-    "zernike_phase_contrast": "Zernike Phase Contrast",
-    "quantitative_phase": "Quantitative Phase Imaging",
-    "qpi": "Quantitative Phase Imaging",
-    "ricm": "Reflection Interference Contrast",
-    "off_axis_holography": "Off-Axis Holography",
-    "tem_phase_contrast": "Transmission Electron Microscopy",
-    "sem_secondary_electron": "Scanning Electron Microscopy",
-    "fluorescence_widefield": "Widefield Fluorescence",
-    "tirf_fluorescence": "TIRF Fluorescence",
-}
 
 
 _PAPER_USE_CATEGORY_BY_DOMAIN = {
@@ -72,22 +61,11 @@ def _measurement_domain_and_units(
     output_type: str,
     response: dict[str, Any],
 ) -> tuple[str, str]:
-    if modality in ("tem_phase_contrast", "sem_secondary_electron"):
-        return "electron_count", "electron_count"
-    if output_type == "phase":
-        return "phase", "radian"
-    measurement_domain = str(response.get("measurement_domain", "") or "").strip()
-    signal_units = str(response.get("signal_units", "") or "").strip()
-    if measurement_domain and signal_units:
-        if measurement_domain == "count" and signal_units == "detector_count":
-            return "count", "detector_count"
-        return measurement_domain, signal_units
-    if modality_uses_relative_reference_contrast(modality):
-        return "contrast", "relative_reference"
-    if output_type == "fringe":
-        return "fringe_count", "detector_count"
-
-    return "count", "detector_count"
+    return canonical_measurement_domain_and_signal_units_for_output(
+        modality,
+        output_type,
+        response_function=response,
+    )
 
 
 def _forward_observable(modality: str, response: dict[str, Any]) -> str:
@@ -113,8 +91,8 @@ def _noise_model(params: dict, measurement_domain: str) -> str:
         shot_enabled = bool(cfg.shot_noise_enabled)
         gaussian_enabled = bool(cfg.gaussian_noise_enabled)
     except Exception:
-        shot_enabled = bool(params.get("shot_noise_enabled", True))
-        gaussian_enabled = bool(params.get("gaussian_noise_enabled", True))
+        shot_enabled = bool(param_value(params, 'shot_noise_enabled'))
+        gaussian_enabled = bool(param_value(params, 'gaussian_noise_enabled'))
     if shot_enabled and gaussian_enabled:
         return "poisson_shot_plus_gaussian_read_noise"
     if shot_enabled:
@@ -135,7 +113,8 @@ def _count_scaling_mode(params: dict, response: dict[str, Any], measurement_doma
 
 
 def _paper_use_category(modality: str, measurement_domain: str, response: dict[str, Any]) -> str:
-    if modality.startswith(("tem", "sem")):
+    modality = canonical_modality_name(modality)
+    if is_electron_modality(modality):
         level = str(response.get("backend_fidelity_level", "proxy")).strip().lower().replace(" ", "_")
         return _ELECTRON_PAPER_USE_CATEGORY_BY_FIDELITY.get(level, "simplified_electron_proxy")
     vectorial_markers = " ".join(
@@ -154,9 +133,9 @@ def _paper_use_category(modality: str, measurement_domain: str, response: dict[s
     ).strip().lower()
     if "vectorial" in vectorial_markers or bool(response.get("uses_vectorial_field", False)):
         return "vectorial_optical_profile"
-    if modality in {"quantitative_phase", "qpi"}:
+    if modality == "quantitative_phase":
         return "phase_domain_profile"
-    if modality in {"dpc", "differential_phase_contrast"}:
+    if modality == "differential_phase_contrast":
         channel_model = str(response.get("dpc_channel_model", "")).strip().lower()
         if "vectorial" in channel_model or bool(response.get("dpc_vectorial_backend_enabled", False)):
             return "vectorial_optical_profile"
@@ -292,19 +271,10 @@ def _augment_profile_card(card: dict[str, Any], params: dict, modality: str) -> 
     if not card.get("contrast_frame_units") and backend.get("contrast_frame_units"):
         card["contrast_frame_units"] = str(backend["contrast_frame_units"])
     card["detector_model"] = detector
-    nonlinear_detector = bool(detector.get("nonlinear_detector_effects_active", False))
-    deterministic_transfer = bool(
-        detector.get("deterministic_detector_transfer_active", False)
-    )
-    linear_fisher_safe = bool(
-        detector.get(
-            "safe_for_linear_fisher_variance",
-            not (nonlinear_detector or deterministic_transfer),
-        )
-    )
-    card["detector_noise_input_domain"] = str(
-        detector.get("detector_noise_input_domain", "camera_counts")
-    )
+    nonlinear_detector = bool(detector["nonlinear_detector_effects_active"])
+    deterministic_transfer = bool(detector["deterministic_detector_transfer_active"])
+    linear_fisher_safe = bool(detector["safe_for_linear_fisher_variance"])
+    card["detector_noise_input_domain"] = str(detector["detector_noise_input_domain"])
     card["nonlinear_detector_effects_active"] = nonlinear_detector
     card["deterministic_detector_transfer_active"] = deterministic_transfer
     card["safe_for_linear_fisher_variance"] = linear_fisher_safe
@@ -330,15 +300,12 @@ def profile_card_for_model(
     response_function: Mapping[str, Any] | None = None,
     model_canvas_shape: tuple[int, int] | None = None,
 ) -> dict:
-    raw_modality = modality_name if modality_name is not None else params.get("imaging_model", "bright_field")
+    raw_modality = modality_name if modality_name is not None else param_value(params, 'imaging_model')
     modality = canonical_modality_name(str(raw_modality))
     if model_canvas_shape is not None:
         shape = (int(model_canvas_shape[0]), int(model_canvas_shape[1]))
     else:
-        shape = (
-            int(params.get("image_size_pixels", 1)) * int(params.get("psf_oversampling_factor", 1)),
-            int(params.get("image_size_pixels", 1)) * int(params.get("psf_oversampling_factor", 1)),
-        )
+        shape = resolved_model_canvas_shape(params)
     response = (
         dict(response_function)
         if response_function is not None
@@ -346,13 +313,13 @@ def profile_card_for_model(
     )
     output_type = str(getattr(imaging_model, "output_type", response.get("output_type", "intensity")))
     measurement_domain, signal_units = _measurement_domain_and_units(modality, output_type, response)
-    detector_pixel_size_nm = float(params.get("pixel_size_nm", response.get("detector_pixel_size_nm", 1.0)))
-    oversampling = float(params.get("psf_oversampling_factor", response.get("psf_oversampling_factor", 1.0)))
-    fidelity_label = str(response.get("fidelity_label", params.get("fidelity_label", "model_conditional_profile")))
+    detector_pixel_size_nm = float(resolved_pixel_size_nm(params))
+    oversampling = float(resolved_psf_oversampling_factor(params))
+    fidelity_label = str(response.get("fidelity_label", param_value(params, "profile_fidelity_label")))
     card = {
         "schema_version": PROFILE_SCHEMA_VERSION,
         "canonical_modality_name": modality,
-        "display_name": _DISPLAY_NAMES.get(modality, modality.replace("_", " ").title()),
+        "display_name": modality_display_name(modality),
         "model_class": imaging_model.__class__.__name__,
         "forward_observable": _forward_observable(modality, response),
         "output_type": output_type,
@@ -369,13 +336,13 @@ def profile_card_for_model(
             "detector_pixel_size_nm": detector_pixel_size_nm,
             "model_canvas_pixel_size_nm": detector_pixel_size_nm / oversampling,
             "psf_oversampling_factor": oversampling,
-            "image_size_pixels": int(params.get("image_size_pixels", 0)),
-            "bit_depth": int(params.get("bit_depth", 16)),
+            "image_size_pixels": int(resolved_image_size_pixels(params)),
+            "bit_depth": int(param_value(params, 'bit_depth')),
         },
         "sample_environment_usage": {
-            "sample_environment_enabled": bool(params.get("sample_environment_enabled", True)),
+            "sample_environment_enabled": bool(param_value(params, 'sample_environment_enabled')),
             "sample_environment_pattern_enabled": bool(
-                params.get("sample_environment_pattern_enabled", False)
+                param_value(params, 'sample_environment_pattern_enabled')
             ),
             "uses_sample_environment_pattern": bool(
                 getattr(imaging_model, "uses_sample_environment_pattern", False)
@@ -413,7 +380,7 @@ def canonical_profile_card(params: dict, modality_name: str | None = None) -> di
 
 def write_profile_cards(modality_params_list, output_path) -> list[dict]:
     cards = [
-        canonical_profile_card(params, params.get("imaging_model"))
+        canonical_profile_card(params, param_value(params, "imaging_model"))
         for params in modality_params_list
     ]
     path = Path(output_path)

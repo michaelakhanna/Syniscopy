@@ -5,6 +5,7 @@ from typing import Any
 
 import numpy as np
 from backend_fidelity import attach_backend_fidelity_metadata
+from config.runtime import param_value
 
 try:
     import vectorial_optics
@@ -82,8 +83,8 @@ class VectorialPhotophysicsFluorescenceBackend:
         self.detector_qe = float(detector_qe)
         self.photons_per_fluorophore = None if photons_per_fluorophore is None else float(photons_per_fluorophore)
         self.uniform_background = float(uniform_background)
-        legacy_scale = params.get("fluorescence_photon_count_scale", None)
-        strict_budget = bool(params.get("fluorescence_require_physical_photon_budget", False))
+        legacy_scale = param_value(params, "fluorescence_photon_count_scale")
+        strict_budget = bool(param_value(params, 'fluorescence_require_physical_photon_budget'))
         if self.photons_per_fluorophore is not None and (
             not np.isfinite(self.photons_per_fluorophore) or self.photons_per_fluorophore < 0.0
         ):
@@ -109,11 +110,11 @@ class VectorialPhotophysicsFluorescenceBackend:
                     f"when supplied; got {self.legacy_photon_count_scale!r}."
                 )
         self.legacy_photon_count_scale_supplied = legacy_scale is not None
-        self.blinking_rate = float(params.get("fluorescence_blinking_rate_per_frame", 0.0))
-        self.recovery_rate = float(params.get("fluorescence_recovery_rate_per_frame", 0.0))
-        bleaching_raw = params.get("fluorescence_bleaching_rate_per_frame", 0.0)
+        self.blinking_rate = float(param_value(params, 'fluorescence_blinking_rate_per_frame'))
+        self.recovery_rate = float(param_value(params, 'fluorescence_recovery_rate_per_frame'))
+        bleaching_raw = param_value(params, 'fluorescence_bleaching_rate_per_frame')
         self.bleaching_rate = float(bleaching_raw)
-        tau_raw = params.get("fluorescence_photobleach_tau_frames", None)
+        tau_raw = param_value(params, 'fluorescence_photobleach_tau_frames')
         if self.bleaching_rate == 0.0 and tau_raw is not None:
             tau_frames = float(tau_raw)
             if not np.isfinite(tau_frames) or tau_frames <= 0.0:
@@ -128,10 +129,10 @@ class VectorialPhotophysicsFluorescenceBackend:
         ):
             if not np.isfinite(val) or val < 0.0:
                 raise ValueError(f"PARAMS[{name!r}] must be finite and non-negative; got {val!r}.")
-        status = str(params.get("fluorescence_reference_status", "physics_based_unvalidated")).strip().lower()
+        status = str(param_value(params, 'fluorescence_reference_status')).strip().lower()
         if status not in {"physics_based_unvalidated", "reference_validated"}:
             raise ValueError("fluorescence_reference_status must be physics_based_unvalidated or reference_validated.")
-        if status == "reference_validated" and not params.get("fluorescence_reference_validation_hash"):
+        if status == "reference_validated" and not param_value(params, "fluorescence_reference_validation_hash"):
             raise ValueError("reference_validated fluorescence requires fluorescence_reference_validation_hash.")
         self.reference_status = status
         self.validation_status = (
@@ -140,7 +141,7 @@ class VectorialPhotophysicsFluorescenceBackend:
             else "diagnostic_only"
         )
         self._psf_cache: dict[tuple[int, int], np.ndarray] = {}
-        self.allow_psf_fallback = bool(params.get("fluorescence_allow_psf_fallback", False))
+        self.allow_psf_fallback = bool(param_value(params, 'fluorescence_allow_psf_fallback'))
         self._last_psf_backend = "not_evaluated"
         self._last_psf_error: str | None = None
 
@@ -162,8 +163,9 @@ class VectorialPhotophysicsFluorescenceBackend:
         if vectorial_optics is not None:
             try:
                 params = dict(self.params)
-                params["wavelength_nm"] = float(params.get("fluorescence_emission_wavelength_nm", params.get("wavelength_nm", 520.0)))
-                samples = int(params.get("vectorial_pupil_samples") or max(key))
+                params["wavelength_nm"] = float(param_value(params, "fluorescence_emission_wavelength_nm"))
+                configured_samples = param_value(params, "vectorial_pupil_samples")
+                samples = int(configured_samples if configured_samples is not None else param_value(params, "pupil_samples"))
                 params["vectorial_pupil_samples"] = max(samples, max(key))
                 stack = vectorial_optics.compute_vectorial_debye_psf(params, [0.0])
                 intensity = sum(np.abs(stack[name][0]) ** 2 for name in ("Ex", "Ey", "Ez"))
@@ -268,8 +270,8 @@ class VectorialPhotophysicsFluorescenceBackend:
             backend_mode=self.backend_mode,
             backend_fidelity_level=fidelity,
             algorithm="vectorial_debye_psf_with_mean_field_fluorophore_state_model",
-            excitation_wavelength_nm=float(p.get("fluorescence_excitation_wavelength_nm", 488.0)),
-            emission_wavelength_nm=float(p.get("fluorescence_emission_wavelength_nm", 520.0)),
+            excitation_wavelength_nm=float(param_value(p, "fluorescence_excitation_wavelength_nm")),
+            emission_wavelength_nm=float(param_value(p, "fluorescence_emission_wavelength_nm")),
             quantum_yield=self.quantum_yield,
             collection_efficiency=self.collection_efficiency,
             detector_qe=self.detector_qe,

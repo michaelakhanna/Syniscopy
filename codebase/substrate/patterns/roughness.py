@@ -1,6 +1,7 @@
 """roughness substrate-pattern helpers."""
 
 from __future__ import annotations
+from config import param_value
 
 from ._shared import (
     cv2,
@@ -142,25 +143,23 @@ def generate_empirical_background_field(
         raise ValueError("final_fov_shape must contain positive dimensions.")
     rng = np.random.default_rng() if rng is None else rng
 
-    enabled = bool(params.get("empirical_background_enabled", False))
+    enabled = bool(param_value(params, 'empirical_background_enabled'))
     if not enabled:
         return np.ones(shape, dtype=float)
 
     model = str(
-        params.get("empirical_background_model", "multiscale_gaussian_field")
+        param_value(params, 'empirical_background_model')
     ).strip().lower()
     if model not in ("multiscale_gaussian_field", "none"):
         raise ValueError(
             "Unsupported empirical_background_model "
-            f"'{params.get('empirical_background_model')}'."
+            f"'{param_value(params, 'empirical_background_model')}'."
         )
     if model == "none":
         return np.ones(shape, dtype=float)
 
-    relative_std = float(params.get("empirical_background_relative_std", 0.03))
-    gradient_strength = float(
-        params.get("empirical_background_gradient_relative_strength", 0.0)
-    )
+    relative_std = float(param_value(params, 'empirical_background_relative_std'))
+    gradient_strength = float(param_value(params, "empirical_background_gradient_relative_strength"))
     if relative_std < 0.0:
         raise ValueError("empirical_background_relative_std must be non-negative.")
     if gradient_strength < 0.0:
@@ -168,8 +167,8 @@ def generate_empirical_background_field(
             "empirical_background_gradient_relative_strength must be non-negative."
         )
 
-    scales = params.get("empirical_background_scales_px", [16.0, 64.0, 256.0])
-    weights = params.get("empirical_background_scale_weights", [0.4, 0.35, 0.25])
+    scales = param_value(params, 'empirical_background_scales_px')
+    weights = param_value(params, 'empirical_background_scale_weights')
     if len(scales) != len(weights):
         raise ValueError(
             "empirical_background_scales_px and "
@@ -273,12 +272,12 @@ def generate_sample_environment_roughness_field(
     if rng is None:
         rng = np.random.default_rng()
 
-    roughness_model_raw = params.get("sample_environment_pattern_roughness_model", "none")
+    roughness_model_raw = param_value(params, 'sample_environment_pattern_roughness_model')
     roughness_model = str(roughness_model_raw).strip().lower()
     if roughness_model not in ("none", "static", "flicker", "source_matched"):
         raise ValueError(
             "Unsupported sample_environment_pattern_roughness_model "
-            f"'{params.get('sample_environment_pattern_roughness_model')}'."
+            f"'{param_value(params, 'sample_environment_pattern_roughness_model')}'."
         )
 
     if roughness_model == "none":
@@ -286,27 +285,27 @@ def generate_sample_environment_roughness_field(
 
     if roughness_model == "source_matched":
         source_field = _load_roughness_reference_field(
-            params.get("sample_environment_pattern_roughness_source"),
+            param_value(params, "sample_environment_pattern_roughness_source"),
             shape,
         )
         roughness_field = _normalize_roughness_field(source_field)
         roughness_amplitude = float(
-            params.get("sample_environment_pattern_roughness_amplitude", 0.0)
+            param_value(params, 'sample_environment_pattern_roughness_amplitude')
         )
         if roughness_amplitude != 0.0:
             correlation_pixels = float(
-                params.get("sample_environment_pattern_roughness_correlation_pixels", 4.0)
+                param_value(params, 'sample_environment_pattern_roughness_correlation_pixels')
             )
             correlation_pixels = max(correlation_pixels, 0.0)
             amp_noise = _generate_correlated_unit_field(shape, correlation_pixels, rng)
             roughness_field = roughness_field * np.exp(roughness_amplitude * amp_noise)
             roughness_field = _normalize_roughness_field(roughness_field)
         phase_std = float(
-            params.get("sample_environment_pattern_roughness_phase_std", 0.0)
+            param_value(params, 'sample_environment_pattern_roughness_phase_std')
         )
         if phase_std > 0.0:
             phase_correlation_pixels = float(
-                params.get("sample_environment_pattern_roughness_correlation_pixels", 4.0)
+                param_value(params, 'sample_environment_pattern_roughness_correlation_pixels')
             )
             phase_correlation_pixels = max(phase_correlation_pixels, 0.0)
             phase_noise = _generate_correlated_unit_field(shape, phase_correlation_pixels, rng)
@@ -314,17 +313,17 @@ def generate_sample_environment_roughness_field(
         return roughness_field.astype(np.complex128)
 
     roughness_amplitude = float(
-        params.get("sample_environment_pattern_roughness_amplitude", 0.0)
+        param_value(params, 'sample_environment_pattern_roughness_amplitude')
     )
     if roughness_amplitude <= 0.0:
         return np.ones(shape, dtype=np.complex128)
 
     correlation_pixels = float(
-        params.get("sample_environment_pattern_roughness_correlation_pixels", 4.0)
+        param_value(params, 'sample_environment_pattern_roughness_correlation_pixels')
     )
     correlation_pixels = max(correlation_pixels, 0.0)
 
-    phase_std = float(params.get("sample_environment_pattern_roughness_phase_std", 0.0))
+    phase_std = float(param_value(params, 'sample_environment_pattern_roughness_phase_std'))
 
     amp_noise = _generate_correlated_unit_field(shape, correlation_pixels, rng)
     amplitude = np.exp(roughness_amplitude * amp_noise)

@@ -1,6 +1,8 @@
 """layout substrate-pattern helpers."""
 
 from __future__ import annotations
+from config import param_value
+from config.runtime import internal_param_value
 
 import hashlib
 
@@ -13,7 +15,7 @@ from ._shared import (
     _MAX_SHAPE_AXIS_DISTORTION_FRAC,
     _MIN_EDGE_RADIUS_FACTOR,
     _MIN_SHAPE_RADIUS_FACTOR,
-    _param_default,
+    _substrate_pattern_is_enabled,
     math,
     np,
 )
@@ -141,7 +143,7 @@ def _effective_layout_extent_nm(
     pixel_size_nm = float(params["pixel_size_nm"])
     if layout_extent_nm is None:
         layout_extent_nm = img_size_pixels * pixel_size_nm
-    internal_extent = params.get("_substrate_pattern_layout_extent_nm", None)
+    internal_extent = internal_param_value(params, "_substrate_pattern_layout_extent_nm")
     if internal_extent is not None:
         layout_extent_nm = max(float(layout_extent_nm), float(internal_extent))
     layout_extent_nm = float(layout_extent_nm)
@@ -163,18 +165,9 @@ def _get_randomization_settings(params: dict) -> Tuple[bool, float, float]:
         position_jitter_std_um (float),
         shape_regularity (float)
     """
-    enabled = bool(params.get(
-        "sample_environment_pattern_randomization_enabled",
-        _param_default("sample_environment_pattern_randomization_enabled"),
-    ))
-    jitter_nm = float(params.get(
-        "sample_environment_pattern_position_jitter_std_nm",
-        _param_default("sample_environment_pattern_position_jitter_std_nm"),
-    ))
-    shape_reg = float(params.get(
-        "sample_environment_pattern_shape_regularity",
-        _param_default("sample_environment_pattern_shape_regularity"),
-    ))
+    enabled = bool(param_value(params, "sample_environment_pattern_randomization_enabled"))
+    jitter_nm = float(param_value(params, "sample_environment_pattern_position_jitter_std_nm"))
+    shape_reg = float(param_value(params, "sample_environment_pattern_shape_regularity"))
 
     if jitter_nm < 0.0:
         raise ValueError(
@@ -197,14 +190,8 @@ def _get_edge_perturbation_settings(params: dict) -> Tuple[float, int]:
         max_rel_radius (float): Maximum relative radial deviation (delta_max).
         mode_count (int): Number of angular modes K used in the perturbation.
     """
-    max_rel = float(params.get(
-        "sample_environment_pattern_edge_perturbation_max_rel_radius",
-        _param_default("sample_environment_pattern_edge_perturbation_max_rel_radius"),
-    ))
-    mode_count = int(params.get(
-        "sample_environment_pattern_edge_perturbation_mode_count",
-        _param_default("sample_environment_pattern_edge_perturbation_mode_count"),
-    ))
+    max_rel = float(param_value(params, "sample_environment_pattern_edge_perturbation_max_rel_radius"))
+    mode_count = int(param_value(params, "sample_environment_pattern_edge_perturbation_mode_count"))
 
     if max_rel < 0.0:
         raise ValueError(
@@ -349,8 +336,6 @@ def _build_feature_layout(
     (1 - sample_environment_pattern_shape_regularity) so that highly regular shapes have
     minimal boundary roughness.
     """
-    from .registry import _substrate_pattern_is_enabled
-
     rng = np.random.default_rng() if rng is None else rng
     substrate_enabled = _substrate_pattern_is_enabled(params)
     if not substrate_enabled:
@@ -479,12 +464,12 @@ def _layout_rng_for_cache_key(
     params: dict,
     cache_key: tuple,
 ) -> np.random.Generator:
-    explicit_rng = params.get("_substrate_pattern_layout_rng", None)
+    explicit_rng = internal_param_value(params, "_substrate_pattern_layout_rng")
     if explicit_rng is not None:
         return explicit_rng
     has_seed_surface = (
-        params.get("random_seed", None) is not None
-        or params.get("_substrate_pattern_layout_cache_token", None) is not None
+        param_value(params, 'random_seed') is not None
+        or internal_param_value(params, "_substrate_pattern_layout_cache_token") is not None
     )
     if not has_seed_surface:
         return np.random.default_rng()
@@ -511,13 +496,11 @@ def _get_feature_layout_for_params(
 
     Note:
         The randomness used to build a layout (offset, jitter, shape
-        distortion, edge perturbation) is driven by the global NumPy RNG. In
-        the dataset generator, np.random.seed is set per video, so each video
-    gets its own randomized layout (including global offset and edge
-    shapes) in a deterministic way for a given seed.
+        distortion, edge perturbation) is derived from the explicit layout cache
+        key. Dataset videos provide per-video random_seed/cache-token values, so
+        each video gets deterministic randomized layout geometry without using
+        NumPy's process-global RNG stream.
     """
-    from .registry import _substrate_pattern_is_enabled
-
     substrate_enabled = _substrate_pattern_is_enabled(params)
     if not substrate_enabled:
         # No substrate pattern = no layout; return an empty layout so callers can still run.
@@ -540,10 +523,9 @@ def _get_feature_layout_for_params(
         )
     edge_amp_rel_max, edge_mode_count = _get_edge_perturbation_settings(params)
 
-    layout_cache_token = params.get(
-        "_substrate_pattern_layout_cache_token",
-        params.get("random_seed", None),
-    )
+    layout_cache_token = internal_param_value(params, "_substrate_pattern_layout_cache_token")
+    if layout_cache_token is None:
+        layout_cache_token = param_value(params, "random_seed")
     if layout_cache_token is not None:
         layout_cache_token = str(layout_cache_token)
 

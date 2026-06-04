@@ -259,7 +259,10 @@ def build_velocity_state_transition_matrix(
 ) -> np.ndarray:
     """Build a diagonal plus position/velocity first-order kinematic block transition."""
     axes = _as_axis_list(state_axes, len(state_axes))
-    dt = 1.0 / _as_float(fps)
+    fps_f = _as_float(fps)
+    if fps_f <= 0.0:
+        raise ValueError("fps must be > 0")
+    dt = 1.0 / fps_f
     axis_to_idx = {axis: idx for idx, axis in enumerate(axes)}
 
     if velocity_pairs is None:
@@ -336,7 +339,7 @@ def compute_dynamic_bayesian_crlb(
     initial_covariance: np.ndarray | None = None,
     initial_precision: np.ndarray | None = None,
     initial_fisher: np.ndarray | None = None,
-    initial_variance_fallback: float = 1.0e30,
+    initial_variance_fallback: float | None = None,
     include_smoothing: bool = False,
 ) -> DynamicBayesianCRLBResult:
     """Compute dynamic Bayesian CRLB over a sequence of per-frame Fisher matrices.
@@ -382,6 +385,11 @@ def compute_dynamic_bayesian_crlb(
             _symmetrize(_to_square_matrix(initial_precision, dim, "initial_precision"))
         )
     else:
+        if initial_variance_fallback is None:
+            raise ValueError(
+                "initial_variance_fallback must be supplied when no initial "
+                "covariance, precision, or Fisher matrix is supplied."
+            )
         fallback = _as_float(initial_variance_fallback)
         if not np.isfinite(fallback) or fallback <= 0.0:
             raise ValueError("initial_variance_fallback must be finite and positive")
@@ -499,7 +507,7 @@ def compute_brownian_prior_sensitivity_sweep(
     initial_precision: np.ndarray | None = None,
     initial_fisher: np.ndarray | None = None,
     include_smoothing: bool = False,
-    initial_variance_fallback: float = 1.0e30,
+    initial_variance_fallback: float | None = None,
 ) -> list[dict[str, Any]]:
     """Run repeated dynamic CRLB passes for scaled process priors.
 
@@ -555,7 +563,7 @@ def compute_dynamic_bayesian_crlb_from_fisher_sequence(
     initial_covariance: np.ndarray | None = None,
     initial_precision: np.ndarray | None = None,
     initial_fisher: np.ndarray | None = None,
-    initial_variance_fallback: float = 1.0e30,
+    initial_variance_fallback: float | None = None,
     include_smoothing: bool = False,
     include_fisher_matrices: bool = False,
     measurement_domain: str | None = None,

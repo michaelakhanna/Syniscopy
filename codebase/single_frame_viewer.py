@@ -1,3 +1,4 @@
+from __future__ import annotations
 import argparse
 import copy
 import json
@@ -6,7 +7,8 @@ import os
 import cv2
 import numpy as np
 
-from config import PARAMS
+from config import PARAMS, param_value
+from config.runtime import resolved_particles
 from json_utils import json_safe, load_typed_json
 from simulation import generate_single_frame_views
 from param_utils import build_params_from_controls
@@ -67,7 +69,7 @@ def _tailor_params_for_single_centered_particle(params_base: dict, output_dir: s
     params = copy.deepcopy(schema_base)
     params.update(copy.deepcopy(params_base))
 
-    fps = float(params.get("fps", 24.0))
+    fps = float(param_value(params, 'fps'))
     if fps <= 0.0:
         fps = 24.0
         params["fps"] = fps
@@ -75,12 +77,20 @@ def _tailor_params_for_single_centered_particle(params_base: dict, output_dir: s
     duration_seconds = 1.0 / fps
     params["duration_seconds"] = duration_seconds
 
-    base_particles = params.get("particles", [])
-    first_particle = base_particles[0] if base_particles else {}
-    first_component = (first_particle.get("components") or [{}])[0]
-    default_diameter = float(first_component.get("diameter_nm", 100.0))
-    default_material = first_component.get("material", "Gold")
-    default_multiplier = float(first_particle.get("signal_multiplier", 1.0))
+    base_particles = resolved_particles(params)
+    if not base_particles:
+        raise ValueError("PARAMS['particles'] must contain at least one particle for the preview.")
+    first_particle = base_particles[0]
+    first_components = first_particle["components"]
+    if not first_components:
+        raise ValueError("PARAMS['particles'][0]['components'] must contain at least one component.")
+    first_component = first_components[0]
+    default_diameter = float(first_component["diameter_nm"])
+    default_material = first_component["material"]
+    default_multiplier = float(first_particle["signal_multiplier"])
+    default_source_multiplier = float(first_particle["source_multiplier"])
+    default_component_multiplier = float(first_component["signal_multiplier"])
+    default_component_source_multiplier = float(first_component["source_multiplier"])
 
     # The default viewer renders an empty-background single particle, so disable
     # substrate-pattern rendering and lateral substrate exclusion.
@@ -93,7 +103,7 @@ def _tailor_params_for_single_centered_particle(params_base: dict, output_dir: s
     # Use the configured z_stack_range_nm to choose a z that is safely within
     # the PSF stack but below focus. For the viewer, we adopt the convention
     # that negative z is "below focus" and use one quarter of the range.
-    z_stack_range_nm = float(params.get("z_stack_range_nm", 30500.0))
+    z_stack_range_nm = float(param_value(params, 'z_stack_range_nm'))
     z_initial_nm = -0.25 * z_stack_range_nm
 
     # Use unconstrained z-motion so the preview can place the particle below
@@ -108,6 +118,7 @@ def _tailor_params_for_single_centered_particle(params_base: dict, output_dir: s
                 "initial_position_nm": [x_init_nm, y_init_nm, z_initial_nm],
             },
             "signal_multiplier": default_multiplier,
+            "source_multiplier": default_source_multiplier,
             "components": [
                 {
                     "shape": "sphere",
@@ -115,7 +126,8 @@ def _tailor_params_for_single_centered_particle(params_base: dict, output_dir: s
                     "diameter_nm": default_diameter,
                     "material": default_material,
                     "refractive_index": None,
-                    "signal_multiplier": 1.0,
+                    "signal_multiplier": default_component_multiplier,
+                    "source_multiplier": default_component_source_multiplier,
                     "material_properties": None,
                 }
             ],
@@ -153,7 +165,7 @@ def _tailor_existing_params_for_preview(params_base: dict, output_dir: str) -> d
     """
     params = copy.deepcopy(params_base)
 
-    fps = float(params.get("fps", 24.0))
+    fps = float(param_value(params, 'fps'))
     if fps <= 0.0:
         fps = 24.0
         params["fps"] = fps
@@ -223,10 +235,10 @@ def save_single_frame_preview(
     output paths.
     """
     output_dir = _resolve_output_dir(output_dir)
-    if seed is not None:
-        np.random.seed(seed)
 
     params_preview = _tailor_existing_params_for_preview(params, output_dir)
+    if seed is not None:
+        params_preview["random_seed"] = int(seed)
     views = generate_single_frame_views(params_preview)
 
     outputs: dict[str, str] = {}
@@ -303,9 +315,6 @@ def main() -> None:
     args = parse_args()
     output_dir = _resolve_output_dir(args.output_dir)
 
-    if args.seed is not None:
-        np.random.seed(args.seed)
-
     if args.params_json:
         params_loaded = load_typed_json(
             args.params_json,
@@ -317,6 +326,9 @@ def main() -> None:
         # Tailor params for a single near-centered particle and a single frame,
         # starting from the schema-controlled PARAMS base.
         params_viewer = _tailor_params_for_single_centered_particle(PARAMS, output_dir)
+
+    if args.seed is not None:
+        params_viewer["random_seed"] = int(args.seed)
 
     # Generate all in-memory views using the viewer-core function.
     views = generate_single_frame_views(params_viewer)

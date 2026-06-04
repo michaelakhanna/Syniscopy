@@ -55,7 +55,7 @@ def run_simulation(params: dict, return_frames: bool = False):
     _ensure_run_scope_layout_extent(run_params)
     run_params = normalize_params(run_params, allowed_internal_keys=_RUNTIME_PARAM_KEYS)
 
-    volume_mode = str(run_params.get("volumetric_imaging_mode", "single_plane")).strip().lower()
+    volume_mode = str(run_params["volumetric_imaging_mode"]).strip().lower()
     if volume_mode != "single_plane":
         if return_frames:
             return generate_volumetric_views(run_params)
@@ -65,7 +65,7 @@ def run_simulation(params: dict, return_frames: bool = False):
             "for configured volumetric outputs."
         )
 
-    channels = run_params.get("channels", None)
+    channels = run_params["channels"]
     if channels is not None:
         return _run_multichannel_simulation(run_params, channels, return_frames=return_frames)
 
@@ -114,8 +114,8 @@ def generate_single_frame_views(params: dict) -> dict:
     # Resolve derived particle/material fields into a run-local copy so returned
     # params match the rendered frame without mutating the caller's dictionary.
     params_local = deepcopy(params)
-    spectral_model = str(params_local.get("spectral_integration_model", "single_wavelength")).strip().lower()
-    if spectral_model != "single_wavelength" or params_local.get("channels") is not None:
+    spectral_model = str(params_local["spectral_integration_model"]).strip().lower()
+    if spectral_model != "single_wavelength" or params_local["channels"] is not None:
         raise ValueError(
             "generate_single_frame_views is a single-analysis-frame helper. "
             "Use run_simulation(return_frames=True) for configured spectral/broadband channels."
@@ -126,7 +126,7 @@ def generate_single_frame_views(params: dict) -> dict:
     params_local = normalize_params(params_local, allowed_internal_keys=_RUNTIME_PARAM_KEYS)
     _ensure_run_scope_layout_extent(params_local)
     params_local = normalize_params(params_local, allowed_internal_keys=_RUNTIME_PARAM_KEYS)
-    method = str(params_local.get("background_subtraction_method", "video_median")).strip().lower()
+    method = str(params_local["background_subtraction_method"]).strip().lower()
     if method != "reference_frame":
         raise ValueError(
             "generate_single_frame_views requires "
@@ -138,7 +138,7 @@ def generate_single_frame_views(params: dict) -> dict:
     latent_scene = _simulate_latent_scene(params_local)
     particle_instances = _build_particle_instances_for_scene(params_local, latent_scene)
 
-    original_mask_generation_enabled = params_local.get("mask_generation_enabled")
+    original_mask_generation_enabled = params_local["mask_generation_enabled"]
     params_local["mask_generation_enabled"] = False
     try:
         rendered = generate_video_and_masks(
@@ -146,10 +146,7 @@ def generate_single_frame_views(params: dict) -> dict:
             particle_instances,
         )
     finally:
-        if original_mask_generation_enabled is None:
-            params_local.pop("mask_generation_enabled", None)
-        else:
-            params_local["mask_generation_enabled"] = original_mask_generation_enabled
+        params_local["mask_generation_enabled"] = original_mask_generation_enabled
     raw_signal_frames = rendered.signal_frames
     raw_reference_frames = rendered.reference_frames
     ideal_signal_frames = rendered.ideal_signal_frames
@@ -167,30 +164,21 @@ def generate_single_frame_views(params: dict) -> dict:
         )
     contrast_signal_frame = ideal_signal_frame
     contrast_reference_frame = ideal_reference_frame
-    if contrast_signal_frame is not None and contrast_reference_frame is not None:
-        detector_difference_frame = (
-            np.asarray(contrast_signal_frame, dtype=float)
-            - np.asarray(contrast_reference_frame, dtype=float)
-        )
-    else:
-        detector_difference_frame = None
-    if contrast_signal_frame is not None and contrast_reference_frame is not None:
-        contrast_frame = compute_single_frame_contrast(
-            contrast_signal_frame,
-            contrast_reference_frame,
-            params_local,
-        )
-    else:
-        contrast_frame = None
+    detector_difference_frame = (
+        np.asarray(contrast_signal_frame, dtype=float)
+        - np.asarray(contrast_reference_frame, dtype=float)
+    )
+    contrast_frame = compute_single_frame_contrast(
+        contrast_signal_frame,
+        contrast_reference_frame,
+        params_local,
+    )
 
-    if contrast_frame is not None:
-        final_8bit_list = normalize_contrast_frames(
-            [contrast_frame],
-            contrast_frame.shape,
-        )
-        final_frame_8bit = final_8bit_list[0] if final_8bit_list else None
-    else:
-        final_frame_8bit = None
+    final_8bit_list = normalize_contrast_frames(
+        [contrast_frame],
+        contrast_frame.shape,
+    )
+    final_frame_8bit = final_8bit_list[0] if final_8bit_list else None
 
     model = get_imaging_model(params_local)
     render_metadata = dict(getattr(rendered, "render_metadata", {}) or {})
@@ -203,7 +191,7 @@ def generate_single_frame_views(params: dict) -> dict:
     contrast_frame_units = _canonical_contrast_frame_units(
         params_local,
         model,
-        params_local.get("imaging_model", "bright_field"),
+        params_local["imaging_model"],
         response_function=response_function,
     )
 
@@ -232,9 +220,11 @@ def generate_volumetric_views(params: dict) -> dict:
     params_local = deepcopy(params)
     params_local = expand_broadband_quadrature(params_local)
     params_local = normalize_params(params_local, allowed_internal_keys=_RUNTIME_PARAM_KEYS)
-    mode = str(params_local.get("volumetric_imaging_mode", "single_plane")).strip().lower()
+    mode = str(params_local["volumetric_imaging_mode"]).strip().lower()
     if mode == "single_plane":
+        params_local["background_subtraction_method"] = "reference_frame"
         view = generate_single_frame_views(params_local)
+        volume_output_mode = str(params_local["volume_output_mode"]).strip().lower()
         return {
             "mode": "single_plane",
             "z_planes_nm": [0.0],
@@ -242,9 +232,9 @@ def generate_volumetric_views(params: dict) -> dict:
             "combined_contrast_frame": np.asarray(view["contrast_frame"], dtype=float),
             "plane_views": [view],
             "volume_metadata": {
-                "scene_dimensionality": str(params_local.get("scene_dimensionality", "single_plane_particle_scene")),
+                "scene_dimensionality": str(params_local["scene_dimensionality"]),
                 "volumetric_imaging_mode": "single_plane",
-                "volume_output_mode": "single_plane",
+                "volume_output_mode": volume_output_mode,
             },
         }
 
@@ -266,7 +256,7 @@ def generate_volumetric_views(params: dict) -> dict:
     combined, volume_metadata = combine_volume_stack(contrast_volume, z_planes, params_local)
     volume_metadata.update(
         {
-            "scene_dimensionality": str(params_local.get("scene_dimensionality", "particle_volume_3d")),
+            "scene_dimensionality": str(params_local["scene_dimensionality"]),
             "volumetric_plane_count": int(len(z_planes)),
             "volumetric_source": "rerendered_particle_focus_planes",
         }

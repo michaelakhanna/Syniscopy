@@ -11,6 +11,13 @@ from __future__ import annotations
 import numpy as np
 from typing import TYPE_CHECKING
 
+from config.runtime import (
+    OpticalModeSettings,
+    SamplingGeometry,
+    param_value,
+)
+from optical_params import resolve_probe_wavelength_nm
+
 if TYPE_CHECKING:
     from substrate import SampleEnvironment
 
@@ -33,10 +40,11 @@ def field_intensity(field: np.ndarray) -> np.ndarray:
 
 def _coherent_polarization_vector(params: dict) -> np.ndarray:
     """Return the coherent incident polarization unit vector in Ex/Ey/Ez."""
-    model = str(params.get("polarization_model", "linear_x")).strip().lower()
+    optical = OpticalModeSettings.from_params(params)
+    model = optical.polarization_model
     if model == "scalar":
         model = "linear_x"
-    theta = np.deg2rad(float(params.get("vectorial_polarization_rotation_deg", 0.0)))
+    theta = np.deg2rad(optical.vectorial_polarization_rotation_deg)
     c = float(np.cos(theta))
     s = float(np.sin(theta))
     if model in {"linear_x", "x"}:
@@ -254,20 +262,19 @@ class ImagingModel:
 
     def probe_wavelength_nm(self, params: dict) -> float:
         """Detector-domain probe wavelength used by response functions."""
-        probe = params.get("probe_wavelength_nm", None)
-        if probe is None:
-            probe = params.get("wavelength_nm", 532.0)
-        return float(probe)
+        return resolve_probe_wavelength_nm(params)
 
     def illumination_field(self, shape: tuple[int, int], params: dict) -> np.ndarray:
         """Incident-field abstraction; subclasses override geometry-specific cases."""
-        amplitude = float(params.get("reference_field_amplitude", 1.0))
+        amplitude = OpticalModeSettings.from_params(params).reference_field_amplitude
         return np.full(shape, amplitude, dtype=np.complex128)
 
     def compute_response_function(self, shape: tuple[int, int], params: dict) -> dict:
         """Return lightweight response-function metadata for this modality."""
-        detector_pixel_size_nm = float(params.get("pixel_size_nm", 1.0))
-        oversampling = float(params.get("psf_oversampling_factor", 1.0))
+        sampling = SamplingGeometry.from_params(params)
+        optical = OpticalModeSettings.from_params(params)
+        detector_pixel_size_nm = sampling.detector_pixel_size_nm
+        oversampling = float(sampling.psf_oversampling_factor)
         if not np.isfinite(oversampling) or oversampling <= 0.0:
             raise ValueError(
                 f"psf_oversampling_factor must be finite and positive; got {oversampling!r}."
@@ -286,13 +293,9 @@ class ImagingModel:
             "kind": "generic_imaging_model",
             "model_class": self.__class__.__name__,
             "output_type": output_type,
-            "optical_field_backend": str(
-                params.get("optical_field_backend", "vectorial_debye")
-            ),
-            "vectorial_detection_mode": str(
-                params.get("vectorial_detection_mode", "full_vector")
-            ),
-            "polarization_model": str(params.get("polarization_model", "linear_x")),
+            "optical_field_backend": optical.optical_field_backend,
+            "vectorial_detection_mode": optical.vectorial_detection_mode,
+            "polarization_model": optical.polarization_model,
             "measurement_domain": measurement_domain,
             "signal_units": signal_units,
             "probe_wavelength_nm": self.probe_wavelength_nm(params),
@@ -306,10 +309,7 @@ class ImagingModel:
             "uses_sample_environment_pattern": bool(self.uses_sample_environment_pattern),
             "supports_spectral_channels": bool(self.supports_spectral_channels),
             "fidelity_label": str(
-                params.get(
-                    "fidelity_label",
-                    params.get("profile_fidelity_label", "model_conditional_profile"),
-                )
+                param_value(params, "profile_fidelity_label")
             ),
         }
         return attach_backend_fidelity_metadata(response, params=params)

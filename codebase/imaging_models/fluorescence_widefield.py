@@ -9,6 +9,7 @@ from ._shared import (
     np,
 )
 from backend_fidelity import attach_backend_fidelity_metadata
+from config.runtime import FluorescenceSettings, SamplingGeometry, param_value
 from .fluorescence_backends import VectorialPhotophysicsFluorescenceBackend
 
 class FluorescenceWidefieldImagingModel(ImagingModel):
@@ -32,86 +33,42 @@ class FluorescenceWidefieldImagingModel(ImagingModel):
     supports_spectral_channels = True
 
     def __init__(self, params: dict) -> None:
-        self._fluorescence_backend = str(params.get("fluorescence_backend", "vectorial_photophysics")).strip().lower()
+        settings = FluorescenceSettings.from_params(params)
+        self._fluorescence_backend = settings.backend
         if self._fluorescence_backend not in {"parametric_psf", "vectorial_photophysics"}:
             raise ValueError(
                 "PARAMS['fluorescence_backend'] must be 'parametric_psf' or "
                 f"'vectorial_photophysics'; got {self._fluorescence_backend!r}."
             )
-        self._Qf = float(params.get("fluorescence_quantum_yield", 0.5))
-        if not (0.0 <= self._Qf <= 1.0):
-            raise ValueError(
-                f"PARAMS['fluorescence_quantum_yield'] must be in [0, 1]; "
-                f"got {self._Qf}."
-            )
-        self._excitation = float(params.get("fluorescence_excitation_scale", 1.0))
-        if self._excitation < 0.0:
-            raise ValueError(
-                f"PARAMS['fluorescence_excitation_scale'] must be non-negative; "
-                f"got {self._excitation}."
-            )
-        self._photons_per_fluorophore = params.get(
-            "fluorescence_photons_per_fluorophore_per_frame",
-            None,
-        )
-        if self._photons_per_fluorophore is not None:
-            self._photons_per_fluorophore = float(self._photons_per_fluorophore)
-            if not np.isfinite(self._photons_per_fluorophore) or self._photons_per_fluorophore < 0.0:
-                raise ValueError(
-                    "PARAMS['fluorescence_photons_per_fluorophore_per_frame'] "
-                    f"must be finite and non-negative; got {self._photons_per_fluorophore}."
-                )
-        self._collection_efficiency = float(params.get("fluorescence_collection_efficiency", 1.0))
-        self._detector_qe = float(
-            params.get("fluorescence_detector_qe", params.get("detector_qe", 1.0))
-        )
-        if not (0.0 <= self._collection_efficiency <= 1.0):
-            raise ValueError("PARAMS['fluorescence_collection_efficiency'] must be in [0, 1].")
-        if not (0.0 <= self._detector_qe <= 1.0):
-            raise ValueError(
-                "PARAMS['fluorescence_detector_qe'] must be in [0, 1] (or "
-                "PARAMS['detector_qe'] when fallback is used)."
-            )
-        canvas_pitch_nm = float(params.get("pixel_size_nm", 1.0)) / max(
-            float(params.get("psf_oversampling_factor", 1.0)),
-            1.0,
-        )
+        self._Qf = settings.quantum_yield
+        self._excitation = settings.excitation_scale
+        self._photons_per_fluorophore = settings.photons_per_fluorophore_per_frame
+        self._collection_efficiency = settings.collection_efficiency
+        self._detector_qe = settings.detector_qe
+        canvas_pitch_nm = SamplingGeometry.from_params(params).model_canvas_pixel_size_nm
         if not np.isfinite(canvas_pitch_nm) or canvas_pitch_nm <= 0.0:
             raise ValueError(
                 "PARAMS['pixel_size_nm'] / PARAMS['psf_oversampling_factor'] "
                 f"must resolve to a positive fluorescence canvas pitch; got {canvas_pitch_nm} nm."
             )
         self._emission_sigma_source = "pixels"
-        sigma_nm_raw = params.get("fluorescence_emission_psf_sigma_nm", None)
-        if sigma_nm_raw is not None:
-            sigma_nm = float(sigma_nm_raw)
-            if sigma_nm < 0.0:
-                raise ValueError(
-                    "PARAMS['fluorescence_emission_psf_sigma_nm'] must be "
-                    f"non-negative; got {sigma_nm}."
-                )
+        if settings.emission_psf_sigma_nm is not None:
+            sigma_nm = settings.emission_psf_sigma_nm
             self._emission_sigma_px = sigma_nm / canvas_pitch_nm
             self._emission_sigma_source = "nm"
         else:
-            self._emission_sigma_px = float(
-                params.get("fluorescence_emission_psf_sigma_px", 1.0)
-            )
-        if self._emission_sigma_px < 0.0:
-            raise ValueError(
-                f"PARAMS['fluorescence_emission_psf_sigma_px'] must be "
-                f"non-negative; got {self._emission_sigma_px}."
-            )
+            self._emission_sigma_px = settings.emission_psf_sigma_px
         self._emission_sigma_nm = self._emission_sigma_px * canvas_pitch_nm
-        self._uniform_background = float(params.get("fluorescence_background", 0.0))
+        self._uniform_background = float(param_value(params, "fluorescence_background"))
         if self._uniform_background < 0.0:
             raise ValueError(
                 f"PARAMS['fluorescence_background'] must be non-negative; "
                 f"got {self._uniform_background}."
             )
-        self._spectral_bandwidth_nm = float(params.get("fluorescence_spectral_bandwidth_nm", 40.0))
+        self._spectral_bandwidth_nm = float(param_value(params, "fluorescence_spectral_bandwidth_nm"))
         if self._spectral_bandwidth_nm <= 0.0:
             raise ValueError("PARAMS['fluorescence_spectral_bandwidth_nm'] must be positive.")
-        self._tau_frames = params.get("fluorescence_photobleach_tau_frames", None)
+        self._tau_frames = param_value(params, "fluorescence_photobleach_tau_frames")
         if self._tau_frames is not None:
             self._tau_frames = float(self._tau_frames)
             if self._tau_frames <= 0.0:
@@ -171,10 +128,7 @@ class FluorescenceWidefieldImagingModel(ImagingModel):
             )
         return (
             float(
-                params.get(
-                    "fluorescence_photon_count_scale",
-                    float(params.get("background_intensity", 500.0)),
-                )
+                FluorescenceSettings.from_params(params).photon_count_scale
                 * self._collection_efficiency
                 * self._detector_qe
             ),
@@ -196,7 +150,7 @@ class FluorescenceWidefieldImagingModel(ImagingModel):
         density = float(getattr(material, "fluorophore_density", 0.0))
         if density <= 0.0:
             return 0.0
-        excitation_nm = float(params.get("fluorescence_excitation_wavelength_nm", 488.0))
+        excitation_nm = float(param_value(params, "fluorescence_excitation_wavelength_nm"))
         emission_nm = self.probe_wavelength_nm(params)
         return (
             density
@@ -215,7 +169,7 @@ class FluorescenceWidefieldImagingModel(ImagingModel):
         return self._material_source_scale(material, params)
 
     def probe_wavelength_nm(self, params: dict) -> float:
-        return float(params.get("fluorescence_emission_wavelength_nm", 520.0))
+        return float(param_value(params, "fluorescence_emission_wavelength_nm"))
 
     def illumination_field(self, shape: tuple[int, int], params: dict) -> np.ndarray:
         del params
@@ -225,7 +179,7 @@ class FluorescenceWidefieldImagingModel(ImagingModel):
         response = super().compute_response_function(shape, params)
         response.update({
             "kind": "fluorescence_emission_psf",
-            "excitation_wavelength_nm": float(params.get("fluorescence_excitation_wavelength_nm", 488.0)),
+            "excitation_wavelength_nm": float(param_value(params, "fluorescence_excitation_wavelength_nm")),
             "emission_wavelength_nm": self.probe_wavelength_nm(params),
             "emission_sigma_canvas_px": self._emission_sigma_px,
             "emission_sigma_nm": self._emission_sigma_nm,
@@ -239,7 +193,7 @@ class FluorescenceWidefieldImagingModel(ImagingModel):
             "fluorescence_excitation_scale": self._excitation,
             "fluorescence_photons_per_fluorophore_per_frame": self._photons_per_fluorophore,
             "fluorescence_collection_efficiency": self._collection_efficiency,
-            "detector_qe": float(params.get("detector_qe", 1.0)),
+            "detector_qe": FluorescenceSettings.from_params(params).detector_qe,
             "fluorescence_detector_qe": self._detector_qe,
             "fluorescence_background_counts_per_pixel": self._uniform_background,
             "fluorescence_background_units": "detected_counts_per_pixel",
@@ -282,7 +236,7 @@ class FluorescenceWidefieldImagingModel(ImagingModel):
     ) -> np.ndarray:
         """Apply fluorescence-specific detector noise with explicit QE control."""
         local_params = dict(params)
-        if bool(local_params.get("detector_input_is_incident_quanta", False)):
+        if bool(param_value(local_params, "detector_input_is_incident_quanta")):
             raise ValueError(
                 "Fluorescence model outputs are detected counts. "
                 "detector_input_is_incident_quanta=True would apply detector QE a "
@@ -391,11 +345,11 @@ class FluorescenceWidefieldImagingModel(ImagingModel):
         source = np.asarray(source, dtype=float)
         if sample_environment is None:
             return source
-        excitation_nm = float(params.get("fluorescence_excitation_wavelength_nm", 488.0))
+        excitation_nm = float(param_value(params, "fluorescence_excitation_wavelength_nm"))
         reflection = sample_environment.substrate.reflection_amplitude(excitation_nm)
         modulation = _mean_normalized_map(np.abs(1.0 + reflection) ** 2)
-        mod_gain = float(params.get("fluorescence_sample_environment_excitation_modulation_gain", 0.25))
-        autofl_gain = float(params.get("fluorescence_sample_environment_autofluorescence_gain", 1.0))
+        mod_gain = float(param_value(params, "fluorescence_sample_environment_excitation_modulation_gain"))
+        autofl_gain = float(param_value(params, "fluorescence_sample_environment_autofluorescence_gain"))
         excitation_factor = np.maximum(1.0 + mod_gain * (modulation - 1.0), 0.0)
         autofl_source = autofl_gain * np.maximum(
             sample_environment.substrate.autofluorescence_density(),
@@ -503,16 +457,17 @@ class FluorescenceWidefieldImagingModel(ImagingModel):
         traj = np.asarray(particle_instance.trajectory_nm, dtype=float)
         frame_idx = int(frame_index)
         frame_idx = int(np.clip(frame_idx, 0, traj.shape[0] - 1))
-        px = float(traj[frame_idx, 0]) / float(params["pixel_size_nm"]) * float(params.get("psf_oversampling_factor", 1))
-        py = float(traj[frame_idx, 1]) / float(params["pixel_size_nm"]) * float(params.get("psf_oversampling_factor", 1))
+        sampling = SamplingGeometry.from_params(params)
+        px = float(traj[frame_idx, 0]) / sampling.detector_pixel_size_nm * float(sampling.psf_oversampling_factor)
+        py = float(traj[frame_idx, 1]) / sampling.detector_pixel_size_nm * float(sampling.psf_oversampling_factor)
         pz = float(traj[frame_idx, 2]) if traj.shape[1] >= 3 else 0.0
         self.accumulate_particle_source(
             source,
             center_x_canvas=px,
             center_y_canvas=py,
             diameter_nm=float(particle_instance.particle_type.diameter_nm),
-            pixel_size_nm=float(params["pixel_size_nm"]),
-            os_factor=int(params.get("psf_oversampling_factor", 1)),
+            pixel_size_nm=sampling.detector_pixel_size_nm,
+            os_factor=sampling.psf_oversampling_factor,
             material_properties=material,
             params=params,
             particle_z_nm=pz,
@@ -561,11 +516,11 @@ class FluorescenceWidefieldImagingModel(ImagingModel):
         del E_sca_total, background_field
         if sample_environment is None:
             return intensity
-        excitation_nm = float(params.get("fluorescence_excitation_wavelength_nm", 488.0))
+        excitation_nm = float(param_value(params, "fluorescence_excitation_wavelength_nm"))
         reflection = sample_environment.substrate.reflection_amplitude(excitation_nm)
         modulation = _mean_normalized_map(np.abs(1.0 + reflection) ** 2)
-        mod_gain = float(params.get("fluorescence_sample_environment_excitation_modulation_gain", 0.25))
-        autofl_gain = float(params.get("fluorescence_sample_environment_autofluorescence_gain", 1.0))
+        mod_gain = float(param_value(params, "fluorescence_sample_environment_excitation_modulation_gain"))
+        autofl_gain = float(param_value(params, "fluorescence_sample_environment_autofluorescence_gain"))
         autofl = autofl_gain * self._emission_blur(
             sample_environment.substrate.autofluorescence_density()
         )

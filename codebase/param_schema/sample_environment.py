@@ -5,6 +5,51 @@ from __future__ import annotations
 from ._spec import ParamSpec
 
 
+PATTERN_PRESET_SPECS = {
+    "gold_holes": {
+        "preset": "default_gold_holes",
+        "material": "gold",
+        "thickness_dimension_key": "hole_depth_nm",
+    },
+    "holey_carbon": {
+        "preset": "holey_carbon",
+        "material": "carbon",
+        "thickness_dimension_key": "carbon_film_thickness_nm",
+    },
+    "nanopillars": {
+        "preset": "default_nanopillars",
+        "material": "glass",
+        "thickness_dimension_key": "pillar_height_nm",
+    },
+    "fiducial_dots": {
+        "preset": "fiducial_dots",
+        "material": "gold",
+        "thickness_dimension_key": "dot_height_nm",
+    },
+    "grid_bars": {
+        "preset": "grid_bars",
+        "material": "gold",
+        "thickness_dimension_key": "bar_height_nm",
+    },
+    "microfluidic_walls": {
+        "preset": "microfluidic_walls",
+        "material": "glass",
+        "thickness_dimension_key": "wall_height_nm",
+    },
+    "patterned_coverslip": {
+        "preset": "patterned_coverslip",
+        "material": "glass",
+        "thickness_dimension_key": "coverslip_patch_height_nm",
+    },
+}
+
+PATTERN_DEFAULT_PRESETS = {
+    pattern: spec["preset"] for pattern, spec in PATTERN_PRESET_SPECS.items()
+}
+
+BAR_ORIENTATION_CHOICES = ("vertical", "horizontal", "both")
+
+
 SAMPLE_ENVIRONMENT_SCHEMA: dict[str, ParamSpec] = {
 "empirical_background_enabled": ParamSpec(
     key="empirical_background_enabled",
@@ -240,14 +285,24 @@ SAMPLE_ENVIRONMENT_SCHEMA: dict[str, ParamSpec] = {
         "pillar_intensity_factor": 1.3,
         "background_intensity_factor": 1.0,
         "fiducial_dot_diameter_um": 0.5,
+        "fiducial_dot_edge_to_edge_spacing_um": 2.0,
         "fiducial_dot_pitch_um": 5.0,
+        "fiducial_dot_intensity_factor": 1.5,
+        "fiducial_background_intensity_factor": 1.0,
         "grid_pitch_um": 5.0,
         "grid_bar_width_um": 0.5,
+        "grid_bar_intensity_factor": 1.25,
+        "grid_background_intensity_factor": 1.0,
         "microfluidic_channel_pitch_um": 10.0,
         "microfluidic_wall_width_um": 1.0,
         "microfluidic_wall_orientation": "vertical",
+        "microfluidic_wall_intensity_factor": 1.2,
+        "microfluidic_channel_intensity_factor": 1.0,
         "coverslip_patch_diameter_um": 5.0,
         "coverslip_patch_edge_to_edge_spacing_um": 5.0,
+        "coverslip_patch_pitch_um": 10.0,
+        "coverslip_patch_intensity_factor": 1.08,
+        "coverslip_background_intensity_factor": 1.0,
         "dot_height_nm": 20.0,
         "bar_height_nm": 20.0,
         "wall_height_nm": 20.0,
@@ -334,4 +389,9 @@ SAMPLE_ENVIRONMENT_SCHEMA: dict[str, ParamSpec] = {
 ),
 }
 
-__all__ = ["SAMPLE_ENVIRONMENT_SCHEMA"]
+__all__ = [
+    "PATTERN_DEFAULT_PRESETS",
+    "PATTERN_PRESET_SPECS",
+    "BAR_ORIENTATION_CHOICES",
+    "SAMPLE_ENVIRONMENT_SCHEMA",
+]

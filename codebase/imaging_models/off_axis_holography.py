@@ -8,6 +8,11 @@ from ._shared import (
     np,
     reference_vector_for_scattered,
 )
+from config.runtime import (
+    OpticalModeSettings,
+    SamplingGeometry,
+    param_value,
+)
 
 class OffAxisHolographyImagingModel(ImagingModel):
     """
@@ -44,19 +49,19 @@ class OffAxisHolographyImagingModel(ImagingModel):
     uses_sample_environment_pattern = True  # Off-axis DHM has a coherent reference arm that can carry substrate structure.
 
     def __init__(self, params: dict) -> None:
-        E_ref_amplitude = float(params.get("reference_field_amplitude", 0.0))
+        E_ref_amplitude = OpticalModeSettings.from_params(params).reference_field_amplitude
         if not np.isfinite(E_ref_amplitude) or E_ref_amplitude <= 0.0:
             raise ValueError(
                 "PARAMS['reference_field_amplitude'] must be positive for "
                 "OffAxisHolographyImagingModel (imaging_model='off_axis_holography')."
             )
-        self._period_detector_px = float(params.get("off_axis_fringe_period_px", 10.0))
+        self._period_detector_px = float(param_value(params, "off_axis_fringe_period_px"))
         if not np.isfinite(self._period_detector_px) or self._period_detector_px < 2.0:
             raise ValueError(
                 "off_axis_fringe_period_px must be >= 2.0 (Nyquist); got "
                 f"{self._period_detector_px}."
             )
-        oversampling_factor = float(params.get("psf_oversampling_factor", 1))
+        oversampling_factor = float(SamplingGeometry.from_params(params).psf_oversampling_factor)
         if not np.isfinite(oversampling_factor) or oversampling_factor <= 0.0:
             raise ValueError(
                 "psf_oversampling_factor must be finite and positive for "
@@ -74,7 +79,7 @@ class OffAxisHolographyImagingModel(ImagingModel):
                 "finite carrier wavevector; got "
                 f"{self._period_canvas_px}."
             )
-        self._angle_rad = float(params.get("off_axis_fringe_angle_rad", 0.0))
+        self._angle_rad = float(param_value(params, "off_axis_fringe_angle_rad"))
         if not np.isfinite(self._angle_rad):
             raise ValueError(
                 "off_axis_fringe_angle_rad must be finite for "

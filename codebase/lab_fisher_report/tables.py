@@ -12,6 +12,7 @@ from bootstrap import ensure_codebase_on_path
 ensure_codebase_on_path()
 
 from common_utils import init_infinite_dict
+from config import param_value
 from fisher import (
     build_brownian_process_covariance,
     compute_dynamic_bayesian_crlb_from_fisher_sequence,
@@ -141,23 +142,37 @@ def _sequence_information_content(
             "num_frames": int(summary.get("num_frames", 1)),
         }
 
-    ordered = sorted(
-        per_modality.items(),
-        key=lambda item: (float(item[1]["sigma_xy_nm"]), modality_order.index(item[0])),
-    )
-    ranking_xy = [(m, float(v["sigma_xy_nm"])) for m, v in ordered]
+    def _positive_sigma_order(item: tuple[str, dict[str, Any]]) -> tuple[int, float, int]:
+        sigma = float(item[1]["sigma_xy_nm"])
+        if not np.isfinite(sigma) or sigma <= 0.0:
+            return (1, 0.0, modality_order.index(item[0]))
+        return (0, sigma, modality_order.index(item[0]))
+
+    def _positive_sigma_value(value: Any) -> float:
+        sigma = float(value)
+        return sigma if np.isfinite(sigma) and sigma > 0.0 else float("inf")
+
+    ordered = sorted(per_modality.items(), key=_positive_sigma_order)
+    ranking_xy = [
+        (m, _positive_sigma_value(v["sigma_xy_nm"]))
+        for m, v in ordered
+    ]
 
     best_sigma_xy = ordered[0][1]["sigma_xy_nm"] if ordered else float("inf")
     if np.isfinite(best_sigma_xy) and best_sigma_xy > 0.0:
         best_modality_xy = ordered[0][0]
         relative_sigma_xy = {
-            modality: float(v["sigma_xy_nm"]) / float(best_sigma_xy)
+            modality: (
+                float(v["sigma_xy_nm"]) / float(best_sigma_xy)
+                if np.isfinite(float(v["sigma_xy_nm"])) and float(v["sigma_xy_nm"]) > 0.0
+                else float("inf")
+            )
             for modality, v in per_modality.items()
         }
         frames_to_match_best_xy = {
             modality: (
                 float("inf")
-                if not np.isfinite(float(v["sigma_xy_nm"]))
+                if not np.isfinite(float(v["sigma_xy_nm"])) or float(v["sigma_xy_nm"]) <= 0.0
                 else (float(v["sigma_xy_nm"]) / float(best_sigma_xy)) ** 2
             )
             for modality, v in per_modality.items()
@@ -420,20 +435,20 @@ def _compute_dynamic_sequence_summary(
     diameter_nm = float(diameters[0])
     D = stokes_einstein_diffusion_coefficient(
         diameter_nm,
-        float(params.get("temperature_K", 298.15)),
-        float(params.get("viscosity_Pa_s", 1.0e-3)),
+        float(param_value(params, 'temperature_K')),
+        float(param_value(params, 'viscosity_Pa_s')),
     )
     if not np.isfinite(D) or D < 0.0:
         raise ValueError(f"invalid Brownian diffusion coefficient from particle size={diameter_nm} nm.")
 
-    process_scale = float(params.get("dynamic_process_noise_scale", 1.0))
+    process_scale = float(param_value(params, 'dynamic_process_noise_scale'))
     process_covariance = build_brownian_process_covariance(
         ("x", "y"),
         fps=float(params["fps"]),
         translational_diffusion_coeff_m2_s=float(D) * process_scale,
     )
     initial_covariance = np.eye(2, dtype=float) * float(
-        params.get("dynamic_initial_variance_nm2", 1.0e30)
+        param_value(params, 'dynamic_initial_variance_nm2')
     )
     first_record = (
         per_frame_records[0]
@@ -450,11 +465,11 @@ def _compute_dynamic_sequence_summary(
     summary = compute_dynamic_bayesian_crlb_from_fisher_sequence(
         per_frame_fisher,
         process_covariance,
-        state_transition_fps=float(params.get("fps", 30.0)),
-        fps=float(params.get("fps", 30.0)),
+        state_transition_fps=float(params["fps"]),
+        fps=float(params["fps"]),
         initial_covariance=initial_covariance,
-        initial_variance_fallback=float(params.get("dynamic_initial_variance_nm2", 1.0e30)),
-        include_smoothing=bool(params.get("dynamic_include_smoothing", False)),
+        initial_variance_fallback=float(param_value(params, 'dynamic_initial_variance_nm2')),
+        include_smoothing=bool(param_value(params, 'dynamic_include_smoothing')),
         include_fisher_matrices=False,
         measurement_domain=measurement_domain,
         signal_units=signal_units,

@@ -10,6 +10,7 @@ from ._shared import (
     np,
     reference_vector_for_scattered,
 )
+from config.runtime import RicmSettings, param_value
 from thinfilm import normal_incidence_thinfilm_reflection
 
 class ReflectionInterferenceContrastImagingModel(ImagingModel):
@@ -58,29 +59,30 @@ class ReflectionInterferenceContrastImagingModel(ImagingModel):
     supports_spectral_channels = True
 
     def __init__(self, params: dict) -> None:
-        E_ref_amplitude = float(params.get("reference_field_amplitude", 0.0))
+        settings = RicmSettings.from_params(params)
+        E_ref_amplitude = settings.reference_field_amplitude
         if E_ref_amplitude <= 0.0:
             raise ValueError(
                 "PARAMS['reference_field_amplitude'] must be positive for "
                 "ReflectionInterferenceContrastImagingModel (imaging_model='ricm')."
             )
-        self._interface_reflection_model = str(params.get("ricm_interface_reflection_model", "param")).lower()
-        self._particle_reflection_model = str(params.get("ricm_particle_reflection_model", "param")).lower()
+        self._interface_reflection_model = settings.interface_reflection_model
+        self._particle_reflection_model = settings.particle_reflection_model
         if self._interface_reflection_model == "fresnel":
             self._r_s = fresnel_reflection_amplitude(
-                params.get("ricm_interface_medium_material", "water"),
-                params.get("ricm_interface_substrate_material", "glass"),
+                settings.interface_medium_material,
+                settings.interface_substrate_material,
                 self.probe_wavelength_nm(params),
             )
         elif self._interface_reflection_model == "thin_film_stack":
             self._r_s = normal_incidence_thinfilm_reflection(
-                params.get("ricm_interface_medium_material", "water"),
-                params.get("ricm_interface_substrate_material", "glass"),
-                params.get("ricm_thinfilm_layers", []),
+                settings.interface_medium_material,
+                settings.interface_substrate_material,
+                settings.thinfilm_layers,
                 self.probe_wavelength_nm(params),
             )
         elif self._interface_reflection_model == "param":
-            self._r_s = complex(float(params.get("ricm_interface_reflection_coefficient", 0.20)))
+            self._r_s = complex(settings.interface_reflection_coefficient)
         else:
             raise ValueError(
                 "PARAMS['ricm_interface_reflection_model'] must be 'param', 'fresnel', "
@@ -89,18 +91,18 @@ class ReflectionInterferenceContrastImagingModel(ImagingModel):
             )
         if self._particle_reflection_model == "fresnel":
             self._r_p = fresnel_reflection_amplitude(
-                params.get("ricm_particle_medium_material", "water"),
+                settings.particle_medium_material,
                 _ricm_particle_reflection_material(params),
                 self.probe_wavelength_nm(params),
             )
         elif self._particle_reflection_model == "param":
-            self._r_p = complex(float(params.get("ricm_particle_reflection_coefficient", 0.04)))
+            self._r_p = complex(settings.particle_reflection_coefficient)
         else:
             raise ValueError(
                 "PARAMS['ricm_particle_reflection_model'] must be 'param' or 'fresnel'; "
                 f"got {self._particle_reflection_model!r}."
             )
-        self._phi = float(params.get("ricm_interface_phase_shift_rad", np.pi))
+        self._phi = settings.interface_phase_shift_rad
         if abs(self._r_s) <= 0.0 or abs(self._r_p) <= 0.0:
             raise ValueError(
                 "RICM requires positive interface and particle reflection "
@@ -112,7 +114,7 @@ class ReflectionInterferenceContrastImagingModel(ImagingModel):
         return self._r_p * np.exp(1j * self._phi)
 
     def probe_wavelength_nm(self, params: dict) -> float:
-        return float(params.get("ricm_wavelength_nm", params.get("wavelength_nm", 532.0)))
+        return float(param_value(params, "ricm_wavelength_nm"))
 
     def compute_intensity(
         self,
@@ -167,7 +169,7 @@ class ReflectionInterferenceContrastImagingModel(ImagingModel):
             r_p_real=float(np.real(self._r_p)),
             r_p_imag=float(np.imag(self._r_p)),
             r_p_abs=float(abs(self._r_p)),
-            thinfilm_layers=list(params.get("ricm_thinfilm_layers", [])),
+            thinfilm_layers=list(param_value(params, 'ricm_thinfilm_layers')),
             scatter_prefactor_real=float(np.real(pref)),
             scatter_prefactor_imag=float(np.imag(pref)),
             scatter_prefactor_abs=float(abs(pref)),

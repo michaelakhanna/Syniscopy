@@ -9,6 +9,7 @@ from ._shared import (
     field_intensity,
     np,
 )
+from config.runtime import DarkFieldSettings, param_value
 
 class CoherentDarkFieldImagingModel(ImagingModel):
     """
@@ -30,7 +31,7 @@ class CoherentDarkFieldImagingModel(ImagingModel):
     def __init__(self, params: dict) -> None:
         # Dark-field accepts the shared constructor signature used by the
         # imaging-model factory.
-        self._field_gain = float(params.get("dark_field_field_gain", 1.0))
+        self._field_gain = DarkFieldSettings.from_params(params).field_gain
         if self._field_gain <= 0.0:
             raise ValueError("PARAMS['dark_field_field_gain'] must be positive.")
 
@@ -117,14 +118,9 @@ class CoherentDarkFieldImagingModel(ImagingModel):
         - Shot noise is applied downstream by the camera-noise model using the
           returned count values as Poisson rates.
         """
-        illumination_count = float(params.get(
-            "dark_field_illumination_count",
-            float(params.get("background_intensity", 1.0)),
-        ))
-        background_count = float(params.get(
-            "dark_field_background_count",
-            0.0,
-        ))
+        settings = DarkFieldSettings.from_params(params)
+        illumination_count = settings.illumination_count
+        background_count = settings.background_count
         return illumination_count * intensity + background_count
 
     def illumination_field(self, shape: tuple[int, int], params: dict) -> np.ndarray:
@@ -152,8 +148,8 @@ class CoherentDarkFieldImagingModel(ImagingModel):
             return intensity
         edge = sample_environment.substrate.topography_gradient()
         edge = _mean_normalized_map(edge + 1e-12) - 1.0
-        gain = float(params.get("dark_field_sample_environment_edge_gain", 0.02))
-        pedestal = float(params.get("dark_field_sample_environment_scatter_pedestal", 0.0))
+        gain = float(param_value(params, 'dark_field_sample_environment_edge_gain'))
+        pedestal = float(param_value(params, 'dark_field_sample_environment_scatter_pedestal'))
         return np.maximum(intensity + gain * np.maximum(edge, 0.0) + pedestal, 0.0)
 
 __all__ = ['CoherentDarkFieldImagingModel']

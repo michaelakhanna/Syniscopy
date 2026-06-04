@@ -7,6 +7,7 @@ from typing import Any
 
 import numpy as np
 from backend_fidelity import attach_backend_fidelity_metadata
+from config import param_value
 
 
 class HighFidelityTEMBackendError(RuntimeError):
@@ -46,13 +47,13 @@ class TEMBackendMetadata:
 
 
 def _require_validation_for_reference_status(params: dict, *, key_prefix: str) -> tuple[str, str | None]:
-    status = str(params.get(f"{key_prefix}_reference_status", "physics_based_unvalidated")).strip().lower()
+    status = str(param_value(params, f"{key_prefix}_reference_status")).strip().lower()
     if status not in {"physics_based_unvalidated", "reference_validated"}:
         raise ValueError(
             f"PARAMS['{key_prefix}_reference_status'] must be 'physics_based_unvalidated' "
             f"or 'reference_validated'; got {status!r}."
         )
-    validation_hash = params.get(f"{key_prefix}_reference_validation_hash", None)
+    validation_hash = param_value(params, f"{key_prefix}_reference_validation_hash")
     if status == "reference_validated" and not validation_hash:
         raise ValueError(
             f"PARAMS['{key_prefix}_reference_status']='reference_validated' requires "
@@ -94,14 +95,14 @@ class SyniscopyMultisliceTEMBackend:
         self.defocus_m = float(defocus_m)
         self.alpha_rad = 1.0e-3 * float(partial_coherence_alpha_mrad)
         self.dose_per_pixel = float(dose_per_pixel)
-        self.n_slices = int(params.get("tem_multislice_slices", default_slice_count))
+        self.n_slices = int(param_value(params, "tem_multislice_slices"))
         if self.n_slices <= 0:
             raise ValueError("PARAMS['tem_multislice_slices'] must be positive for syniscopy_multislice.")
-        raw_slice = params.get("tem_slice_thickness_nm", default_slice_thickness_nm)
+        raw_slice = param_value(params, "tem_slice_thickness_nm")
         self.slice_thickness_nm = None if raw_slice is None else float(raw_slice)
         if self.slice_thickness_nm is not None and self.slice_thickness_nm <= 0.0:
             raise ValueError("PARAMS['tem_slice_thickness_nm'] must be positive for syniscopy_multislice.")
-        raw_aperture_mrad = params.get("tem_objective_aperture_mrad", default_objective_aperture_mrad)
+        raw_aperture_mrad = param_value(params, "tem_objective_aperture_mrad")
         self.objective_aperture_mrad = None if raw_aperture_mrad is None else float(raw_aperture_mrad)
         if self.objective_aperture_mrad is not None:
             if not np.isfinite(self.objective_aperture_mrad) or self.objective_aperture_mrad <= 0.0:
@@ -112,7 +113,7 @@ class SyniscopyMultisliceTEMBackend:
             raise ValueError("electron wavelength must be positive and finite for syniscopy_multislice.")
         if not np.isfinite(self.dose_per_pixel) or self.dose_per_pixel < 0.0:
             raise ValueError("tem_dose_per_pixel must be finite and non-negative for syniscopy_multislice.")
-        self.potential_source = str(params.get("tem_potential_source", "material_projected_inner_potential"))
+        self.potential_source = str(param_value(params, 'tem_potential_source'))
         self.reference_status, self.reference_validation_hash = _require_validation_for_reference_status(params, key_prefix="tem")
         self.validation_status = (
             "external_artifact_required"

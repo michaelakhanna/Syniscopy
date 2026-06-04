@@ -24,6 +24,8 @@ simulator knows an object exists but supervision is unsupported.
 """
 
 from __future__ import annotations
+from config import param_value
+from config.runtime import resolved_pixel_size_nm
 
 from dataclasses import dataclass, field
 from typing import Any
@@ -50,7 +52,7 @@ def _bounded_support(value: float) -> float:
 def _normalise_target_and_factors(
     params: dict[str, Any],
 ) -> tuple[str, tuple[str, ...]]:
-    raw_target = str(params.get("supervision_target", "mask_supported")).strip()
+    raw_target = str(param_value(params, 'supervision_target')).strip()
 
     if raw_target not in SUPPORTED_TARGETS:
         raise ValueError(
@@ -58,14 +60,14 @@ def _normalise_target_and_factors(
             f"{SUPPORTED_TARGETS}; got {raw_target!r}."
         )
 
-    explicit_factors = params.get("supervision_support_factors")
+    explicit_factors = param_value(params, "supervision_support_factors")
     if explicit_factors is None:
         if raw_target == "mask_geometry":
             factors: tuple[str, ...] = ()
         else:
             factors = tuple(
                 factor for factor in SUPPORTED_FACTORS
-                if bool(params.get(f"supervision_{factor}_support_enabled", True))
+                if bool(param_value(params, f"supervision_{factor}_support_enabled"))
             )
     elif isinstance(explicit_factors, str):
         factors = tuple(
@@ -96,7 +98,7 @@ def _normalise_target_and_factors(
     if explicit_factors is not None:
         disabled = [
             factor for factor in factors
-            if not bool(params.get(f"supervision_{factor}_support_enabled", True))
+            if not bool(param_value(params, f"supervision_{factor}_support_enabled"))
         ]
         if disabled:
             raise ValueError(
@@ -121,10 +123,8 @@ def resolve_policy_contract(params: dict[str, Any]) -> dict[str, Any]:
     emitted ``calibration_status``.
     """
     target, factors = _normalise_target_and_factors(params)
-    calibration = dict(
-        params.get("supervision_score_calibration_parameters") or {}
-    )
-    mode = str(params.get("supervision_score_calibration_mode", "uncalibrated_support")).strip().lower()
+    calibration = dict(param_value(params, "supervision_score_calibration_parameters") or {})
+    mode = str(param_value(params, 'supervision_score_calibration_mode')).strip().lower()
     if calibration and "mode" not in calibration:
         calibration["mode"] = mode
     contract = calibration_contract(calibration if mode != "uncalibrated_support" else None)
@@ -134,14 +134,7 @@ def resolve_policy_contract(params: dict[str, Any]) -> dict[str, Any]:
         "support_score_type": "heuristic_bounded_score",
         **contract,
         "threshold_provenance": {
-            "support_threshold": params.get(
-                "supervision_supported_threshold",
-                params.get("supervision_support_threshold"),
-            ),
-            "temporal_threshold": params.get("supervision_temporal_threshold"),
-            "signal_threshold": params.get("supervision_signal_threshold"),
-            "information_threshold": params.get("supervision_information_threshold"),
-            "assignment_threshold": params.get("supervision_assignment_threshold"),
+            "support_threshold": param_value(params, "supervision_supported_threshold"),
         },
         "factor_definitions": {
             "temporal": "trajectory/window support factor",
@@ -217,7 +210,7 @@ def compute_information_support(
     """
     Compute CRLB metadata and a bounded information-support factor.
     """
-    if not bool(params.get("supervision_information_support_enabled", True)):
+    if not bool(param_value(params, 'supervision_information_support_enabled')):
         return 1.0, {
             "sigma_xy_nm": None,
             "singular": False,
@@ -252,7 +245,7 @@ def compute_information_support(
     support = _crlb_support_from_sigma(
         sigma_xy_nm=sigma_xy_nm,
         pixel_size_nm=pixel_size_nm,
-        max_sigma_nm=params.get("supervision_crlb_xy_max_nm", pixel_size_nm),
+        max_sigma_nm=_resolved_crlb_xy_max_nm(params),
     )
     return support, {
         "sigma_xy_nm": sigma_xy_nm,
@@ -372,16 +365,16 @@ def _neutral_ambiguity_support() -> tuple[float, dict[str, Any]]:
 
 
 def _resolved_ambiguity_distance_scale_nm(params: dict) -> float:
-    value = params.get("supervision_ambiguity_distance_scale_nm", None)
+    value = param_value(params, 'supervision_ambiguity_distance_scale_nm')
     if value is None:
-        value = 2.0 * float(params.get("pixel_size_nm", 1.0))
+        value = 2.0 * resolved_pixel_size_nm(params)
     return float(value)
 
 
 def _resolved_crlb_xy_max_nm(params: dict) -> float:
-    value = params.get("supervision_crlb_xy_max_nm", None)
+    value = param_value(params, 'supervision_crlb_xy_max_nm')
     if value is None:
-        value = params.get("pixel_size_nm", 100.0)
+        value = resolved_pixel_size_nm(params)
     return float(value)
 
 
@@ -551,26 +544,26 @@ class SupervisionPolicy:
         self.target, self.support_factors = _normalise_target_and_factors(params)
 
         self.temporal_enabled = bool(
-            params.get("supervision_temporal_support_enabled", True)
+            param_value(params, 'supervision_temporal_support_enabled')
         )
         self.signal_enabled = bool(
-            params.get("supervision_signal_support_enabled", True)
+            param_value(params, 'supervision_signal_support_enabled')
         )
         self.support_threshold = float(
-            params.get("supervision_supported_threshold", 0.2)
+            param_value(params, 'supervision_supported_threshold')
         )
         if not (0.0 <= self.support_threshold <= 1.0):
             raise ValueError("supervision_supported_threshold must be in [0, 1].")
         self.decision_rule = str(
-            params.get("supervision_decision_rule", "log_odds")
+            param_value(params, 'supervision_decision_rule')
         ).strip().lower()
         if self.decision_rule not in {"log_odds", "product"}:
             raise ValueError(
                 "supervision_decision_rule must be 'log_odds' or 'product'."
             )
-        self.log_odds_threshold = float(params.get("supervision_log_odds_threshold", 0.0))
+        self.log_odds_threshold = float(param_value(params, 'supervision_log_odds_threshold'))
         self.log_odds_clip_epsilon = float(
-            params.get("supervision_log_odds_clip_epsilon", 1e-12)
+            param_value(params, 'supervision_log_odds_clip_epsilon')
         )
         if not (0.0 < self.log_odds_clip_epsilon < 0.5):
             raise ValueError(
@@ -583,10 +576,10 @@ class SupervisionPolicy:
         )
         self.noise_std = estimate_contrast_noise_std(params)
         self.calibration_mode = str(
-            params.get("supervision_score_calibration_mode", "uncalibrated_support")
+            param_value(params, 'supervision_score_calibration_mode')
         ).strip().lower()
         self.calibration_parameters = dict(
-            params.get("supervision_score_calibration_parameters") or {}
+            param_value(params, "supervision_score_calibration_parameters") or {}
         )
         if self.calibration_mode != "uncalibrated_support" and "mode" not in self.calibration_parameters:
             self.calibration_parameters["mode"] = self.calibration_mode
@@ -613,13 +606,11 @@ class SupervisionPolicy:
         if (
             any(factor in self.support_factors for factor in ("signal", "information"))
             and noise_std is None
-            and not bool(self.params.get("supervision_allow_policy_noise_fallback", False))
         ):
             raise ValueError(
                 "SupervisionPolicy.evaluate requires explicit domain-matched "
                 "noise_std/noise_variance_map when signal or information "
-                "support is enabled. Set supervision_allow_policy_noise_fallback=True "
-                "only for legacy diagnostics."
+                "support is enabled."
             )
 
         if self.temporal_model is None:
@@ -682,7 +673,7 @@ class SupervisionPolicy:
             temporal_support=temporal_support,
             ambiguity_support=ambiguity_support,
             included_factors=self.support_factors,
-            prior_log_odds=float(self.params.get("supervision_prior_log_odds", 0.0)),
+            prior_log_odds=float(param_value(self.params, "supervision_prior_log_odds")),
             eps=self.log_odds_clip_epsilon,
         )
 
@@ -715,7 +706,7 @@ class SupervisionPolicy:
         eps = self.log_odds_clip_epsilon
         log_odds_map = np.full(
             geom.shape,
-            float(self.params.get("supervision_prior_log_odds", 0.0)),
+            float(param_value(self.params, "supervision_prior_log_odds")),
             dtype=float,
         )
         for factor in self.support_factors:
@@ -799,6 +790,8 @@ class SupervisionPolicy:
 
         if self.target == "mask_geometry":
             loss_weight_map = geom_bool.astype(float)
+        elif calibrated_probability_map is not None:
+            loss_weight_map = calibrated_probability_map
         elif self.decision_rule == "product":
             loss_weight_map = support_score_map
         else:
@@ -847,7 +840,7 @@ class SupervisionPolicy:
                     "product_threshold": float(self.support_threshold),
                     "log_odds_threshold": float(self.log_odds_threshold),
                     "prior_log_odds": float(
-                        self.params.get("supervision_prior_log_odds", 0.0)
+                        param_value(self.params, "supervision_prior_log_odds")
                     ),
                     "log_odds_clip_epsilon": float(self.log_odds_clip_epsilon),
                     "crlb_xy_max_nm": _resolved_crlb_xy_max_nm(self.params),

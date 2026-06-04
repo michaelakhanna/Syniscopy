@@ -8,7 +8,6 @@ import shutil
 from copy import deepcopy
 from typing import Any, Dict, Mapping, Optional
 
-import cv2
 import numpy as np
 
 from config import PARAMS

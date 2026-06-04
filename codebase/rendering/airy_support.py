@@ -5,6 +5,9 @@ from __future__ import annotations
 import numpy as np
 from scipy.special import j1
 
+from config import param_value
+from optical_params import resolve_probe_wavelength_nm
+
 _AIRY_SUPPORT_RHO_MIN = 1e-4
 _AIRY_SUPPORT_RHO_MAX = 200.0
 _AIRY_SUPPORT_NUM_SAMPLES = 80000
@@ -28,7 +31,7 @@ def _airy_support_radius_pixels(
     os_factor = int(params["psf_oversampling_factor"])
     NA = float(params["numerical_aperture"])
     n_medium = float(params["refractive_index_medium"])
-    wavelength_nm = float(params["wavelength_nm"])
+    wavelength_nm = resolve_probe_wavelength_nm(params)
 
     if img_size <= 0 or pixel_size_nm <= 0 or os_factor <= 0:
         raise ValueError(
@@ -42,7 +45,7 @@ def _airy_support_radius_pixels(
     threshold = (
         float(default_threshold)
         if threshold_key is None
-        else float(params.get(threshold_key, default_threshold))
+        else float(param_value(params, threshold_key))
     )
     if not (0.0 < threshold < 1.0):
         if threshold_key is None:
@@ -134,4 +137,3 @@ def estimate_optical_filter_guard_radius_pixels(params):
         default_threshold=1e-5,
         max_radius_fraction_of_fov=1.0,
     )
-

@@ -73,6 +73,8 @@ from typing import Dict
 
 import numpy as np
 
+from optical_params import resolve_probe_wavelength_nm
+
 
 def compute_pupil_samples(
     numerical_aperture: float,
@@ -147,6 +149,16 @@ def compute_pupil_samples(
     amplitude_threshold = float(amplitude_threshold)
     ground_truth_samples = int(ground_truth_samples)
 
+    finite_values = {
+        "numerical_aperture": NA,
+        "wavelength_nm": wavelength_nm,
+        "refractive_index_medium": n_medium,
+        "apodization_factor": apodization_factor,
+        "amplitude_threshold": amplitude_threshold,
+    }
+    for name, value in finite_values.items():
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must be finite. Got {value!r}.")
     if NA <= 0.0:
         raise ValueError("numerical_aperture must be positive.")
     if n_medium <= 0.0:
@@ -158,6 +170,8 @@ def compute_pupil_samples(
         )
     if wavelength_nm <= 0.0:
         raise ValueError("wavelength_nm must be positive.")
+    if apodization_factor < 0.0:
+        raise ValueError("apodization_factor must be non-negative.")
     if not (0.0 < amplitude_threshold < 1.0):
         raise ValueError(
             "amplitude_threshold must be in the open interval (0, 1). "
@@ -298,7 +312,7 @@ def recommend_pupil_samples_for_params(
     """
     try:
         NA = float(params["numerical_aperture"])
-        wavelength_nm = float(params["wavelength_nm"])
+        wavelength_nm = resolve_probe_wavelength_nm(params)
         n_medium = float(params["refractive_index_medium"])
         apodization_factor = float(params["apodization_factor"])
     except KeyError as exc:
@@ -362,7 +376,7 @@ if __name__ == "__main__":
         ground_truth_samples=args.ground_truth_samples,
     )
 
-    current = PARAMS.get("pupil_samples", None)
+    current = PARAMS["pupil_samples"]
 
     print("=== Pupil Samples Recommendation ===")
     print(f"Current PARAMS['pupil_samples']: {current!r}")

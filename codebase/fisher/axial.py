@@ -418,7 +418,12 @@ def compare_modality_axial_information_content(
     same particle population through every ``ImagingModel`` instance with
     the same z_step_nm and the same per-modality noise calibration).
     """
-    from .lateral import _resolve_modality_scalar_map, _resolve_modality_string_map, _sort_key_finite_then_value
+    from .lateral import (
+        _positive_finite_or_inf,
+        _resolve_modality_scalar_map,
+        _resolve_modality_string_map,
+        _sort_key_finite_then_value,
+    )
 
     if not isinstance(contrast_stack_by_modality, dict) or not contrast_stack_by_modality:
         raise ValueError(
@@ -494,7 +499,7 @@ def compare_modality_axial_information_content(
             )
 
     items = [
-        (m, float(r.get("sigma_z_nm", float("inf"))))
+        (m, _positive_finite_or_inf(r.get("sigma_z_nm", float("inf"))))
         for m, r in per_modality.items()
     ]
 
@@ -523,7 +528,7 @@ def compare_modality_axial_information_content(
         relative_sigma_z = {}
         frames_to_match_best_z = {}
         for m, s in items:
-            if not np.isfinite(s) or sigma_best <= 0.0:
+            if not np.isfinite(s) or s <= 0.0 or sigma_best <= 0.0:
                 relative_sigma_z[m] = float("inf")
                 frames_to_match_best_z[m] = float("inf")
             else:

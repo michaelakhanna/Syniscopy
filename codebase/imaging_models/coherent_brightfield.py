@@ -11,6 +11,7 @@ from ._shared import (
     np,
     reference_vector_for_scattered,
 )
+from config.runtime import OpticalModeSettings, param_value
 
 class CoherentBrightfieldImagingModel(ImagingModel):
     """
@@ -37,7 +38,7 @@ class CoherentBrightfieldImagingModel(ImagingModel):
     supports_spectral_channels = True
 
     def __init__(self, params: dict) -> None:
-        E_ref_amplitude = float(params.get("reference_field_amplitude", 0.0))
+        E_ref_amplitude = OpticalModeSettings.from_params(params).reference_field_amplitude
         if E_ref_amplitude <= 0.0:
             raise ValueError(
                 "PARAMS['reference_field_amplitude'] must be positive for "
@@ -144,10 +145,10 @@ class CoherentBrightfieldImagingModel(ImagingModel):
         wavelength_nm = self.probe_wavelength_nm(params)
         t_sub = sample_environment.substrate.transmission_phase(wavelength_nm)
         transmission = _mean_normalized_map(np.abs(t_sub) ** 2)
-        gain = float(params.get("bright_field_sample_environment_gain", 1.0))
+        gain = float(param_value(params, 'bright_field_sample_environment_gain'))
         phase = np.unwrap(np.unwrap(np.angle(t_sub), axis=0), axis=1)
         phase_contrast = phase - float(np.mean(phase))
-        phase_gain = float(params.get("bright_field_sample_environment_phase_gain", 0.05))
+        phase_gain = float(param_value(params, 'bright_field_sample_environment_phase_gain'))
         modulation = 1.0 + gain * (transmission - 1.0) + phase_gain * phase_contrast
         return np.maximum(intensity * modulation, 0.0)
 

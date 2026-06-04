@@ -775,21 +775,16 @@ def compute_modality_fusion_crlb(
     result["fusion_validation_status"] = result["parent_status_metadata"]["validation_status"]
     result["production_grid_diagnostic"] = result["parent_status_metadata"]["production_grid_diagnostic"]
     physical_fusion_allowed = bool(
-        result["fusion_physical_metadata"].get("physically_feasible_fusion_allowed", False)
+        result["fusion_physical_metadata"]["physically_feasible_fusion_allowed"]
     )
     result["safe_for_fusion"] = (
         bool(result["parent_status_metadata"]["safe_for_fusion"])
         and physical_fusion_allowed
     )
-    result["fusion_interpretation"] = (
-        "physically_feasible_fusion"
-        if physical_fusion_allowed
-        else "algebraic_diagnostic_only"
-    )
-    result["physical_compatibility_status"] = result["fusion_physical_metadata"].get(
-        "physical_compatibility_status",
-        "not_declared",
-    )
+    result["fusion_interpretation"] = result["fusion_physical_metadata"]["fusion_mode"]
+    result["physical_compatibility_status"] = result["fusion_physical_metadata"][
+        "physical_compatibility_status"
+    ]
     if not physical_fusion_allowed:
         result["fusion_validation_status"] = ValidationStatus.DIAGNOSTIC_ONLY.value
         result["production_grid_diagnostic"] = True
@@ -964,9 +959,7 @@ def compute_modality_fusion_crlb_from_fisher_matrices(
     )
     parent_status_metadata = combine_parent_statuses(selected_parent_metadata)
     physical_metadata = fusion_subset_metadata(fused["modalities_used"], modality_profile_cards)
-    physical_fusion_allowed = bool(
-        physical_metadata.get("physically_feasible_fusion_allowed", False)
-    )
+    physical_fusion_allowed = bool(physical_metadata["physically_feasible_fusion_allowed"])
     fusion_validation_status = parent_status_metadata["validation_status"]
     production_grid_diagnostic = parent_status_metadata["production_grid_diagnostic"]
     if not physical_fusion_allowed:
@@ -1009,15 +1002,8 @@ def compute_modality_fusion_crlb_from_fisher_matrices(
         "fusion_validation_status": fusion_validation_status,
         "production_grid_diagnostic": production_grid_diagnostic,
         "safe_for_fusion": bool(parent_status_metadata["safe_for_fusion"]) and physical_fusion_allowed,
-        "fusion_interpretation": (
-            "physically_feasible_fusion"
-            if physical_fusion_allowed
-            else "algebraic_diagnostic_only"
-        ),
-        "physical_compatibility_status": physical_metadata.get(
-            "physical_compatibility_status",
-            "not_declared",
-        ),
+        "fusion_interpretation": physical_metadata["fusion_mode"],
+        "physical_compatibility_status": physical_metadata["physical_compatibility_status"],
         "fusion_metric_convention": "L2_sigma_xy_not_rms",
     }
     if (

@@ -1,6 +1,7 @@
 """Per-video dataset generation runtime."""
 
 from __future__ import annotations
+from config import param_value
 
 import logging
 import os
@@ -131,10 +132,6 @@ def process_dataset_videos(
 
         video_seed = seed_by_index[int(video_index)]
 
-        # Seed the module-level NumPy RNG so internal randomness in the core
-        # simulation is reproducible for this video.
-        np.random.seed(video_seed)
-
         video_rng = np.random.default_rng(video_seed)
 
         assignment = assignment_by_index.get(int(video_index))
@@ -196,8 +193,8 @@ def process_dataset_videos(
         if representative_params is None:
             representative_params = deepcopy(params)
 
-        save_frame_sequence = bool(params.get("save_frame_sequence", True))
-        save_raw_frame_views = bool(params.get("save_raw_frame_views", False))
+        save_frame_sequence = bool(param_value(params, 'save_frame_sequence'))
+        save_raw_frame_views = bool(param_value(params, 'save_raw_frame_views'))
         simulation_result = run_simulation(
             params,
             return_frames=bool(save_frame_sequence or save_raw_frame_views),
@@ -268,7 +265,7 @@ def process_dataset_videos(
         if raw_views_rel is not None:
             manifest["raw_frame_views_npz"] = raw_views_rel
             manifest["background_subtracted_video_path"] = manifest.get("output_video_path")
-        matched_modalities = params.get("matched_modalities")
+        matched_modalities = param_value(params, "matched_modalities")
         if matched_modalities is not None:
             packet_payload = render_matched_modality_observations(
                 params,

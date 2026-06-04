@@ -1,75 +1,39 @@
 """Substrate material properties and optical helper formulas."""
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
-from typing import Callable
+from dataclasses import replace
 
 import numpy as np
 
-
-ComplexIndexModel = complex | Callable[[float], complex]
-
-
-def _validate_wavelength_nm(wavelength_nm: float) -> float:
-    wavelength_nm = float(wavelength_nm)
-    if not np.isfinite(wavelength_nm) or wavelength_nm <= 0.0:
-        raise ValueError(
-            "wavelength_nm must be finite and positive; "
-            f"got {wavelength_nm}."
-        )
-    return wavelength_nm
-
-
-@dataclass(frozen=True)
-
-class MaterialProperties:
-    """
-    Material properties used by optical, fluorescence, and electron models.
-
-    Optical indices are dimensionless. Mean inner potential is in volts,
-    density is g/cm^3, fluorescence/autofluorescence scales are relative source
-    terms, and spectral peaks are wavelengths in nanometres.
-    """
-
-    name: str
-    n_complex_visible: ComplexIndexModel = 1.0 + 0.0j
-    mean_inner_potential_V: float = 0.0
-    density_g_cm3: float = 0.0
-    se_yield_coefficient: float = 0.0
-    autofluorescence_per_nm: float = 0.0
-    fluorophore_density: float = 0.0
-    emission_peak_nm: float | None = None
-    excitation_peak_nm: float | None = None
-    polarizability_tensor: tuple[tuple[float, float, float], ...] | None = None
-
-    def n_complex(self, wavelength_nm: float) -> complex:
-        """Return the complex refractive index at ``wavelength_nm``."""
-        wavelength_nm = _validate_wavelength_nm(wavelength_nm)
-        model = self.n_complex_visible
-        if callable(model):
-            n_complex = complex(model(wavelength_nm))
-        else:
-            n_complex = complex(model)
-        if not np.isfinite(n_complex):
-            raise ValueError(
-                "Material refractive-index model returned a nonfinite value "
-                f"for {self.name!r} at wavelength_nm={wavelength_nm}."
-            )
-        return n_complex
-
-
-
-AIR = MaterialProperties("air", 1.00 + 0.0j)
-VACUUM = MaterialProperties("vacuum", 1.00 + 0.0j)
-WATER = MaterialProperties("water", 1.33 + 0.0j, mean_inner_potential_V=4.0, density_g_cm3=1.00)
-SIO2 = MaterialProperties(
-    "SiO2",
-    1.46 + 0.0j,
-    mean_inner_potential_V=10.1,
-    density_g_cm3=2.20,
-    se_yield_coefficient=0.10,
-    autofluorescence_per_nm=0.02,
+from material_optical_catalog import (
+    material_electron_defaults,
+    material_fluorescence_defaults,
+    optical_index_model_for_material,
 )
+from material_types import ComplexIndexModel, MaterialProperties
+
+
+def _catalog_material(material_name: str, *, display_name: str | None = None) -> MaterialProperties:
+    electron = material_electron_defaults(material_name)
+    fluorescence = material_fluorescence_defaults(material_name)
+    return MaterialProperties(
+        display_name or material_name,
+        optical_index_model_for_material(material_name),
+        mean_inner_potential_V=float(electron.get("mean_inner_potential_V", 0.0)),
+        density_g_cm3=float(electron.get("density_g_cm3", 0.0)),
+        se_yield_coefficient=float(electron.get("se_yield_coefficient", 0.0)),
+        autofluorescence_per_nm=float(fluorescence.get("autofluorescence_per_nm", 0.0) or 0.0),
+        fluorophore_density=float(fluorescence.get("fluorophore_density", 0.0) or 0.0),
+        emission_peak_nm=fluorescence.get("emission_peak_nm"),
+        excitation_peak_nm=fluorescence.get("excitation_peak_nm"),
+    )
+
+
+
+AIR = _catalog_material("air")
+VACUUM = MaterialProperties("vacuum", 1.00 + 0.0j)
+WATER = _catalog_material("water")
+SIO2 = replace(_catalog_material("silica", display_name="SiO2"), autofluorescence_per_nm=0.02)
 SI = MaterialProperties(
     "Si",
     3.88 + 0.02j,
@@ -77,77 +41,17 @@ SI = MaterialProperties(
     density_g_cm3=2.33,
     se_yield_coefficient=0.13,
 )
-CARBON = MaterialProperties(
-    "carbon",
-    2.42 + 0.0j,
-    mean_inner_potential_V=8.7,
-    density_g_cm3=2.0,
-    se_yield_coefficient=0.08,
-)
-GOLD = MaterialProperties(
-    "gold",
-    0.47 + 2.41j,
-    mean_inner_potential_V=25.0,
-    density_g_cm3=19.3,
-    se_yield_coefficient=0.18,
-)
-SILVER = MaterialProperties(
-    "silver",
-    0.14 + 3.98j,
-    mean_inner_potential_V=22.0,
-    density_g_cm3=10.5,
-    se_yield_coefficient=0.16,
-)
-GLASS = MaterialProperties("glass", 1.52 + 0.0j, mean_inner_potential_V=9.5, density_g_cm3=2.5)
-PET = MaterialProperties(
-    "PET",
-    1.57 + 0.0j,
-    mean_inner_potential_V=8.0,
-    density_g_cm3=1.38,
-    se_yield_coefficient=0.05,
-)
-POLYETHYLENE = MaterialProperties(
-    "polyethylene",
-    1.51 + 0.0j,
-    mean_inner_potential_V=7.5,
-    density_g_cm3=0.94,
-    se_yield_coefficient=0.05,
-)
-POLYPROPYLENE = MaterialProperties(
-    "polypropylene",
-    1.49 + 0.0j,
-    mean_inner_potential_V=7.5,
-    density_g_cm3=0.90,
-    se_yield_coefficient=0.05,
-)
-POLYSTYRENE = MaterialProperties(
-    "polystyrene",
-    1.59 + 0.0j,
-    mean_inner_potential_V=8.0,
-    density_g_cm3=1.05,
-    se_yield_coefficient=0.05,
-)
-FLUORESCENT_POLYSTYRENE = replace(
-    POLYSTYRENE,
-    name="fluorescent_polystyrene",
-    fluorophore_density=1.0,
-    excitation_peak_nm=488.0,
-    emission_peak_nm=520.0,
-)
-PROTEIN = MaterialProperties(
-    "protein",
-    1.45 + 0.0j,
-    mean_inner_potential_V=6.0,
-    density_g_cm3=1.35,
-    se_yield_coefficient=0.04,
-)
-LIPID = MaterialProperties(
-    "lipid",
-    1.47 + 0.0j,
-    mean_inner_potential_V=4.5,
-    density_g_cm3=0.92,
-    se_yield_coefficient=0.04,
-)
+CARBON = _catalog_material("carbon")
+GOLD = _catalog_material("gold")
+SILVER = _catalog_material("silver")
+GLASS = replace(_catalog_material("glass"), density_g_cm3=2.5)
+PET = _catalog_material("pet", display_name="PET")
+POLYETHYLENE = _catalog_material("polyethylene")
+POLYPROPYLENE = _catalog_material("polypropylene")
+POLYSTYRENE = _catalog_material("polystyrene")
+FLUORESCENT_POLYSTYRENE = _catalog_material("fluorescent_polystyrene")
+PROTEIN = _catalog_material("protein")
+LIPID = _catalog_material("lipid")
 
 
 _MATERIALS = {

@@ -39,6 +39,7 @@ TEMPLATE_OVERRIDES: dict[str, Any] = {
                 "initial_position_nm": None,
             },
             "signal_multiplier": 1.0,
+            "source_multiplier": 1.0,
             "components": [
                 {
                     "shape": "sphere",
@@ -47,6 +48,7 @@ TEMPLATE_OVERRIDES: dict[str, Any] = {
                     "material": "fluorescent_polystyrene",
                     "refractive_index": None,
                     "signal_multiplier": 1.0,
+                    "source_multiplier": 1.0,
                     "material_properties": None,
                 }
             ],

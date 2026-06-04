@@ -10,6 +10,7 @@ from materials import (
     resolve_component_material_properties,
     resolve_component_refractive_index,
 )
+from optical_params import resolve_probe_wavelength_nm
 from particle_specs import get_particle_specs, ParticleSpec
 from substrate import MaterialProperties
 
@@ -115,9 +116,10 @@ class ParticleInstance:
     Each instance:
         - References exactly one ParticleType (optical behavior and iPSF).
         - Stores its full 3D trajectory in nanometers over all frames.
-        - Stores its per-particle optical signal multiplier.
-        - Stores a separate per-particle source multiplier for source-map
-          modalities.
+        - Stores particle-level optical/source multipliers from ParticleSpec.
+        - Stores the single render-component multipliers separately for
+          spherical particles, so the renderer applies component semantics in
+          the same place for both spherical and composite particles.
         - Optionally stores a per-frame orientation for non-spherical
           composite particles.
 
@@ -139,6 +141,8 @@ class ParticleInstance:
     trajectory_nm: np.ndarray
     signal_multiplier: float
     source_multiplier: float = 1.0
+    component_signal_multiplier: float = 1.0
+    component_source_multiplier: float = 1.0
     orientation_matrices: Optional[np.ndarray] = None
     material_properties: MaterialProperties | None = None
 
@@ -229,7 +233,7 @@ def build_particle_types_and_instances(
     def _component_refractive_index(component) -> complex:
         if require_optical_psf:
             return resolve_component_refractive_index(params, component)
-        return _component_material_properties(component).n_complex(float(params.get("wavelength_nm", 532.0)))
+        return _component_material_properties(component).n_complex(resolve_probe_wavelength_nm(params))
 
     # Build spherical type objects from every component type collected upstream.
     # Source-map modalities do not consume optical PSFs; they receive null
@@ -373,12 +377,21 @@ def build_particle_types_and_instances(
         else:
             orientation_matrices = None
 
+        component_signal_multiplier = 1.0
+        component_source_multiplier = 1.0
+        if spec.is_single_sphere and not ptype.is_composite:
+            primary_component = spec.primary_component
+            component_signal_multiplier = float(primary_component.signal_multiplier)
+            component_source_multiplier = float(primary_component.source_multiplier)
+
         instance = ParticleInstance(
             index=i,
             particle_type=ptype,
             trajectory_nm=trajectories_nm[i],
             signal_multiplier=float(spec.signal_multiplier),
             source_multiplier=float(spec.source_multiplier),
+            component_signal_multiplier=component_signal_multiplier,
+            component_source_multiplier=component_source_multiplier,
             orientation_matrices=orientation_matrices,
             material_properties=_component_material_properties(spec.primary_component),
         )

@@ -43,7 +43,6 @@ class FisherMode(str, Enum):
     POISSON_EXACT = "poisson_exact"
     GAUSSIAN_PARAMETER_DEPENDENT_VARIANCE = "gaussian_parameter_dependent_variance"
     POISSON_GAUSSIAN_APPROX = "poisson_gaussian_approx"
-    POISSON_GAUSSIAN_PLUGIN = "poisson_gaussian_plugin"  # backward-compatible alias
     POISSON_GAUSSIAN_NUMERICAL = "poisson_gaussian_numerical"
     MEAN_FISHER_DIAGNOSTIC = "mean_fisher_diagnostic"
 
@@ -159,43 +158,43 @@ class BackendContract:
 
 @dataclass(frozen=True)
 class DetectorModel:
-    detector_qe: float = 1.0
-    detector_input_is_incident_quanta: bool = False
-    emccd_enabled: bool = False
-    emccd_gain: float = 1.0
-    emccd_excess_noise_factor: float = 1.0
-    camera_gain_e_per_count: float = 1.0
-    dark_offset_counts: float = 0.0
-    read_noise_e: float | None = None
-    read_noise_counts: float = 1.0
-    saturation_level: float | None = None
-    saturation_e: float | None = None
-    dark_current_e_per_pixel_per_s: float = 0.0
-    exposure_time_s: float = 1.0
-    fixed_pattern_gain_std: float = 0.0
-    fixed_pattern_offset_counts: float = 0.0
-    hot_pixel_fraction: float = 0.0
-    hot_pixel_value_counts: float | None = None
-    fixed_pattern_gain_map: str | None = None
-    fixed_pattern_offset_map: str | None = None
-    hot_pixel_mask: str | None = None
-    scmos_variance_map: str | None = None
-    scmos_gain_map: str | None = None
-    scmos_read_noise_map: str | None = None
-    read_noise_map_mode: str = "replace"
-    scan_line_noise_counts: float = 0.0
-    detector_noise_input_domain: str = "camera_counts"
-    nonlinear_detector_effects_active: bool = False
-    deterministic_detector_transfer_active: bool = False
-    safe_for_linear_fisher_variance: bool = True
-    adc_quantization: bool = False
-    adc_quantization_counts: float = 1.0
-    clip_output_to_nonnegative: bool = True
-    noise_parameterization: str = "camera_counts"
-    nonlinearity_calibration: str | None = None
-    background_offset_counts: float = 0.0
-    flat_field_map: str | None = None
-    dark_frame_map: str | None = None
+    detector_qe: float
+    detector_input_is_incident_quanta: bool
+    emccd_enabled: bool
+    emccd_gain: float
+    emccd_excess_noise_factor: float
+    camera_gain_e_per_count: float
+    dark_offset_counts: float
+    read_noise_e: float | None
+    read_noise_counts: float
+    saturation_level: float | None
+    saturation_e: float | None
+    dark_current_e_per_pixel_per_s: float
+    exposure_time_s: float
+    fixed_pattern_gain_std: float
+    fixed_pattern_offset_counts: float
+    hot_pixel_fraction: float
+    hot_pixel_value_counts: float | None
+    fixed_pattern_gain_map: str | None
+    fixed_pattern_offset_map: str | None
+    hot_pixel_mask: str | None
+    scmos_variance_map: str | None
+    scmos_gain_map: str | None
+    scmos_read_noise_map: str | None
+    read_noise_map_mode: str
+    scan_line_noise_counts: float
+    detector_noise_input_domain: str
+    nonlinear_detector_effects_active: bool
+    deterministic_detector_transfer_active: bool
+    safe_for_linear_fisher_variance: bool
+    adc_quantization: bool
+    adc_quantization_counts: float
+    clip_output_to_nonnegative: bool
+    noise_parameterization: str
+    nonlinearity_calibration: str | None
+    background_offset_counts: float
+    flat_field_map: str | None
+    dark_frame_map: str | None
     def to_dict(self) -> dict[str, Any]: return json_safe_with_nonfinite_tags(asdict(self))
 
 @dataclass(frozen=True)
@@ -257,7 +256,7 @@ def default_comparison_contracts(allowed_modality_profiles: Sequence[str] = ()) 
     return {
         "Contract-LP": ComparisonContract("Contract-LP", "Configured-profile lateral CRLB", derivative_method="adaptive_rerendered_xy_or_stationary_shift_with_status", ranking_objective="sigma_xy_nm", paper_label="configured-profile lateral CRLB", **common),
         "Contract-LZ": ComparisonContract("Contract-LZ", "Configured-profile axial/SE(3) CRLB", derivative_method="adaptive_axial_or_se3_with_singularity_status", ranking_objective="sigma_xyz_nm_or_rank", paper_label="configured-profile axial/SE(3) diagnostic", **common),
-        "Contract-Q": ComparisonContract("Contract-Q", "Detected-quanta-normalized CRLB", quanta_budget_policy="fixed-total-detected-quanta-with-explicit-distribution", dose_cost_policy="not-dose; cost model required for dose claims", fisher_mode=FisherMode.POISSON_GAUSSIAN_PLUGIN.value, ranking_objective="sigma_xy_nm_at_detected_quanta_budget", paper_label="detected-quanta-normalized diagnostic", **common),
+        "Contract-Q": ComparisonContract("Contract-Q", "Detected-quanta-normalized CRLB", quanta_budget_policy="fixed-total-detected-quanta-with-explicit-distribution", dose_cost_policy="not-dose; cost model required for dose claims", fisher_mode=FisherMode.POISSON_GAUSSIAN_APPROX.value, ranking_objective="sigma_xy_nm_at_detected_quanta_budget", paper_label="detected-quanta-normalized diagnostic", **common),
         "Contract-NR": ComparisonContract("Contract-NR", "Native-regime/source-use reference context", native_regime_policy="source-reported-or-calibrated-native-profile-required", ranking_objective="source-reference-check", paper_label="native-regime reference context", **common),
         "Contract-COST": ComparisonContract("Contract-COST", "Physical cost/dose-aware acquisition contract", dose_cost_policy="explicit-acquisition-cost-model-required", ranking_objective="constrained-cost-objective", constraints={"requires_cost_model": True}, paper_label="cost/dose-aware contract", **common),
         "Contract-FUSION-PHYSICAL": ComparisonContract("Contract-FUSION-PHYSICAL", "Physically feasible fusion contract", physical_compatibility_policy="compatibility-graph-must-allow-subset", ranking_objective="compatible-fused-sigma_xy_nm", constraints={"requires_physical_compatibility": True}, paper_label="physically feasible fusion", **common),
@@ -384,128 +383,55 @@ def backend_contract_for_modality(modality: str, response: Mapping[str, Any] | N
     if m == "tem_phase_contrast":
         level = str(resp.get("backend_fidelity_level") or "proxy")
         ref = resp.get("reference_backend_metadata")
-        return BackendContract(m, m, label, str(resp.get("tem_backend") or "electron_projected_potential_ctf"), uses_scalar_scattered_field=False, uses_electron_projected_potential=True, native_units="electron_count", measurement_domain="electron_count", signal_units="electron_count", contrast_frame_units=str(resp.get("pre_count_contrast_units") or "relative_intensity_difference"), axial_sensitivity_mechanism="through-focus/tilt-series required for finite axial sensitivity", axial_sensitive="conditional", source_input_kind=str(resp.get("source_input_kind") or resp.get("tem_source_dimensionality") or "tem_source_backend_gated"), source_map_ndim=resp.get("source_map_ndim"), source_axis_order=resp.get("source_axis_order"), source_projection_policy=resp.get("source_projection_policy"), backend_consumes_volume_source=bool(resp.get("backend_consumes_volume_source", False)), volume_transport_model=resp.get("volume_transport_model"), required_material_fields=("projected_electrostatic_potential", "thickness_nm"), known_omissions=() if level != "proxy" else ("full multislice/reference validation not active unless selected",), fidelity_class=str(resp.get("fidelity_label") or "electron_ctf_proxy"), backend_fidelity_level=level, reference_backend_metadata=ref)
+        return BackendContract(m, m, label, str(resp.get("tem_backend") or "electron_projected_potential_ctf"), uses_scalar_scattered_field=False, uses_electron_projected_potential=True, native_units="electron_count", measurement_domain="electron_count", signal_units="electron_count", contrast_frame_units="electron_count_difference", axial_sensitivity_mechanism="through-focus/tilt-series required for finite axial sensitivity", axial_sensitive="conditional", source_input_kind=str(resp.get("source_input_kind") or resp.get("tem_source_dimensionality") or "tem_source_backend_gated"), source_map_ndim=resp.get("source_map_ndim"), source_axis_order=resp.get("source_axis_order"), source_projection_policy=resp.get("source_projection_policy"), backend_consumes_volume_source=bool(resp.get("backend_consumes_volume_source", False)), volume_transport_model=resp.get("volume_transport_model"), required_material_fields=("projected_electrostatic_potential", "thickness_nm"), known_omissions=() if level != "proxy" else ("full multislice/reference validation not active unless selected",), fidelity_class=str(resp.get("fidelity_label") or "electron_ctf_proxy"), backend_fidelity_level=level, reference_backend_metadata=ref)
     if m == "sem_secondary_electron":
         level = str(resp.get("backend_fidelity_level") or "proxy")
         ref = resp.get("reference_backend_metadata")
-        return BackendContract(m, m, label, str(resp.get("sem_backend") or "sem_probe_secondary_yield"), uses_scalar_scattered_field=False, uses_probe_scan=True, native_units="secondary_electron_yield", measurement_domain="electron_count", signal_units="electron_count", contrast_frame_units=str(resp.get("pre_count_contrast_units") or "secondary_electron_yield_difference"), axial_sensitivity_mechanism="topography/focus/tilt/interaction-volume conditional", axial_sensitive="conditional", source_input_kind=str(resp.get("source_input_kind") or "projected_2d_source_map"), source_map_ndim=resp.get("source_map_ndim"), source_axis_order=resp.get("source_axis_order"), source_projection_policy=resp.get("source_projection_policy"), backend_consumes_volume_source=bool(resp.get("backend_consumes_volume_source", False)), volume_transport_model=resp.get("volume_transport_model"), required_material_fields=("secondary_electron_yield", "topography"), known_omissions=() if level in {"high_fidelity", "reference_validated"} else ("reference-kernel validation required for native benchmark labeling",), fidelity_class=str(resp.get("fidelity_label") or "sem_yield_proxy"), backend_fidelity_level=level, reference_backend_metadata=ref)
+        return BackendContract(m, m, label, str(resp.get("sem_backend") or "sem_probe_secondary_yield"), uses_scalar_scattered_field=False, uses_probe_scan=True, native_units="secondary_electron_yield", measurement_domain="electron_count", signal_units="electron_count", contrast_frame_units="electron_count_difference", axial_sensitivity_mechanism="topography/focus/tilt/interaction-volume conditional", axial_sensitive="conditional", source_input_kind=str(resp.get("source_input_kind") or "projected_2d_source_map"), source_map_ndim=resp.get("source_map_ndim"), source_axis_order=resp.get("source_axis_order"), source_projection_policy=resp.get("source_projection_policy"), backend_consumes_volume_source=bool(resp.get("backend_consumes_volume_source", False)), volume_transport_model=resp.get("volume_transport_model"), required_material_fields=("secondary_electron_yield", "topography"), known_omissions=() if level in {"high_fidelity", "reference_validated"} else ("reference-kernel validation required for native benchmark labeling",), fidelity_class=str(resp.get("fidelity_label") or "sem_yield_proxy"), backend_fidelity_level=level, reference_backend_metadata=ref)
     return BackendContract(m, m, label, "undeclared_backend", validation_status=ValidationStatus.UNCHECKED.value, known_omissions=("backend declaration missing",))
 
 def detector_model_from_params(params: Mapping[str, Any]) -> DetectorModel:
-    p=dict(params)
-    try:
-        from camera_noise import resolve_camera_noise_config
-    except ImportError:
-        resolve_camera_noise_config = None
-    if resolve_camera_noise_config is not None:
-        cfg = resolve_camera_noise_config(p)
-        return DetectorModel(
-            detector_qe=float(cfg.detector_qe),
-            detector_input_is_incident_quanta=bool(cfg.detector_input_is_incident_quanta),
-            emccd_enabled=bool(cfg.emccd_enabled),
-            emccd_gain=float(cfg.emccd_gain),
-            emccd_excess_noise_factor=float(cfg.emccd_excess_noise_factor),
-            camera_gain_e_per_count=float(cfg.camera_gain_e_per_count),
-            dark_offset_counts=float(cfg.dark_offset_counts),
-            read_noise_e=cfg.read_noise_e,
-            read_noise_counts=float(cfg.read_noise_counts),
-            saturation_level=cfg.saturation_level,
-            saturation_e=cfg.saturation_e,
-            dark_current_e_per_pixel_per_s=float(cfg.dark_current_e_per_pixel_per_s),
-            exposure_time_s=float(cfg.exposure_time_s),
-            fixed_pattern_gain_std=float(cfg.fixed_pattern_gain_std),
-            fixed_pattern_offset_counts=float(cfg.fixed_pattern_offset_counts),
-            hot_pixel_fraction=float(cfg.hot_pixel_fraction),
-            hot_pixel_value_counts=cfg.hot_pixel_value_counts,
-            fixed_pattern_gain_map=cfg.fixed_pattern_gain_map,
-            fixed_pattern_offset_map=cfg.fixed_pattern_offset_map,
-            hot_pixel_mask=cfg.hot_pixel_mask,
-            scmos_variance_map=cfg.scmos_variance_map,
-            scmos_gain_map=cfg.scmos_gain_map,
-            scmos_read_noise_map=cfg.scmos_read_noise_map,
-            read_noise_map_mode=str(getattr(cfg, "read_noise_map_mode", "replace")),
-            scan_line_noise_counts=float(cfg.scan_line_noise_counts),
-            detector_noise_input_domain=str(cfg.detector_noise_input_domain),
-            nonlinear_detector_effects_active=bool(getattr(cfg, "nonlinear_detector_effects_active", False)),
-            deterministic_detector_transfer_active=bool(getattr(cfg, "deterministic_detector_transfer_active", False)),
-            safe_for_linear_fisher_variance=bool(getattr(cfg, "safe_for_linear_fisher_variance", True)),
-            adc_quantization=bool(cfg.adc_quantization),
-            adc_quantization_counts=float(cfg.adc_quantization_counts),
-            clip_output_to_nonnegative=bool(cfg.clip_output_to_nonnegative),
-            noise_parameterization=str(cfg.noise_parameterization),
-            background_offset_counts=float(cfg.background_offset_counts),
-            flat_field_map=cfg.flat_field_map,
-            dark_frame_map=cfg.dark_frame_map,
-        )
+    from camera_noise import resolve_camera_noise_config
+
+    cfg = resolve_camera_noise_config(dict(params))
     return DetectorModel(
-        detector_qe=float(p.get("detector_qe", p.get("fluorescence_detector_qe", 1.0))),
-        detector_input_is_incident_quanta=bool(p.get("detector_input_is_incident_quanta", False)),
-        emccd_enabled=bool(p.get("emccd_enabled", False)),
-        emccd_gain=float(p.get("emccd_gain", 1.0)),
-        emccd_excess_noise_factor=float(p.get("emccd_excess_noise_factor", 1.0)),
-        camera_gain_e_per_count=float(p.get("camera_gain_e_per_count", 1.0)),
-        dark_offset_counts=float(p.get("dark_offset_counts", 0.0)),
-        read_noise_e=p.get("read_noise_e"),
-        read_noise_counts=float(p.get("read_noise_counts", 1.0)),
-        saturation_level=p.get("saturation_level"),
-        saturation_e=p.get("saturation_e"),
-        dark_current_e_per_pixel_per_s=float(p.get("dark_current_e_per_pixel_per_s", 0.0)),
-        exposure_time_s=float(p.get("exposure_time_s", 1.0)),
-        fixed_pattern_gain_std=float(p.get("fixed_pattern_gain_std", 0.0)),
-        fixed_pattern_offset_counts=float(p.get("fixed_pattern_offset_counts", 0.0)),
-        hot_pixel_fraction=float(p.get("hot_pixel_fraction", 0.0)),
-        hot_pixel_value_counts=p.get("hot_pixel_value_counts"),
-        fixed_pattern_gain_map=p.get("fixed_pattern_gain_map"),
-        fixed_pattern_offset_map=p.get("fixed_pattern_offset_map"),
-        hot_pixel_mask=p.get("hot_pixel_mask"),
-        scmos_variance_map=p.get("scmos_variance_map"),
-        scmos_gain_map=p.get("scmos_gain_map"),
-        scmos_read_noise_map=p.get("scmos_read_noise_map"),
-        read_noise_map_mode=str(p.get("read_noise_map_mode", "replace")),
-        scan_line_noise_counts=float(p.get("scan_line_noise_counts", 0.0)),
-        detector_noise_input_domain=str(p.get("detector_noise_input_domain", "camera_counts")),
-        nonlinear_detector_effects_active=bool(
-            p.get("nonlinear_detector_effects_active", False)
-            or p.get("saturation_level") is not None
-            or p.get("saturation_e") is not None
-            or bool(p.get("adc_quantization", False))
-            or p.get("nonlinearity_calibration") is not None
-        ),
-        deterministic_detector_transfer_active=bool(
-            p.get("flat_field_map") is not None
-            or p.get("dark_frame_map") is not None
-            or p.get("fixed_pattern_gain_map") is not None
-            or p.get("fixed_pattern_offset_map") is not None
-            or p.get("scmos_gain_map") is not None
-            or p.get("hot_pixel_mask") is not None
-            or float(p.get("fixed_pattern_gain_std", 0.0)) > 0.0
-            or float(p.get("fixed_pattern_offset_counts", 0.0)) > 0.0
-            or float(p.get("hot_pixel_fraction", 0.0)) > 0.0
-        ),
-        safe_for_linear_fisher_variance=not bool(
-            p.get("nonlinear_detector_effects_active", False)
-            or p.get("saturation_level") is not None
-            or p.get("saturation_e") is not None
-            or bool(p.get("adc_quantization", False))
-            or p.get("nonlinearity_calibration") is not None
-            or p.get("flat_field_map") is not None
-            or p.get("dark_frame_map") is not None
-            or p.get("fixed_pattern_gain_map") is not None
-            or p.get("fixed_pattern_offset_map") is not None
-            or p.get("scmos_gain_map") is not None
-            or p.get("hot_pixel_mask") is not None
-            or float(p.get("fixed_pattern_gain_std", 0.0)) > 0.0
-            or float(p.get("fixed_pattern_offset_counts", 0.0)) > 0.0
-            or float(p.get("hot_pixel_fraction", 0.0)) > 0.0
-        ),
-        adc_quantization=bool(p.get("adc_quantization", False)),
-        adc_quantization_counts=float(p.get("adc_quantization_counts", 1.0)),
-        clip_output_to_nonnegative=bool(p.get("clip_output_to_nonnegative", True)),
-        noise_parameterization=str(p.get("noise_parameterization", "camera_counts")),
-        nonlinearity_calibration=p.get("nonlinearity_calibration"),
-        background_offset_counts=float(p.get("background_offset_counts", p.get("dark_offset_counts", 0.0))),
-        flat_field_map=p.get("flat_field_map"),
-        dark_frame_map=p.get("dark_frame_map"),
+        detector_qe=float(cfg.detector_qe),
+        detector_input_is_incident_quanta=bool(cfg.detector_input_is_incident_quanta),
+        emccd_enabled=bool(cfg.emccd_enabled),
+        emccd_gain=float(cfg.emccd_gain),
+        emccd_excess_noise_factor=float(cfg.emccd_excess_noise_factor),
+        camera_gain_e_per_count=float(cfg.camera_gain_e_per_count),
+        dark_offset_counts=float(cfg.dark_offset_counts),
+        read_noise_e=cfg.read_noise_e,
+        read_noise_counts=float(cfg.read_noise_counts),
+        saturation_level=cfg.saturation_level,
+        saturation_e=cfg.saturation_e,
+        dark_current_e_per_pixel_per_s=float(cfg.dark_current_e_per_pixel_per_s),
+        exposure_time_s=float(cfg.exposure_time_s),
+        fixed_pattern_gain_std=float(cfg.fixed_pattern_gain_std),
+        fixed_pattern_offset_counts=float(cfg.fixed_pattern_offset_counts),
+        hot_pixel_fraction=float(cfg.hot_pixel_fraction),
+        hot_pixel_value_counts=cfg.hot_pixel_value_counts,
+        fixed_pattern_gain_map=cfg.fixed_pattern_gain_map,
+        fixed_pattern_offset_map=cfg.fixed_pattern_offset_map,
+        hot_pixel_mask=cfg.hot_pixel_mask,
+        scmos_variance_map=cfg.scmos_variance_map,
+        scmos_gain_map=cfg.scmos_gain_map,
+        scmos_read_noise_map=cfg.scmos_read_noise_map,
+        read_noise_map_mode=str(cfg.read_noise_map_mode),
+        scan_line_noise_counts=float(cfg.scan_line_noise_counts),
+        detector_noise_input_domain=str(cfg.detector_noise_input_domain),
+        nonlinear_detector_effects_active=bool(cfg.nonlinear_detector_effects_active),
+        deterministic_detector_transfer_active=bool(cfg.deterministic_detector_transfer_active),
+        safe_for_linear_fisher_variance=bool(cfg.safe_for_linear_fisher_variance),
+        adc_quantization=bool(cfg.adc_quantization),
+        adc_quantization_counts=float(cfg.adc_quantization_counts),
+        clip_output_to_nonnegative=bool(cfg.clip_output_to_nonnegative),
+        noise_parameterization=str(cfg.noise_parameterization),
+        nonlinearity_calibration=cfg.nonlinearity_calibration,
+        background_offset_counts=float(cfg.background_offset_counts),
+        flat_field_map=cfg.flat_field_map,
+        dark_frame_map=cfg.dark_frame_map,
     )
 
 def _optional_float(value: Any) -> float | None:
@@ -716,7 +642,7 @@ def combine_parent_statuses(parent_metadata: Mapping[str, Mapping[str, Any]] | N
         validation=ValidationStatus.DIAGNOSTIC_ONLY.value; safe=False; reason="one or more parent Fisher results are unchecked, production-grid-only, or external-artifact-required"
     return {"parent_convergence_statuses": statuses, "validation_status": validation, "production_grid_diagnostic": validation != ValidationStatus.VALIDATED.value, "safe_for_ordering": safe, "safe_for_fusion": safe, "safe_for_time_allocation": safe, "safe_for_registration": safe, "safe_for_detected_quanta_ranking": safe, "status_reason": reason}
 
-def wrap_legacy_crlb_result(result: Mapping[str, Any], *, result_id: str, source_contract: str, modality: str, backend_id: str = "", profile_id: str = "", convergence_status: str = ConvergenceStatus.PRODUCTION_GRID_ONLY.value, parent_result_ids: Sequence[str] = ()) -> FisherResult:
+def fisher_result_from_crlb_result(result: Mapping[str, Any], *, result_id: str, source_contract: str, modality: str, convergence_status: str, backend_id: str = "", profile_id: str = "", parent_result_ids: Sequence[str] = ()) -> FisherResult:
     normalized_convergence = normalize_convergence_status(convergence_status)
     validation=validation_status_from_convergence(normalized_convergence); safe=validation==ValidationStatus.VALIDATED.value; rank=result.get("rank", result.get("fisher_rank"))
     covariance = result.get("covariance", None)
@@ -737,7 +663,9 @@ def wrap_legacy_crlb_result(result: Mapping[str, Any], *, result_id: str, source
     for key in ("state_axes", "sigma_units_by_axis", "fisher_units", "fisher_units_by_entry"):
         if key in result:
             crlb_summary[key] = result[key]
-    return FisherResult(result_id=result_id,parent_result_ids=tuple(str(x) for x in parent_result_ids),source_contract=source_contract,modality=modality,backend_id=backend_id,profile_id=profile_id,fisher_matrix=result.get("fisher_matrix"),covariance_or_pseudoinverse=covariance,crlb_summary=crlb_summary,derivative_method=str(result.get("derivative_method", result.get("lateral_derivative_mode", "legacy"))),derivative_step=result.get("derivative_step", result.get("lateral_step_nm")),derivative_units=derivative_units,candidate_steps=result.get("candidate_steps", {}),convergence_status=normalized_convergence,singular_axes=tuple(singular_axes or ()),rank=None if rank is None else int(rank),rank_tolerance=float(result.get("rank_tolerance", 1e-12)),condition_number=result.get("condition_number"),validation_status=validation,production_grid_diagnostic=not safe,safe_for_ordering=safe,safe_for_fusion=safe,safe_for_time_allocation=safe,safe_for_registration=safe,safe_for_detected_quanta_ranking=safe,notes=("wrapped legacy CRLB dictionary",))
+    if "derivative_method" not in result:
+        raise KeyError("CRLB result metadata must include 'derivative_method'.")
+    return FisherResult(result_id=result_id,parent_result_ids=tuple(str(x) for x in parent_result_ids),source_contract=source_contract,modality=modality,backend_id=backend_id,profile_id=profile_id,fisher_matrix=result.get("fisher_matrix"),covariance_or_pseudoinverse=covariance,crlb_summary=crlb_summary,derivative_method=str(result["derivative_method"]),derivative_step=result.get("derivative_step", result.get("lateral_step_nm")),derivative_units=derivative_units,candidate_steps=result.get("candidate_steps", {}),convergence_status=normalized_convergence,singular_axes=tuple(singular_axes or ()),rank=None if rank is None else int(rank),rank_tolerance=float(result.get("rank_tolerance", 1e-12)),condition_number=result.get("condition_number"),validation_status=validation,production_grid_diagnostic=not safe,safe_for_ordering=safe,safe_for_fusion=safe,safe_for_time_allocation=safe,safe_for_registration=safe,safe_for_detected_quanta_ranking=safe,notes=("structured CRLB dictionary",))
 
 def artifact_graph_manifest(nodes: Sequence[ArtifactNode | Mapping[str, Any]]) -> dict[str, Any]:
     out=[]
@@ -749,7 +677,7 @@ def artifact_graph_manifest(nodes: Sequence[ArtifactNode | Mapping[str, Any]]) -
 
 
 def normalize_convergence_status(status: Any) -> str:
-    """Normalize legacy/display status strings to ``ConvergenceStatus`` values.
+    """Validate and return the canonical scalar ``ConvergenceStatus`` value.
 
     This is the single scalar-status normalizer for paper-facing Fisher gates.
     Callers that need diagnostics should wrap the returned value in a structured
@@ -757,51 +685,25 @@ def normalize_convergence_status(status: Any) -> str:
     """
     if isinstance(status, ConvergenceStatus):
         return status.value
-    raw = "unchecked" if status is None else str(status).strip()
-    raw = raw.replace("-", "_").replace(" ", "_").lower()
-    aliases = {
-        "pass": ConvergenceStatus.FINITE_CONVERGED.value,
-        "passed": ConvergenceStatus.FINITE_CONVERGED.value,
-        "true": ConvergenceStatus.FINITE_CONVERGED.value,
-        "yes": ConvergenceStatus.FINITE_CONVERGED.value,
-        "finite": ConvergenceStatus.FINITE_CONVERGED.value,
-        "finite_converged": ConvergenceStatus.FINITE_CONVERGED.value,
-        "convergence_validated_parent_rows": ConvergenceStatus.FINITE_CONVERGED.value,
-        "stable_singular": ConvergenceStatus.STABLE_SINGULAR.value,
-        "singular_stable": ConvergenceStatus.STABLE_SINGULAR.value,
-        "failed": ConvergenceStatus.FAILED_CONVERGENCE.value,
-        "failed_span": ConvergenceStatus.FAILED_CONVERGENCE.value,
-        "failed_convergence": ConvergenceStatus.FAILED_CONVERGENCE.value,
-        "diagnostic_inherits_failed_parent": ConvergenceStatus.FAILED_CONVERGENCE.value,
-        "ill_conditioned": ConvergenceStatus.ILL_CONDITIONED.value,
-        "nonfinite": ConvergenceStatus.NONFINITE.value,
-        "not_applicable": ConvergenceStatus.NOT_APPLICABLE.value,
-        "unchecked": ConvergenceStatus.UNCHECKED.value,
-        "production_grid_only": ConvergenceStatus.PRODUCTION_GRID_ONLY.value,
-        "external_artifact_required": ConvergenceStatus.EXTERNAL_ARTIFACT_REQUIRED.value,
-        "false": ConvergenceStatus.FAILED_CONVERGENCE.value,
-        "no": ConvergenceStatus.FAILED_CONVERGENCE.value,
-    }
-    if raw in aliases:
-        return aliases[raw]
+    raw = ConvergenceStatus.UNCHECKED.value if status is None else str(status).strip()
     allowed = {item.value for item in ConvergenceStatus}
     if raw in allowed:
         return raw
-    return ConvergenceStatus.UNCHECKED.value
+    raise ValueError(
+        f"Unknown convergence_status {status!r}. Supported values are: {sorted(allowed)}."
+    )
 
 
 def normalize_validation_status(status: Any) -> str:
-    raw = "unchecked" if status is None else str(status).strip().replace("-", "_").replace(" ", "_").lower()
-    aliases = {
-        "valid": ValidationStatus.VALIDATED.value,
-        "validated": ValidationStatus.VALIDATED.value,
-        "diagnostic": ValidationStatus.DIAGNOSTIC_ONLY.value,
-        "diagnostic_only": ValidationStatus.DIAGNOSTIC_ONLY.value,
-        "invalid": ValidationStatus.INVALID.value,
-        "unchecked": ValidationStatus.UNCHECKED.value,
-        "external_artifact_required": ValidationStatus.EXTERNAL_ARTIFACT_REQUIRED.value,
-    }
-    return aliases.get(raw, ValidationStatus.UNCHECKED.value)
+    if isinstance(status, ValidationStatus):
+        return status.value
+    raw = ValidationStatus.UNCHECKED.value if status is None else str(status).strip()
+    allowed = {item.value for item in ValidationStatus}
+    if raw in allowed:
+        return raw
+    raise ValueError(
+        f"Unknown validation_status {status!r}. Supported values are: {sorted(allowed)}."
+    )
 
 
 def required_contract_ids() -> tuple[str, ...]:

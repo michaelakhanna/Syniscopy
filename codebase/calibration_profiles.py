@@ -65,6 +65,7 @@ def _particle(diameter_nm: float, material: str = "polystyrene") -> dict[str, An
             "initial_position_nm": None,
         },
         "signal_multiplier": 1.0,
+        "source_multiplier": 1.0,
         "components": [
             {
                 "shape": "sphere",
@@ -73,6 +74,7 @@ def _particle(diameter_nm: float, material: str = "polystyrene") -> dict[str, An
                 "material": material,
                 "refractive_index": None,
                 "signal_multiplier": 1.0,
+                "source_multiplier": 1.0,
                 "material_properties": material_properties,
             }
         ],

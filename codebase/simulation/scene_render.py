@@ -8,6 +8,7 @@ import numpy as np
 
 from camera_noise import analysis_contrast_noise_variance
 from config import normalize_params
+from config.runtime import internal_param_value, param_value
 from fisher import (
     build_brownian_process_covariance,
     compute_localization_crlb,
@@ -206,7 +207,7 @@ def render_matched_modality_observations(
         )
 
     base_params = deepcopy(params)
-    if base_params.get("channels") is not None:
+    if param_value(base_params, "channels") is not None:
         raise ValueError("matched modality packets cannot be combined with PARAMS['channels'].")
     base_params["channels"] = None
     _resolve_public_num_frames(base_params)
@@ -217,7 +218,7 @@ def render_matched_modality_observations(
         extent_params = deepcopy(base_params)
         extent_params["imaging_model"] = modality
         _ensure_run_scope_layout_extent(extent_params)
-        extent = extent_params.get("_substrate_pattern_layout_extent_nm", None)
+        extent = internal_param_value(extent_params, "_substrate_pattern_layout_extent_nm")
         if extent is not None:
             max_layout_extent = (
                 float(extent)
@@ -289,25 +290,21 @@ def render_matched_modality_observations(
             modality,
             response_function=response_function,
         )
-        lateral_derivative_mode = str(
-            modality_params.get("fisher_lateral_derivative_mode", "stationary_shift")
-        ).strip().lower()
+        lateral_derivative_mode = str(modality_params["fisher_lateral_derivative_mode"]).strip().lower()
         structured_environment_active = bool(
-            modality_params.get("sample_environment_enabled", True)
+            modality_params["sample_environment_enabled"]
             and (
-                modality_params.get("sample_environment_pattern_enabled", False)
-                or str(modality_params.get("sample_environment_pattern", "none")).strip().lower()
-                not in {"", "none", "flat", "empty"}
+                modality_params["sample_environment_pattern_enabled"]
+                or str(modality_params["sample_environment_pattern"]).strip().lower() != "none"
             )
         )
-        lateral_derivative_mode_auto_switched = False
         if lateral_derivative_mode == "stationary_shift" and structured_environment_active:
-            lateral_derivative_mode = "rerendered_xy"
-            modality_params["fisher_lateral_derivative_mode"] = lateral_derivative_mode
-            lateral_derivative_mode_auto_switched = True
-        detected_target = str(
-            modality_params.get("detected_quanta_derivative_target", "signed_contrast_scaled")
-        ).strip().lower()
+            raise ValueError(
+                "Matched-modality Fisher diagnostics with structured sample "
+                "environments require PARAMS['fisher_lateral_derivative_mode']="
+                "'rerendered_xy'."
+            )
+        detected_target = str(modality_params["detected_quanta_derivative_target"]).strip().lower()
         if detected_target != "signed_contrast_scaled":
             raise ValueError(
                 "render_matched_modality_observations currently computes Fisher on signed "
@@ -315,8 +312,8 @@ def render_matched_modality_observations(
                 "'signed_contrast_scaled' for matched packets, or route count-mean derivative "
                 "comparisons through the detected-quanta comparator."
             )
-        lateral_step_nm = float(modality_params.get("fisher_lateral_step_nm", 5.0))
-        fisher_particle_index = int(modality_params.get("fisher_particle_index", 0))
+        lateral_step_nm = float(modality_params["fisher_lateral_step_nm"])
+        fisher_particle_index = int(modality_params["fisher_particle_index"])
 
         def _frame_crlb(local_frame_index: int, local_contrast, local_noise_variance) -> dict:
             if lateral_derivative_mode == "rerendered_xy":
@@ -412,8 +409,8 @@ def render_matched_modality_observations(
             or f"{signal_units}^2"
         )
         sequence_requested = bool(
-            modality_params.get("sequence_fisher_enabled", False)
-            or modality_params.get("dynamic_bayesian_enabled", False)
+            modality_params["sequence_fisher_enabled"]
+            or modality_params["dynamic_bayesian_enabled"]
         )
         sequence_fisher_summary: dict[str, Any] = {
             "sequence_enabled": False,
@@ -445,7 +442,7 @@ def render_matched_modality_observations(
 
             dynamic_covariance = None
             initial_covariance = None
-            if bool(modality_params.get("dynamic_bayesian_enabled", False)):
+            if bool(modality_params["dynamic_bayesian_enabled"]):
                 diameters = resolve_translational_diameters_nm(modality_params)
                 if len(diameters) != 1:
                     raise ValueError(
@@ -454,17 +451,17 @@ def render_matched_modality_observations(
                     )
                 diffusion = stokes_einstein_diffusion_coefficient(
                     float(diameters[0]),
-                    float(modality_params.get("temperature_K", 298.15)),
-                    float(modality_params.get("viscosity_Pa_s", 1.0e-3)),
+                    float(modality_params["temperature_K"]),
+                    float(modality_params["viscosity_Pa_s"]),
                 )
                 dynamic_covariance = build_brownian_process_covariance(
                     ("x", "y"),
-                    fps=float(modality_params.get("fps", 1.0)),
+                    fps=float(modality_params["fps"]),
                     translational_diffusion_coeff_m2_s=float(diffusion)
-                    * float(modality_params.get("dynamic_process_noise_scale", 1.0)),
+                    * float(modality_params["dynamic_process_noise_scale"]),
                 )
                 initial_covariance = np.eye(2, dtype=float) * float(
-                    modality_params.get("dynamic_initial_variance_nm2", 1.0e30)
+                    modality_params["dynamic_initial_variance_nm2"]
                 )
             sequence_fisher_summary = summarize_fisher_sequence(
                 per_frame_fishers,
@@ -474,10 +471,10 @@ def render_matched_modality_observations(
                 noise_variance_units=crlb_noise_variance_units,
                 state_axis_units={"x": "nm", "y": "nm"},
                 dynamic_process_noise_covariance=dynamic_covariance,
-                dynamic_bayesian_enabled=bool(modality_params.get("dynamic_bayesian_enabled", False)),
-                fps=float(modality_params.get("fps", 1.0)),
+                dynamic_bayesian_enabled=bool(modality_params["dynamic_bayesian_enabled"]),
+                fps=float(modality_params["fps"]),
                 initial_covariance=initial_covariance,
-                include_smoothing=bool(modality_params.get("dynamic_include_smoothing", False)),
+                include_smoothing=bool(modality_params["dynamic_include_smoothing"]),
             )
             sequence_fisher_summary["sequence_requested"] = True
         for mask_entry in metadata.get("mask_arrays", []) or []:
@@ -493,7 +490,15 @@ def render_matched_modality_observations(
             response_function=response_function,
         )
         profile_card = dict(render_metadata.get("modality_profile_card", {}) or {})
-        if not profile_card:
+        required_profile_fields = {
+            "safe_for_linear_fisher_variance",
+            "detector_likelihood_status",
+            "detector_noise_input_domain",
+            "nonlinear_detector_effects_active",
+            "deterministic_detector_transfer_active",
+            "fisher_variance_model_scope",
+        }
+        if not profile_card or not required_profile_fields.issubset(profile_card):
             profile_card = profile_card_for_model(
                 modality_params,
                 model,
@@ -501,34 +506,23 @@ def render_matched_modality_observations(
                 response_function=response_function,
                 model_canvas_shape=signal_frame.shape,
             )
-        detector_safe_for_linear_fisher = bool(
-            profile_card.get("safe_for_linear_fisher_variance", True)
-        )
-        detector_likelihood_status = str(
-            profile_card.get(
-                "detector_likelihood_status",
-                "linear_poisson_gaussian_compatible"
-                if detector_safe_for_linear_fisher
-                else "nonlinear_or_static_transfer_not_in_linear_fisher",
-            )
-        )
-        crlb_by_modality[modality]["detector_noise_input_domain"] = profile_card.get(
-            "detector_noise_input_domain",
-            "camera_counts",
-        )
+        detector_safe_for_linear_fisher = bool(profile_card["safe_for_linear_fisher_variance"])
+        detector_likelihood_status = str(profile_card["detector_likelihood_status"])
+        crlb_by_modality[modality]["detector_noise_input_domain"] = profile_card[
+            "detector_noise_input_domain"
+        ]
         crlb_by_modality[modality]["nonlinear_detector_effects_active"] = bool(
-            profile_card.get("nonlinear_detector_effects_active", False)
+            profile_card["nonlinear_detector_effects_active"]
         )
         crlb_by_modality[modality]["deterministic_detector_transfer_active"] = bool(
-            profile_card.get("deterministic_detector_transfer_active", False)
+            profile_card["deterministic_detector_transfer_active"]
         )
         crlb_by_modality[modality]["safe_for_linear_fisher_variance"] = (
             detector_safe_for_linear_fisher
         )
-        crlb_by_modality[modality]["fisher_variance_model_scope"] = profile_card.get(
-            "fisher_variance_model_scope",
-            "linear_poisson_gaussian_only",
-        )
+        crlb_by_modality[modality]["fisher_variance_model_scope"] = profile_card[
+            "fisher_variance_model_scope"
+        ]
         crlb_by_modality[modality]["detector_likelihood_status"] = (
             detector_likelihood_status
         )
@@ -539,7 +533,7 @@ def render_matched_modality_observations(
             crlb_by_modality[modality]["safe_for_detected_quanta_ranking"] = False
         modality_metadata[modality] = {
             "imaging_model": modality,
-            "configured_wavelength_nm": float(modality_params.get("wavelength_nm", 0.0)),
+            "configured_wavelength_nm": float(modality_params["wavelength_nm"]),
             "probe_wavelength_nm": response_function.get(
                 "probe_wavelength_nm",
                 model.probe_wavelength_nm(modality_params),
@@ -553,24 +547,17 @@ def render_matched_modality_observations(
                 or response_function.get("backend_fidelity_metadata", {})
             ),
             "fisher_source": "analysis_contrast_frame",
-            "lateral_derivative_mode_auto_switched": bool(lateral_derivative_mode_auto_switched),
             "detected_quanta_derivative_target": detected_target,
             "sequence_fisher_summary": json_safe(sequence_fisher_summary),
-            "detector_noise_input_domain": profile_card.get(
-                "detector_noise_input_domain",
-                "camera_counts",
-            ),
+            "detector_noise_input_domain": profile_card["detector_noise_input_domain"],
             "nonlinear_detector_effects_active": bool(
-                profile_card.get("nonlinear_detector_effects_active", False)
+                profile_card["nonlinear_detector_effects_active"]
             ),
             "deterministic_detector_transfer_active": bool(
-                profile_card.get("deterministic_detector_transfer_active", False)
+                profile_card["deterministic_detector_transfer_active"]
             ),
             "safe_for_linear_fisher_variance": detector_safe_for_linear_fisher,
-            "fisher_variance_model_scope": profile_card.get(
-                "fisher_variance_model_scope",
-                "linear_poisson_gaussian_only",
-            ),
+            "fisher_variance_model_scope": profile_card["fisher_variance_model_scope"],
             "detector_likelihood_status": detector_likelihood_status,
             "modality_profile_card": json_safe(profile_card),
             "response_function": json_safe(response_function),
@@ -581,7 +568,7 @@ def render_matched_modality_observations(
     latent_state = {
         "frame_index": int(frame_index),
         "num_frames": int(latent_scene.get("num_frames", 0)),
-        "random_seed": base_params.get("random_seed"),
+            "random_seed": base_params["random_seed"],
         "trajectories_nm": trajectories.tolist(),
         "orientations": json_safe(latent_scene.get("orientations")),
         "particles": json_safe(get_particle_specs(base_params)),

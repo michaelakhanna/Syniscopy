@@ -65,7 +65,11 @@ def reliability_summary(scores: np.ndarray, labels: np.ndarray, *, bins: int = 1
     edges = np.linspace(0.0, 1.0, int(bins) + 1)
     ece = 0.0
     rows = []
-    for lo, hi in zip(edges[:-1], edges[1:], strict=True):
+    lower_edges = edges[:-1]
+    upper_edges = edges[1:]
+    if lower_edges.shape != upper_edges.shape:
+        raise RuntimeError("Calibration bin edge construction produced mismatched intervals.")
+    for lo, hi in zip(lower_edges, upper_edges):
         mask = (s >= lo) & (s < hi if hi < 1.0 else s <= hi)
         count = int(np.count_nonzero(mask))
         if count == 0:
@@ -80,4 +84,3 @@ def reliability_summary(scores: np.ndarray, labels: np.ndarray, *, bins: int = 1
         "expected_calibration_error": float(ece),
         "bins": rows,
     }
-

@@ -27,7 +27,6 @@ from .qpi import QuantitativePhaseImagingModel
 from .registry import (
     CANONICAL_COHERENT_MODALITIES,
     LABEL_FREE_OPTICAL_MODALITIES,
-    MODALITY_ALIASES,
     RELATIVE_REFERENCE_CONTRAST_MODALITIES,
     SUPPORTED_MODALITIES,
     _MODEL_REGISTRY,
@@ -46,7 +45,6 @@ __all__ = [
     "CANONICAL_COHERENT_MODALITIES",
     "RELATIVE_REFERENCE_CONTRAST_MODALITIES",
     "SUPPORTED_MODALITIES",
-    "MODALITY_ALIASES",
     "_MODEL_REGISTRY",
     "ImagingModel",
     "coherent_phase_from_reference",

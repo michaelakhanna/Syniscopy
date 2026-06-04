@@ -95,6 +95,7 @@ def _base_params(modality: str, image_size: int, pupil_samples: int) -> dict[str
                         "initial_position_nm": [0.5 * side_nm, 0.5 * side_nm, 0.0],
                     },
                     "signal_multiplier": 1.0,
+                    "source_multiplier": 1.0,
                     "components": [
                         {
                             "shape": "sphere",
@@ -103,6 +104,7 @@ def _base_params(modality: str, image_size: int, pupil_samples: int) -> dict[str
                             "material": "fluorescent_polystyrene" if "fluorescence" in modality else "polystyrene",
                             "refractive_index": None,
                             "signal_multiplier": 1.0,
+                            "source_multiplier": 1.0,
                             "material_properties": (
                                 {"fluorophore_density": 0.08}
                                 if "fluorescence" in modality

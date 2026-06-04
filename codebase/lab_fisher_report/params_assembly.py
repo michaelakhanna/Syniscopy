@@ -10,7 +10,7 @@ from bootstrap import ensure_codebase_on_path
 
 ensure_codebase_on_path()
 
-from config import PARAMS, normalize_params
+from config import PARAMS, normalize_params, param_value
 from modality_registry import (
     LAB_DEFAULT_MODALITIES,
     LAB_OPTICAL_MODALITIES,
@@ -68,7 +68,7 @@ def _apply_cli_overrides(params: dict[str, Any], args: argparse.Namespace) -> No
             params[key] = value
 
     num_frames = int(max(1, args.num_frames))
-    fps = float(params.get("fps", 30.0))
+    fps = float(param_value(params, "fps"))
     if fps <= 0.0:
         raise ValueError("PARAMS['fps'] must be positive for sequence rendering.")
 
@@ -78,23 +78,20 @@ def _apply_cli_overrides(params: dict[str, Any], args: argparse.Namespace) -> No
     params["mask_generation_enabled"] = False
     params["num_frames"] = num_frames
     params["duration_seconds"] = float(num_frames) / fps
-    params["background_subtraction_method"] = params.get(
-        "background_subtraction_method", "reference_frame"
-    )
     params["dynamic_bayesian_enabled"] = bool(args.dynamic_bayesian)
     params["dynamic_process_noise_scale"] = (
         float(args.dynamic_process_noise_scale)
         if args.dynamic_process_noise_scale is not None
-        else float(params.get("dynamic_process_noise_scale", 1.0))
+        else float(param_value(params, 'dynamic_process_noise_scale'))
     )
     params["dynamic_initial_variance_nm2"] = (
         float(args.dynamic_initial_variance_nm2)
         if args.dynamic_initial_variance_nm2 is not None
-        else float(params.get("dynamic_initial_variance_nm2", 1.0e30))
+        else float(param_value(params, 'dynamic_initial_variance_nm2'))
     )
     params["dynamic_include_smoothing"] = bool(args.dynamic_include_smoothing)
 
-    particles = params.get("particles")
+    particles = param_value(params, "particles")
     if not isinstance(particles, list) or not particles:
         particles = deepcopy(TEMPLATE_OVERRIDES["particles"])
         params["particles"] = particles
@@ -120,7 +117,7 @@ def _apply_cli_overrides(params: dict[str, Any], args: argparse.Namespace) -> No
         float(args.z_nm),
     ]
     params["initial_z_span_nm"] = max(
-        float(params.get("initial_z_span_nm", 4000.0)),
+        float(param_value(params, "initial_z_span_nm")),
         2.0 * abs(float(args.z_nm)) + 1000.0,
     )
 
@@ -140,7 +137,7 @@ def _make_params(args: argparse.Namespace) -> dict[str, Any]:
             "lab_fisher_report currently expects exactly one logical particle. "
             "For multi-particle scenes, generate a dataset or run a targeted crop workflow."
         )
-    method = str(params.get("background_subtraction_method", "reference_frame")).strip().lower()
+    method = str(params["background_subtraction_method"]).strip().lower()
     if method in VIDEO_BACKGROUND_SUBTRACTION_METHODS:
         raise ValueError(
             "lab_fisher_report renders frame sequences; background_subtraction_method='video_median' "

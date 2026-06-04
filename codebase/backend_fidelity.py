@@ -30,27 +30,19 @@ class BackendFidelityLevel(str, Enum):
 
 
 def normalize_backend_fidelity_level(value: Any) -> str:
-    """Normalize heterogeneous legacy values to :class:`BackendFidelityLevel`."""
+    """Validate and return a canonical :class:`BackendFidelityLevel` value."""
 
     if isinstance(value, BackendFidelityLevel):
         raw = value.value
     else:
         raw = "proxy" if value is None else str(value).strip().lower().replace(" ", "_")
-    if raw in {"physics_based_unvalidated", "physics_based", "physics-based", "physical"}:
-        return BackendFidelityLevel.PHYSICS_BASED.value
-    if raw in {
-        "high_fidelity",
-        "high-fidelity",
-        "highfidelity",
-        "multislice",
-        "multislice_lite",
-    }:
-        return BackendFidelityLevel.HIGH_FIDELITY.value
-    if raw in {"reference_validated", "validated", "reference-valid"}:
-        return BackendFidelityLevel.REFERENCE_VALIDATED.value
-    if raw == "proxy":
-        return BackendFidelityLevel.PROXY.value
-    return BackendFidelityLevel.UNKNOWN.value
+    valid = {level.value for level in BackendFidelityLevel}
+    if raw not in valid:
+        raise ValueError(
+            "backend_fidelity_level must be one of "
+            f"{sorted(valid)}; got {value!r}."
+        )
+    return raw
 
 
 @dataclass(frozen=True)
@@ -180,11 +172,10 @@ def attach_backend_fidelity_metadata(
 ) -> dict[str, Any]:
     """Return a response metadata payload with enforceable fidelity keys."""
 
+    del params
     payload: dict[str, Any] = dict(response or {})
 
     raw_level = payload.get("backend_fidelity_level")
-    if params is not None and "backend_fidelity_level" in params:
-        raw_level = params["backend_fidelity_level"]
     fidelity = normalize_backend_fidelity_level(raw_level)
 
     metadata = BackendResultMetadata(
@@ -225,24 +216,11 @@ def attach_backend_fidelity_metadata(
         )
         or "not_declared",
         reference_backend_metadata=payload.get("reference_backend_metadata"),
-        validation_status=normalize_validation_status(
-            payload.get("validation_status")
-            if payload.get("validation_status") is not None
-            else params.get("validation_status")
-            if params is not None
-            else None
-        ),
-        convergence_status=normalize_convergence_status(
-            payload.get("convergence_status")
-            if payload.get("convergence_status") is not None
-            else params.get("convergence_status")
-            if params is not None
-            else None
-        ),
+        validation_status=normalize_validation_status(payload.get("validation_status")),
+        convergence_status=normalize_convergence_status(payload.get("convergence_status")),
         comparison_contract_id=_first_nonempty(
             comparison_contract_id,
             payload.get("comparison_contract_id"),
-            params.get("comparison_contract_id") if params is not None else None,
             "Contract-NR",
         )
         or "Contract-NR",

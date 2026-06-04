@@ -13,13 +13,14 @@ from typing import Any, Sequence
 from experiment_contracts import acquisition_cost_from_profile
 from modality_registry import (
     ELECTRON_MODALITIES,
+    FLUORESCENCE_MODALITIES,
     LABEL_FREE_OPTICAL_MODALITIES,
     canonical_modality_name,
 )
 
 
 _ELECTRON_MODALITIES = set(ELECTRON_MODALITIES)
-_FLUORESCENCE_MODALITIES = {"fluorescence_widefield", "tirf_fluorescence"}
+_FLUORESCENCE_MODALITIES = set(FLUORESCENCE_MODALITIES)
 _LIVE_OPTICAL_MODALITIES = set(LABEL_FREE_OPTICAL_MODALITIES) | _FLUORESCENCE_MODALITIES
 
 

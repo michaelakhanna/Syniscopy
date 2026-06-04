@@ -1,11 +1,11 @@
 """Dataset output completeness checks."""
 
 from __future__ import annotations
+from config import param_value
 
 import os
 from typing import Any, Mapping
 
-import cv2
 import numpy as np
 
 from shared_constants import MATCHED_INFORMATION_MASK_ROLES
@@ -32,6 +32,8 @@ def _raw_frame_views_complete(path: str, expected_num_frames: int) -> bool:
 def _avi_video_complete(path: str, expected_num_frames: int) -> bool:
     if expected_num_frames <= 0 or not _existing_nonempty_file(path):
         return False
+    import cv2
+
     capture = cv2.VideoCapture(path)
     try:
         if not capture.isOpened():
@@ -122,8 +124,8 @@ def _mask_outputs_complete(mask_path: str, manifest: Mapping[str, Any], expected
     return True
 
 def _video_assets_complete(base_output_dir: str, video_index: int) -> bool:
+    from .json_io import _load_json_file
     from .runtime import _video_manifest_path
-    from .state import _load_json_file
 
     manifest = _load_json_file(_video_manifest_path(base_output_dir, video_index))
     if not isinstance(manifest, dict):
@@ -178,22 +180,31 @@ def _validate_dataset_output_contract(params: Mapping[str, Any]) -> None:
     manifest. Multichannel direct-render modes that skip the primary video are
     valid for low-level simulation calls but not for this dataset entry point.
     """
-    channels = params.get("channels", None)
-    if channels is not None and params.get("matched_modalities") is not None:
+    channels = param_value(params, 'channels')
+    if channels is not None and param_value(params, "matched_modalities") is not None:
         raise ValueError(
             "Dataset generation cannot combine PARAMS['channels'] with "
             "PARAMS['matched_modalities']; matched packets render their own "
             "modality set and reject spectral channels."
         )
-    if not bool(params.get("save_frame_sequence", True)):
+    if not bool(param_value(params, 'save_frame_sequence')):
         raise ValueError(
             "Dataset generation requires save_frame_sequence=True. "
             "PNG frame sequences are the canonical 8-bit training/inference "
             "artifact; AVI is only a preview. Enable save_raw_frame_views for "
             "quantitative raw/ideal arrays."
         )
+    volumetric_mode = str(param_value(params, 'volumetric_imaging_mode')).strip().lower()
+    if volumetric_mode != "single_plane":
+        raise ValueError(
+            "Dataset generation requires volumetric_imaging_mode='single_plane'. "
+            "Volumetric simulation outputs are analysis-volume dictionaries, "
+            "not the public (T, C, H, W) video-frame result required by the "
+            "dataset frame-sequence writer. Use generate_volumetric_views() "
+            "for volumetric analysis outputs."
+        )
     if channels:
-        output_mode = str(params.get("multichannel_output_mode", "rgb")).strip().lower()
+        output_mode = str(param_value(params, 'multichannel_output_mode')).strip().lower()
         if output_mode not in {"rgb", "both"}:
             raise ValueError(
                 "Dataset generation requires multichannel_output_mode='rgb' "

@@ -7,8 +7,9 @@ import numpy as np
 
 from camera_noise import DetectorNoiseRuntime, apply_camera_noise_counts
 from config import normalize_params
+from config.runtime import internal_param_value, param_value, resolved_modality, resolved_random_seed
 from imaging_models import get_imaging_model
-from modality_registry import canonical_modality_name
+from modality_registry import is_fluorescence_modality
 from postprocessing import apply_background_subtraction, save_video
 
 _VISIBLE_WAVELENGTH_MIN_NM = 380.0
@@ -54,8 +55,7 @@ def _channel_spec_to_params(base_params: dict, channel, channel_index: int) -> t
         channel_name = str(channel.get("name", f"ch{channel_index + 1}"))
         if "imaging_model" in channel:
             requested_model = str(channel["imaging_model"]).strip()
-            base_model = str(base_params.get("imaging_model", "")).strip()
-            if requested_model and requested_model != base_model:
+            if requested_model and resolved_modality({"imaging_model": requested_model}) != resolved_modality(base_params):
                 raise ValueError(
                     "Spectral channel entries may not override PARAMS['imaging_model']; "
                     "use matched_modalities for multi-modality packets instead."
@@ -64,7 +64,7 @@ def _channel_spec_to_params(base_params: dict, channel, channel_index: int) -> t
             {k: v for k, v in channel.items()
              if k not in {"name", "rgb", "detector_weights_rgb", "detector_weights", "weight", "spectral_weight"}}
         )
-        wavelength_nm = float(channel_params.get("wavelength_nm", base_params.get("wavelength_nm", 532.0)))
+        wavelength_nm = float(param_value(channel_params, "wavelength_nm"))
         spectral_weight = float(channel.get("spectral_weight", channel.get("weight", 1.0)))
         weights = None
         for weights_key in ("detector_weights_rgb", "detector_weights", "rgb"):
@@ -106,15 +106,13 @@ def _channel_spec_to_params(base_params: dict, channel, channel_index: int) -> t
         )
 
     channel_params["wavelength_nm"] = wavelength_nm
-    probe_wavelength_nm = channel_params.get("probe_wavelength_nm", None)
+    probe_wavelength_nm = param_value(channel_params, 'probe_wavelength_nm')
     if probe_wavelength_nm is None:
         probe_wavelength_nm = wavelength_nm
     channel_params["probe_wavelength_nm"] = float(probe_wavelength_nm)
-    modality = canonical_modality_name(
-        str(channel_params.get("imaging_model", base_params.get("imaging_model", "bright_field")))
-    )
+    modality = resolved_modality(channel_params)
     if (
-        modality in {"fluorescence_widefield", "tirf_fluorescence"}
+        is_fluorescence_modality(modality)
         and "fluorescence_emission_wavelength_nm" not in explicit_keys
     ):
         channel_params["fluorescence_emission_wavelength_nm"] = float(wavelength_nm)
@@ -248,7 +246,7 @@ def _save_channel_videos(params: dict, spectral_items: list[dict], fps: float) -
     from the RGB visualization composite and are only written when
     ``multichannel_output_mode`` is ``"channels"`` or ``"both"``.
     """
-    sidecar_dir = params.get("multichannel_sidecar_directory", None)
+    sidecar_dir = param_value(params, 'multichannel_sidecar_directory')
     if not sidecar_dir:
         stem, _ = os.path.splitext(params["output_filename"])
         sidecar_dir = stem + "_channels"
@@ -308,7 +306,7 @@ def _apply_detector_noise_to_rgb_raw_frames(
     detector_noise_runtime: DetectorNoiseRuntime | None = None,
 ) -> list[np.ndarray]:
     if detector_noise_runtime is None:
-        rng_seed = params.get("random_seed", None)
+        rng_seed = param_value(params, 'random_seed')
         detector_noise_runtime = DetectorNoiseRuntime(
             rng=np.random.default_rng(None if rng_seed is None else int(rng_seed))
         )
@@ -415,7 +413,7 @@ def _run_multichannel_simulation(
     base_model = get_imaging_model(params)
     if not bool(getattr(base_model, "supports_spectral_channels", True)):
         raise ValueError(
-            f"PARAMS['imaging_model']={params.get('imaging_model')!r} does not support "
+            f"PARAMS['imaging_model']={param_value(params, 'imaging_model')!r} does not support "
             "PARAMS['channels']; use matched_modalities or a modality-specific loop instead."
         )
 
@@ -430,7 +428,7 @@ def _run_multichannel_simulation(
         )
         deterministic_params = _disable_detector_noise_for_spectral_component(channel_params)
         deterministic_params["return_ideal_float_frames"] = True
-        deterministic_params["mask_generation_enabled"] = bool(channel_index == 0 and params.get("mask_generation_enabled", True))
+        deterministic_params["mask_generation_enabled"] = bool(channel_index == 0 and param_value(params, 'mask_generation_enabled'))
 
         frames = _render_scene_with_params(
             deterministic_params,
@@ -476,7 +474,7 @@ def _run_multichannel_simulation(
         signal_rgb_float.append(sig_rgb)
         reference_rgb_float.append(ref_rgb)
 
-    rng_seed = params.get("random_seed", None)
+    rng_seed = resolved_random_seed(params)
     detector_noise_runtime = DetectorNoiseRuntime(
         rng=np.random.default_rng(None if rng_seed is None else int(rng_seed))
     )
@@ -509,9 +507,9 @@ def _run_multichannel_simulation(
             "spectral_channels": [item["name"] for item in spectral_items],
             "spectral_items": spectral_items,
             "spectral_integration_model": str(
-                params.get("spectral_integration_model", "configured_channels")
+                param_value(params, "spectral_integration_model")
             ),
-            "generated_spectral_channels": bool(params.get("_generated_spectral_channels", False)),
+            "generated_spectral_channels": bool(internal_param_value(params, "_generated_spectral_channels")),
             "spectral_channel_count": int(len(spectral_items)),
             "ideal_signal_frames_by_spectral_sample": ideal_signal_arrays,
             "ideal_reference_frames_by_spectral_sample": ideal_reference_arrays,

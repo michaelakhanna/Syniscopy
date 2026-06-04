@@ -31,6 +31,16 @@ FISHER_CONTRACT_SCHEMA: dict[str, ParamSpec] = {
         "rerendered x/y scene perturbations for structured sample environments."
     ),
 ),
+"fisher_particle_index": ParamSpec(
+    key="fisher_particle_index",
+    type="int",
+    default=0,
+    min=0,
+    max=1000000,
+    ui_label="Fisher particle index",
+    group="Advanced Fisher",
+    description="Zero-based particle index used for matched-modality rerendered Fisher diagnostics.",
+),
 "fisher_likelihood_model": ParamSpec(
     key="fisher_likelihood_model",
     type="enum",
@@ -40,7 +50,6 @@ FISHER_CONTRACT_SCHEMA: dict[str, ParamSpec] = {
         "poisson_exact",
         "gaussian_parameter_dependent_variance",
         "poisson_gaussian_approx",
-        "poisson_gaussian_plugin",
         "mean_fisher_diagnostic",
     ],
     ui_label="Fisher likelihood model",
@@ -55,6 +64,14 @@ FISHER_CONTRACT_SCHEMA: dict[str, ParamSpec] = {
     ui_label="Detected quanta derivative target",
     group="Advanced Fisher",
     description="Finite-difference derivative target used by Fisher diagnostics.",
+),
+"profile_fidelity_label": ParamSpec(
+    key="profile_fidelity_label",
+    type="string",
+    default="model_conditional_profile",
+    ui_label="Profile fidelity label",
+    group="Advanced Fisher",
+    description="Fallback fidelity label used only when a backend response does not report one.",
 ),
 }
 

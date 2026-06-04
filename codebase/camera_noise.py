@@ -25,31 +25,25 @@ from typing import Any
 
 import numpy as np
 
-from modality_registry import ELECTRON_MODALITIES, canonical_modality_name
+from config.runtime import (
+    param_value,
+    resolved_background_intensity,
+    resolved_dark_field_background_count,
+    resolved_dark_field_illumination_count,
+    resolved_detector_qe,
+    resolved_modality,
+    resolved_qpi_phase_to_count_scale,
+)
+from measurement_units import normalize_detector_noise_input_domain
+from modality_registry import canonical_modality_name, is_electron_modality, is_fluorescence_modality
 from shared_constants import RAW_BACKGROUND_SUBTRACTION_METHODS
-
-
-class _GlobalNumpyRandomAdapter:
-    """Adapter exposing Generator-like methods backed by np.random's global RNG."""
-
-    @staticmethod
-    def poisson(lam):
-        return np.random.poisson(lam)
-
-    @staticmethod
-    def normal(*args, **kwargs):
-        return np.random.normal(*args, **kwargs)
-
-    @staticmethod
-    def random(*args, **kwargs):
-        return np.random.random(*args, **kwargs)
 
 
 @dataclass
 class DetectorNoiseRuntime:
     """Run-scoped detector-noise state: random source plus resolved map caches."""
 
-    rng: Any = field(default_factory=_GlobalNumpyRandomAdapter)
+    rng: Any = field(default_factory=np.random.default_rng)
     static_detector_map_cache: dict[tuple, dict[str, np.ndarray]] = field(default_factory=dict)
     camera_noise_map_cache: dict[tuple[str, tuple[int, ...], Any], np.ndarray] = field(default_factory=dict)
     lock: RLock = field(default_factory=RLock)
@@ -71,11 +65,6 @@ class DetectorNoiseRuntime:
 _DEFAULT_DETECTOR_NOISE_RUNTIME = DetectorNoiseRuntime()
 
 
-def default_detector_noise_runtime() -> DetectorNoiseRuntime:
-    """Return the process-default detector-noise runtime for legacy callers."""
-    return _DEFAULT_DETECTOR_NOISE_RUNTIME
-
-
 def _noise_runtime(runtime: DetectorNoiseRuntime | None = None) -> DetectorNoiseRuntime:
     return runtime if runtime is not None else _DEFAULT_DETECTOR_NOISE_RUNTIME
 
@@ -95,89 +84,70 @@ def clear_detector_static_noise_cache(runtime: DetectorNoiseRuntime | None = Non
 
 @dataclass(frozen=True)
 class CameraNoiseConfig:
-    shot_noise_enabled: bool = True
-    gaussian_noise_enabled: bool = True
-    camera_gain_e_per_count: float = 1.0
-    detector_qe: float = 1.0
-    detector_input_is_incident_quanta: bool = False
-    detector_noise_input_domain: str = "camera_counts"
-    emccd_enabled: bool = False
-    emccd_gain: float = 1.0
-    emccd_excess_noise_factor: float = 1.0
-    read_noise_e: float | None = None
-    dark_current_e_per_pixel_per_s: float = 0.0
-    exposure_time_s: float = 1.0
-    saturation_level: float | None = None
-    saturation_e: float | None = None
-    adc_quantization: bool = False
-    adc_quantization_counts: float = 1.0
-    background_offset_counts: float = 0.0
-    read_noise_counts: float = 1.0
-    dark_offset_counts: float = 0.0
-    fixed_pattern_gain_std: float = 0.0
-    fixed_pattern_offset_counts: float = 0.0
-    hot_pixel_fraction: float = 0.0
-    hot_pixel_value_counts: float | None = None
-    fixed_pattern_gain_map: str | None = None
-    fixed_pattern_offset_map: str | None = None
-    scmos_gain_map: str | None = None
-    scmos_variance_map: str | None = None
-    scmos_read_noise_map: str | None = None
-    read_noise_map_mode: str = "replace"
-    hot_pixel_mask: str | None = None
-    flat_field_map: str | None = None
-    dark_frame_map: str | None = None
-    prnu_map: str | None = None
-    dsnu_map: str | None = None
-    scan_line_noise_counts: float = 0.0
-    clip_output_to_nonnegative: bool = True
-    noise_parameterization: str = "camera_counts"
-    nonlinear_detector_effects_active: bool = False
-    deterministic_detector_transfer_active: bool = False
-    safe_for_linear_fisher_variance: bool = True
+    shot_noise_enabled: bool
+    gaussian_noise_enabled: bool
+    camera_gain_e_per_count: float
+    detector_qe: float
+    detector_input_is_incident_quanta: bool
+    detector_noise_input_domain: str
+    emccd_enabled: bool
+    emccd_gain: float
+    emccd_excess_noise_factor: float
+    read_noise_e: float | None
+    dark_current_e_per_pixel_per_s: float
+    exposure_time_s: float
+    saturation_level: float | None
+    saturation_e: float | None
+    adc_quantization: bool
+    adc_quantization_counts: float
+    background_offset_counts: float
+    read_noise_counts: float
+    dark_offset_counts: float
+    fixed_pattern_gain_std: float
+    fixed_pattern_offset_counts: float
+    hot_pixel_fraction: float
+    hot_pixel_value_counts: float | None
+    fixed_pattern_gain_map: str | None
+    fixed_pattern_offset_map: str | None
+    scmos_gain_map: str | None
+    scmos_variance_map: str | None
+    scmos_read_noise_map: str | None
+    read_noise_map_mode: str
+    hot_pixel_mask: str | None
+    nonlinearity_calibration: str | None
+    flat_field_map: str | None
+    dark_frame_map: str | None
+    scan_line_noise_counts: float
+    clip_output_to_nonnegative: bool
+    noise_parameterization: str
+    nonlinear_detector_effects_active: bool
+    deterministic_detector_transfer_active: bool
+    safe_for_linear_fisher_variance: bool
 
 
 def _normalise_noise_key(name: Any) -> str:
     return str(name).strip().lower()
 
 
+def _explicit_noise_input_domain(noise_model: dict[str, Any]) -> Any | None:
+    if "detector_noise_input_domain" in noise_model:
+        return noise_model["detector_noise_input_domain"]
+    return None
+
+
 def _resolved_detector_noise_input_domain(params: dict[str, Any]) -> str:
     noise_model = _resolved_noise_model(params)
-    explicit = noise_model.get(
-        "detector_noise_input_domain",
-        noise_model.get(
-            "noise_input_domain",
-            params.get("detector_noise_input_domain", params.get("noise_input_domain", None)),
-        ),
-    )
+    explicit = _explicit_noise_input_domain(noise_model)
     if explicit is not None:
-        domain = str(explicit).strip().lower()
+        domain = explicit
     else:
-        modality = canonical_modality_name(params.get("imaging_model", ""))
-        domain = (
-            "electron_count"
-            if modality in ELECTRON_MODALITIES
-            else "camera_counts"
-        )
-    aliases = {
-        "count": "camera_counts",
-        "counts": "camera_counts",
-        "detector_count": "camera_counts",
-        "detector_counts": "camera_counts",
-        "camera_count": "camera_counts",
-        "camera_counts": "camera_counts",
-        "adu": "camera_counts",
-        "electron": "electron_count",
-        "electrons": "electron_count",
-        "electron_count": "electron_count",
-        "electron_counts": "electron_count",
-    }
-    if domain not in aliases:
-        raise ValueError(
-            "detector_noise_input_domain must be 'camera_counts' or "
-            f"'electron_count'; got {explicit!r}."
-        )
-    return aliases[domain]
+        configured = param_value(params, "detector_noise_input_domain")
+        if configured is not None:
+            domain = configured
+        else:
+            modality = resolved_modality(params)
+            domain = "electron_count" if is_electron_modality(modality) else "camera_counts"
+    return normalize_detector_noise_input_domain(domain)
 
 
 def _map_cache_key(kind: str, raw: Any) -> tuple[str, tuple[int, ...], Any]:
@@ -363,24 +333,16 @@ def _resolved_noise_model(params: dict[str, Any]) -> dict[str, Any]:
     modality_noise are public configuration containers.
     """
     cfg: dict[str, Any] = {}
-    noise_model = params.get("noise_model", {}) or {}
+    noise_model = param_value(params, 'noise_model') or {}
     if isinstance(noise_model, dict):
         cfg.update(noise_model)
 
-    modality_key = _normalise_noise_key(params.get("imaging_model", ""))
-    modality_aliases = {
-        modality_key,
-        _normalise_noise_key(canonical_modality_name(modality_key)),
-    }
-    per_modality = params.get("modality_noise", {}) or {}
+    modality_key = _normalise_noise_key(resolved_modality(params))
+    per_modality = param_value(params, 'modality_noise') or {}
     if isinstance(per_modality, dict) and modality_key:
         for raw_key, override in per_modality.items():
-            raw_norm = _normalise_noise_key(raw_key)
-            raw_aliases = {
-                raw_norm,
-                _normalise_noise_key(canonical_modality_name(raw_norm)),
-            }
-            if raw_aliases & modality_aliases:
+            raw_norm = _normalise_noise_key(canonical_modality_name(raw_key))
+            if raw_norm == modality_key:
                 if not isinstance(override, dict):
                     raise TypeError(
                         "PARAMS['modality_noise'][imaging_model] must be a dictionary."
@@ -390,11 +352,11 @@ def _resolved_noise_model(params: dict[str, Any]) -> dict[str, Any]:
     return cfg
 
 
-def _cfg_value(params: dict[str, Any], key: str, default: Any) -> Any:
+def _cfg_value(params: dict[str, Any], key: str) -> Any:
     noise_model = _resolved_noise_model(params)
     if key in noise_model:
         return noise_model[key]
-    return params.get(key, default)
+    return param_value(params, key)
 
 
 def resolve_camera_noise_config(params: dict[str, Any] | None = None) -> CameraNoiseConfig:
@@ -408,82 +370,74 @@ def resolve_camera_noise_config(params: dict[str, Any] | None = None) -> CameraN
     params = dict(params or {})
     detector_noise_input_domain = _resolved_detector_noise_input_domain(params)
 
-    def _cfg_bool(key: str, default: bool) -> bool:
-        value = _cfg_value(params, key, default)
+    def _cfg_bool(key: str) -> bool:
+        value = _cfg_value(params, key)
         if not isinstance(value, bool):
             raise ValueError(f"{key} must be a boolean true/false value; got {value!r}.")
         return bool(value)
 
-    gain = float(_cfg_value(params, "camera_gain_e_per_count", 1.0))
+    gain = float(_cfg_value(params, "camera_gain_e_per_count"))
     if not np.isfinite(gain) or gain <= 0.0:
         raise ValueError(f"camera_gain_e_per_count must be finite and positive; got {gain}.")
     if detector_noise_input_domain == "electron_count":
         gain = 1.0
 
-    detector_qe = float(_cfg_value(params, "detector_qe", _cfg_value(params, "fluorescence_detector_qe", 1.0)))
+    noise_model = _resolved_noise_model(params)
+    if "detector_qe" in noise_model:
+        detector_qe = float(noise_model["detector_qe"])
+    elif "fluorescence_detector_qe" in noise_model:
+        detector_qe = float(noise_model["fluorescence_detector_qe"])
+    else:
+        detector_qe = resolved_detector_qe(
+            params,
+            fluorescence=is_fluorescence_modality(resolved_modality(params)),
+        )
     if not np.isfinite(detector_qe) or detector_qe < 0.0 or detector_qe > 1.0:
         raise ValueError(f"detector_qe must be finite and in [0, 1]; got {detector_qe}.")
-    emccd_enabled = _cfg_bool("emccd_enabled", False)
-    emccd_gain = float(_cfg_value(params, "emccd_gain", 1.0))
+    emccd_enabled = _cfg_bool("emccd_enabled")
+    emccd_gain = float(_cfg_value(params, "emccd_gain"))
     if not np.isfinite(emccd_gain) or emccd_gain <= 0.0:
         raise ValueError(f"emccd_gain must be finite and positive; got {emccd_gain}.")
-    emccd_excess = float(_cfg_value(params, "emccd_excess_noise_factor", 1.0))
+    emccd_excess = float(_cfg_value(params, "emccd_excess_noise_factor"))
     if not np.isfinite(emccd_excess) or emccd_excess < 1.0:
         raise ValueError(f"emccd_excess_noise_factor must be finite and >= 1; got {emccd_excess}.")
-    read_noise_e = _cfg_value(params, "read_noise_e", None)
-    read_noise = float(_cfg_value(params, "read_noise_counts", 1.0))
+    read_noise_e = _cfg_value(params, "read_noise_e")
+    read_noise = float(_cfg_value(params, "read_noise_counts"))
     if read_noise_e is not None:
         read_noise = float(read_noise_e) / gain
     if not np.isfinite(read_noise) or read_noise < 0.0:
         raise ValueError(f"read_noise_counts must be finite and non-negative; got {read_noise}.")
 
-    dark_offset = float(_cfg_value(params, "dark_offset_counts", 0.0))
-    background_offset = float(_cfg_value(params, "background_offset_counts", 0.0))
-    dark_current_e = float(_cfg_value(params, "dark_current_e_per_pixel_per_s", 0.0))
-    exposure_time_s = float(_cfg_value(params, "exposure_time_s", 1.0))
-    saturation_level = _cfg_value(params, "saturation_level", None)
+    dark_offset = float(_cfg_value(params, "dark_offset_counts"))
+    background_offset = float(_cfg_value(params, "background_offset_counts"))
+    dark_current_e = float(_cfg_value(params, "dark_current_e_per_pixel_per_s"))
+    exposure_time_s = float(_cfg_value(params, "exposure_time_s"))
+    saturation_level = _cfg_value(params, "saturation_level")
     saturation_level = None if saturation_level is None else float(saturation_level)
-    saturation_e = _cfg_value(params, "saturation_e", None)
+    saturation_e = _cfg_value(params, "saturation_e")
     saturation_e = None if saturation_e is None else float(saturation_e)
-    adc_quantization = _cfg_bool("adc_quantization", False)
-    adc_quantization_counts = float(_cfg_value(params, "adc_quantization_counts", 1.0))
-    fpn_gain = float(_cfg_value(params, "fixed_pattern_gain_std", 0.0))
-    fpn_offset = float(_cfg_value(params, "fixed_pattern_offset_counts", 0.0))
-    hot_fraction = float(_cfg_value(params, "hot_pixel_fraction", 0.0))
-    hot_value = _cfg_value(params, "hot_pixel_value_counts", None)
+    adc_quantization = _cfg_bool("adc_quantization")
+    adc_quantization_counts = float(_cfg_value(params, "adc_quantization_counts"))
+    fpn_gain = float(_cfg_value(params, "fixed_pattern_gain_std"))
+    fpn_offset = float(_cfg_value(params, "fixed_pattern_offset_counts"))
+    hot_fraction = float(_cfg_value(params, "hot_pixel_fraction"))
+    hot_value = _cfg_value(params, "hot_pixel_value_counts")
     hot_value = None if hot_value is None else float(hot_value)
-    line_noise = float(_cfg_value(params, "scan_line_noise_counts", 0.0))
-    fixed_pattern_gain_map = _cfg_value(
-        params,
-        "fixed_pattern_gain_map",
-        _cfg_value(params, "prnu_map", None),
-    )
-    fixed_pattern_offset_map = _cfg_value(
-        params,
-        "fixed_pattern_offset_map",
-        _cfg_value(params, "dsnu_map", None),
-    )
-    scmos_variance_map = _cfg_value(params, "scmos_variance_map", None)
-    scmos_gain_map = _cfg_value(params, "scmos_gain_map", None)
-    scmos_read_noise_map = _cfg_value(params, "scmos_read_noise_map", None)
-    read_noise_map_mode_default = (
-        "replace"
-        if scmos_variance_map is not None or scmos_read_noise_map is not None
-        else "add"
-    )
-    read_noise_map_mode = str(
-        _cfg_value(params, "read_noise_map_mode", read_noise_map_mode_default)
-    ).strip().lower()
+    line_noise = float(_cfg_value(params, "scan_line_noise_counts"))
+    fixed_pattern_gain_map = _cfg_value(params, "fixed_pattern_gain_map")
+    fixed_pattern_offset_map = _cfg_value(params, "fixed_pattern_offset_map")
+    scmos_variance_map = _cfg_value(params, "scmos_variance_map")
+    scmos_gain_map = _cfg_value(params, "scmos_gain_map")
+    scmos_read_noise_map = _cfg_value(params, "scmos_read_noise_map")
+    read_noise_map_mode = str(_cfg_value(params, "read_noise_map_mode")).strip().lower()
     if read_noise_map_mode not in {"replace", "add"}:
         raise ValueError(
             "read_noise_map_mode must be 'replace' or 'add'; "
             f"got {read_noise_map_mode!r}."
         )
-    hot_pixel_mask = _cfg_value(params, "hot_pixel_mask", None)
-    flat_field_map = _cfg_value(params, "flat_field_map", None)
-    dark_frame_map = _cfg_value(params, "dark_frame_map", None)
-    prnu_map = _cfg_value(params, "prnu_map", None)
-    dsnu_map = _cfg_value(params, "dsnu_map", None)
+    hot_pixel_mask = _cfg_value(params, "hot_pixel_mask")
+    flat_field_map = _cfg_value(params, "flat_field_map")
+    dark_frame_map = _cfg_value(params, "dark_frame_map")
     if fixed_pattern_gain_map is not None:
         _coerce_map_value(fixed_pattern_gain_map, dtype=float)
     if fixed_pattern_offset_map is not None:
@@ -498,10 +452,6 @@ def resolve_camera_noise_config(params: dict[str, Any] | None = None) -> CameraN
         _coerce_map_value(flat_field_map, dtype=float)
     if dark_frame_map is not None:
         _coerce_map_value(dark_frame_map, dtype=float)
-    if prnu_map is not None:
-        _coerce_map_value(prnu_map, dtype=float)
-    if dsnu_map is not None:
-        _coerce_map_value(dsnu_map, dtype=float)
     if hot_pixel_mask is not None:
         _resolve_boolean_mask("hot_pixel_mask", hot_pixel_mask)
 
@@ -531,21 +481,25 @@ def resolve_camera_noise_config(params: dict[str, Any] | None = None) -> CameraN
     if saturation_e is not None and (not np.isfinite(saturation_e) or saturation_e <= 0.0):
         raise ValueError(f"saturation_e must be finite and positive when supplied; got {saturation_e}.")
 
-    noise_parameterization = str(_cfg_value(params, "noise_parameterization", "camera_counts")).strip().lower()
+    noise_parameterization = str(_cfg_value(params, "noise_parameterization")).strip().lower()
     if noise_parameterization != "camera_counts":
         raise ValueError(
             "noise_parameterization must be 'camera_counts'; "
-            f"got {_cfg_value(params, 'noise_parameterization', 'camera_counts')!r}."
+            f"got {_cfg_value(params, 'noise_parameterization')!r}."
         )
-    detector_input_is_incident_quanta = _cfg_bool("detector_input_is_incident_quanta", False)
+    detector_input_is_incident_quanta = _cfg_bool("detector_input_is_incident_quanta")
     if detector_noise_input_domain == "electron_count":
         detector_input_is_incident_quanta = False
+
+    nonlinearity_calibration = _cfg_value(params, "nonlinearity_calibration")
+    if nonlinearity_calibration is not None:
+        nonlinearity_calibration = str(nonlinearity_calibration)
 
     nonlinear_active = bool(
         saturation_level is not None
         or saturation_e is not None
         or adc_quantization
-        or _cfg_value(params, "nonlinearity_calibration", None) is not None
+        or nonlinearity_calibration is not None
     )
     deterministic_transfer_active = bool(
         fixed_pattern_gain_map is not None
@@ -561,8 +515,8 @@ def resolve_camera_noise_config(params: dict[str, Any] | None = None) -> CameraN
     safe_for_linear_fisher_variance = not (nonlinear_active or deterministic_transfer_active)
 
     return CameraNoiseConfig(
-        shot_noise_enabled=_cfg_bool("shot_noise_enabled", True),
-        gaussian_noise_enabled=_cfg_bool("gaussian_noise_enabled", True),
+        shot_noise_enabled=_cfg_bool("shot_noise_enabled"),
+        gaussian_noise_enabled=_cfg_bool("gaussian_noise_enabled"),
         camera_gain_e_per_count=gain,
         detector_qe=detector_qe,
         detector_input_is_incident_quanta=detector_input_is_incident_quanta,
@@ -589,14 +543,13 @@ def resolve_camera_noise_config(params: dict[str, Any] | None = None) -> CameraN
         scmos_read_noise_map=scmos_read_noise_map,
         read_noise_map_mode=read_noise_map_mode,
         hot_pixel_mask=hot_pixel_mask,
+        nonlinearity_calibration=nonlinearity_calibration,
         flat_field_map=flat_field_map,
         dark_frame_map=dark_frame_map,
-        prnu_map=prnu_map,
-        dsnu_map=dsnu_map,
         hot_pixel_fraction=hot_fraction,
         hot_pixel_value_counts=hot_value,
         scan_line_noise_counts=line_noise,
-        clip_output_to_nonnegative=_cfg_bool("clip_output_to_nonnegative", True),
+        clip_output_to_nonnegative=_cfg_bool("clip_output_to_nonnegative"),
         noise_parameterization=noise_parameterization,
         nonlinear_detector_effects_active=nonlinear_active,
         deterministic_detector_transfer_active=deterministic_transfer_active,
@@ -727,7 +680,7 @@ def contrast_noise_variance_counts(
     ``Var(C) = Var(S)/R^2 + S^2 Var(R)/R^4``.
     """
     params = dict(params or {})
-    method = str(params.get("background_subtraction_method", "video_median")).strip().lower()
+    method = str(param_value(params, 'background_subtraction_method')).strip().lower()
     signal = np.asarray(signal_counts, dtype=float)
     var_signal = total_noise_variance_counts(signal, params, runtime=runtime)
     if method in RAW_BACKGROUND_SUBTRACTION_METHODS or reference_counts is None:
@@ -742,7 +695,7 @@ def contrast_noise_variance_counts(
     var_reference = total_noise_variance_counts(reference, params, runtime=runtime)
 
     if relative_reference is None:
-        imaging_model_name = str(params.get("imaging_model", "bright_field")).strip().lower()
+        imaging_model_name = resolved_modality(params)
         from imaging_models import modality_uses_relative_reference_contrast
 
         relative_reference = modality_uses_relative_reference_contrast(imaging_model_name)
@@ -776,12 +729,12 @@ def analysis_contrast_noise_variance(
     supplied.
     """
     params = dict(params or {})
-    imaging_model_name = str(params.get("imaging_model", "bright_field")).strip().lower()
+    imaging_model_name = resolved_modality(params)
     from imaging_models import get_imaging_model_class
 
     output_type = getattr(get_imaging_model_class(imaging_model_name), "output_type", "intensity")
     if output_type == "phase":
-        phase_noise = params.get("qpi_phase_noise_std_rad", None)
+        phase_noise = param_value(params, 'qpi_phase_noise_std_rad')
         signal = np.asarray(signal_counts, dtype=float)
         if phase_noise is not None:
             sigma = float(phase_noise)
@@ -794,12 +747,7 @@ def analysis_contrast_noise_variance(
                 np.full(signal.shape, sigma * sigma, dtype=float),
                 float(variance_floor),
             )
-        phase_to_count = float(
-            params.get(
-                "qpi_phase_to_count_scale",
-                params.get("background_intensity", 100.0),
-            )
-        )
+        phase_to_count = resolved_qpi_phase_to_count_scale(params)
         if not np.isfinite(phase_to_count) or phase_to_count <= 0.0:
             raise ValueError(
                 "qpi_phase_to_count_scale must be positive and finite for "
@@ -1099,13 +1047,13 @@ def estimate_contrast_noise_std_from_params(params: dict[str, Any]) -> float:
     For count images, contrast noise is noise_counts / reference_counts. This is
     deliberately tied to the same camera-count model used by rendering.
     """
-    imaging_model = str(params.get("imaging_model", "bright_field")).strip().lower()
+    imaging_model = resolved_modality(params)
 
     if imaging_model in {"dark_field", "coherent_dark_field"}:
-        background_counts = max(float(params.get("dark_field_background_count", 1.0)), 1e-9)
-        normalization_counts = max(float(params.get("dark_field_illumination_count", background_counts)), 1e-9)
+        background_counts = max(resolved_dark_field_background_count(params), 1e-9)
+        normalization_counts = max(resolved_dark_field_illumination_count(params), 1e-9)
     else:
-        background_counts = max(float(params.get("background_intensity", 1.0)), 1e-9)
+        background_counts = max(resolved_background_intensity(params), 1e-9)
         normalization_counts = background_counts
 
     noise_counts = float(total_noise_std_counts(background_counts, params))

@@ -19,7 +19,8 @@
           ],
           "refractive_index": null,
           "shape": "sphere",
-          "signal_multiplier": 1.0
+          "signal_multiplier": 1.0,
+          "source_multiplier": 1.0
         }
       ],
       "motion": {
@@ -27,10 +28,12 @@
         "initial_position_nm": null
       },
       "name": "target_particle",
-      "signal_multiplier": 1.0
+      "signal_multiplier": 1.0,
+      "source_multiplier": 1.0
     }
   ],
   "pixel_size_nm": 65.0,
+  "psf_oversampling_factor": 2,
   "pupil_samples": 192,
   "read_noise_counts": 1.0,
   "refractive_index_immersion": 1.33,

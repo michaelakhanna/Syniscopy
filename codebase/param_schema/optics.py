@@ -59,7 +59,7 @@ OPTICS_SCHEMA: dict[str, ParamSpec] = {
     key="polarization_model",
     type="enum",
     default="linear_x",
-    choices=["scalar", "linear_x", "linear_y", "unpolarized"],
+    choices=["linear_x", "linear_y", "unpolarized"],
     ui_label="Polarization model",
     group="Optics",
     description=(
@@ -328,19 +328,13 @@ OPTICS_SCHEMA: dict[str, ParamSpec] = {
     type="enum",
     default="vectorial_debye_asymmetric_illumination",
     choices=[
-        "two_axis_scalar_asymmetric_illumination",
-        "scalar_asymmetric_illumination",
-        "scalar",
         "vectorial_debye_asymmetric_illumination",
-        "two_axis_vectorial_debye_asymmetric_illumination",
-        "vectorial",
+        "two_axis_scalar_asymmetric_illumination",
     ],
     ui_label="DPC channel model",
     group="Imaging",
     description=(
-        "Scalar or vectorial DPC backend selector. "
-        "Differential-phase-contrast defaults to vectorial Debye analyzer "
-        "projection and falls back to scalar aliases when requested."
+        "Scalar or vectorial DPC backend selector."
     ),
 ),
 "dpc_transfer_model": ParamSpec(
@@ -349,18 +343,13 @@ OPTICS_SCHEMA: dict[str, ParamSpec] = {
     default="pupil_half_plane_intensity",
     choices=[
         "pupil_half_plane_intensity",
-        "half_pupil_intensity",
-        "asymmetric_pupil_intensity",
         "phase_gradient_proxy",
-        "phase_gradient",
-        "legacy_phase_gradient",
     ],
     ui_label="DPC transfer model",
     group="Imaging",
     description=(
         "Differential phase-contrast transfer model. The default computes "
-        "opposite half-pupil intensity images in objective-pupil coordinates; "
-        "the phase-gradient option is retained for legacy comparisons."
+        "opposite half-pupil intensity images in objective-pupil coordinates."
     ),
 ),
 "dpc_output_channel": ParamSpec(
@@ -436,7 +425,7 @@ OPTICS_SCHEMA: dict[str, ParamSpec] = {
     key="zernike_model",
     type="enum",
     default="pupil_phase_ring",
-    choices=["pupil_phase_ring", "fourier_phase_ring_proxy", "legacy_scalar_phase_proxy"],
+    choices=["pupil_phase_ring", "fourier_phase_ring_proxy"],
     ui_label="Zernike phase model",
     group="Advanced modality",
     description=(

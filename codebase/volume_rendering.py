@@ -6,6 +6,7 @@ volume reductions without changing the ordinary single-plane simulation path.
 """
 
 from __future__ import annotations
+from config import param_value
 
 from copy import deepcopy
 from typing import Any
@@ -14,14 +15,14 @@ import numpy as np
 
 
 def resolve_volume_z_planes_nm(params: dict) -> np.ndarray:
-    explicit = params.get("volumetric_z_planes_nm", None)
+    explicit = param_value(params, 'volumetric_z_planes_nm')
     if explicit is not None:
         planes = np.asarray(explicit, dtype=float).reshape(-1)
     else:
-        count = int(params.get("volumetric_z_count", 5))
+        count = int(param_value(params, 'volumetric_z_count'))
         if count <= 0:
             raise ValueError("volumetric_z_count must be positive.")
-        span = float(params.get("volumetric_z_range_nm", 1000.0))
+        span = float(param_value(params, 'volumetric_z_range_nm'))
         if span < 0.0 or not np.isfinite(span):
             raise ValueError("volumetric_z_range_nm must be finite and non-negative.")
         if count == 1:
@@ -44,20 +45,20 @@ def _normalized_weights(values: np.ndarray) -> np.ndarray:
 
 
 def volume_plane_weights(params: dict, z_planes_nm: np.ndarray) -> tuple[np.ndarray, dict[str, Any]]:
-    mode = str(params.get("volumetric_imaging_mode", "single_plane")).strip().lower()
+    mode = str(param_value(params, 'volumetric_imaging_mode')).strip().lower()
     z = np.asarray(z_planes_nm, dtype=float).reshape(-1)
     if mode in {"single_plane", "z_stack", "holotomography_projection"}:
         weights = np.ones_like(z, dtype=float)
         model = "uniform_projection"
     elif mode == "confocal":
-        sigma = float(params.get("confocal_pinhole_sigma_nm", 350.0))
+        sigma = float(param_value(params, 'confocal_pinhole_sigma_nm'))
         if sigma <= 0.0 or not np.isfinite(sigma):
             raise ValueError("confocal_pinhole_sigma_nm must be positive.")
         weights = np.exp(-0.5 * (z / sigma) ** 2)
         model = "gaussian_confocal_axial_detection"
     elif mode == "light_sheet":
-        center = float(params.get("light_sheet_center_z_nm", 0.0))
-        sigma = float(params.get("light_sheet_sigma_nm", 500.0))
+        center = float(param_value(params, 'light_sheet_center_z_nm'))
+        sigma = float(param_value(params, 'light_sheet_sigma_nm'))
         if sigma <= 0.0 or not np.isfinite(sigma) or not np.isfinite(center):
             raise ValueError("light-sheet center and sigma must be finite, with sigma positive.")
         weights = np.exp(-0.5 * ((z - center) / sigma) ** 2)
@@ -70,7 +71,7 @@ def volume_plane_weights(params: dict, z_planes_nm: np.ndarray) -> tuple[np.ndar
         "volume_weight_model": model,
         "z_planes_nm": z.astype(float).tolist(),
         "z_plane_weights": normalized.astype(float).tolist(),
-        "volume_output_mode": str(params.get("volume_output_mode", "integrated_projection")),
+        "volume_output_mode": str(param_value(params, 'volume_output_mode')),
     }
     return normalized, metadata
 
@@ -86,7 +87,7 @@ def combine_volume_stack(
     if arr.shape[0] != len(z_planes_nm):
         raise ValueError("Volume stack first axis must match z plane count.")
     weights, metadata = volume_plane_weights(params, np.asarray(z_planes_nm, dtype=float))
-    output_mode = str(params.get("volume_output_mode", "integrated_projection")).strip().lower()
+    output_mode = str(param_value(params, 'volume_output_mode')).strip().lower()
     if output_mode == "z_stack":
         return arr.copy(), {**metadata, "volume_combination": "z_stack"}
     if output_mode != "integrated_projection":
@@ -124,7 +125,7 @@ def holotomography_phase_projection_stack(
     arr = np.asarray(volume, dtype=float)
     if arr.ndim != 3:
         raise ValueError("Holotomography projection stack expects a 3D volume.")
-    angles = np.asarray(params.get("holotomography_projection_angles_deg", [0.0]), dtype=float).reshape(-1)
+    angles = np.asarray(param_value(params, "holotomography_projection_angles_deg"), dtype=float).reshape(-1)
     if angles.size == 0 or not np.all(np.isfinite(angles)):
         raise ValueError("holotomography_projection_angles_deg must be finite and non-empty.")
     projections = []
@@ -138,10 +139,9 @@ def holotomography_phase_projection_stack(
     metadata = {
         "holotomography_model": "phase_projection_stack_quadrant_proxy",
         "holotomography_projection_angles_deg": angles.astype(float).tolist(),
-        "holotomography_output_mode": str(params.get("holotomography_output_mode", "phase_projection_stack")),
+        "holotomography_output_mode": str(param_value(params, 'holotomography_output_mode')),
         "projection_axis": "z_after_quadrant_rotation",
     }
-    if str(params.get("holotomography_output_mode", "phase_projection_stack")).strip().lower() == "reconstruction_volume":
+    if str(param_value(params, 'holotomography_output_mode')).strip().lower() == "reconstruction_volume":
         metadata["reconstruction_volume_status"] = "not_requested_by_default_projection_stack_available"
     return stack, metadata
-

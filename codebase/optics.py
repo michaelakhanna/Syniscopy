@@ -1,8 +1,14 @@
+from config import param_value
+from config.runtime import resolved_modality, resolved_vectorial_detection_mode
 import logging
 
 import numpy as np
 from scipy.fft import ifft2, fftshift, ifftshift
-from tqdm import tqdm
+try:
+    from tqdm import tqdm
+except ImportError:
+    def tqdm(iterable=None, *args, **kwargs):
+        return iterable if iterable is not None else ()
 
 from mie_scattering import (
     mie_S1_S2_from_coefficients,
@@ -12,6 +18,7 @@ from mie_scattering import (
 )
 from vectorial_optics import compute_vectorial_debye_psf
 from optical_extensions import compute_coverslip_aberration_phase
+from optical_params import resolve_probe_wavelength_nm
 from shared_constants import COHERENT_REFERENCE_MODALITIES
 
 
@@ -276,7 +283,7 @@ def compute_complex_psf_stack(params, particle_diameter_nm, particle_refractive_
     z_values = np.asarray(z_values_nm, dtype=float)
     if z_values.ndim != 1 or z_values.size == 0:
         raise ValueError("z_values_nm must be a non-empty 1D array.")
-    backend = str(params.get("optical_field_backend", "vectorial_debye")).strip().lower()
+    backend = str(param_value(params, 'optical_field_backend')).strip().lower()
     if backend == "vectorial_debye":
         vectorial = compute_vectorial_debye_psf(
             params,
@@ -285,9 +292,9 @@ def compute_complex_psf_stack(params, particle_diameter_nm, particle_refractive_
             particle_refractive_index=particle_refractive_index,
         )
         dpc_channel_model = str(
-            params.get("dpc_channel_model", "vectorial_debye_asymmetric_illumination")
+            param_value(params, 'dpc_channel_model')
         ).strip().lower()
-        active_modality = str(params.get("imaging_model", "")).strip().lower()
+        active_modality = resolved_modality(params)
         use_full_vectorial_dpc = active_modality in {
             "dpc",
             "differential_phase_contrast",
@@ -296,13 +303,13 @@ def compute_complex_psf_stack(params, particle_diameter_nm, particle_refractive_
             "two_axis_vectorial_debye_asymmetric_illumination",
             "vectorial",
         }
-        detection_mode = str(params.get("vectorial_detection_mode", "incoherent_sum")).strip().lower()
+        detection_mode = resolved_vectorial_detection_mode(params)
         use_full_vectorial_coherent = (
             detection_mode == "full_vector"
             and active_modality in COHERENT_REFERENCE_MODALITIES
         )
         if use_full_vectorial_coherent:
-            polarization_model = str(params.get("polarization_model", "linear_x")).strip().lower()
+            polarization_model = str(param_value(params, 'polarization_model')).strip().lower()
             if polarization_model == "scalar":
                 polarization_model = "linear_x"
             if polarization_model == "unpolarized":
@@ -419,7 +426,6 @@ def compute_complex_psf_stack(params, particle_diameter_nm, particle_refractive_
     # --- Setup k-space coordinates and optical parameters ---
     os_factor = params["psf_oversampling_factor"]
     pupil_samples = params["pupil_samples"]
-    psf_size_nm = params["image_size_pixels"] * params["pixel_size_nm"]
     n_medium = params["refractive_index_medium"]
     if n_medium <= 0.0:
         raise ValueError("refractive_index_medium must be positive.")
@@ -431,9 +437,8 @@ def compute_complex_psf_stack(params, particle_diameter_nm, particle_refractive_
             "numerical_aperture must not exceed refractive_index_medium. "
             f"Got NA={NA}, n_medium={n_medium}."
         )
-    if params["wavelength_nm"] <= 0.0:
-        raise ValueError("wavelength_nm must be positive.")
-    wavelength_medium_nm = params["wavelength_nm"] / n_medium
+    wavelength_nm = resolve_probe_wavelength_nm(params)
+    wavelength_medium_nm = wavelength_nm / n_medium
     k_medium = 2 * np.pi / wavelength_medium_nm
     if particle_diameter_nm <= 0.0:
         raise ValueError("particle_diameter_nm must be positive.")
@@ -477,7 +482,7 @@ def compute_complex_psf_stack(params, particle_diameter_nm, particle_refractive_
         params,
         sin_theta,
         aperture_mask > 0,
-        wavelength_nm=float(params["wavelength_nm"]),
+        wavelength_nm=wavelength_nm,
     )
     apodization = np.exp(-params["apodization_factor"] * (rho**2))
 
@@ -486,11 +491,11 @@ def compute_complex_psf_stack(params, particle_diameter_nm, particle_refractive_
     # key (diameter + complex refractive index) plus PARAMS["random_seed"],
     # so each particle type receives reproducible aberrations independent of
     # the order in which optical types are processed.
-    random_aberration_strength = float(params.get("random_aberration_strength", 0.0))
+    random_aberration_strength = float(param_value(params, "random_aberration_strength"))
     if random_aberration_strength != 0.0:
         import hashlib
 
-        seed_value = params.get("random_seed", 0)
+        seed_value = param_value(params, "random_seed")
         seed_int = 0 if seed_value is None else int(seed_value)
         type_key_repr = (
             f"diameter_nm={float(particle_diameter_nm)!r}|"

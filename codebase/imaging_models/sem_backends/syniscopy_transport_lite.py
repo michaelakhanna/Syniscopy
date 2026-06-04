@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from config.runtime import SemSettings, param_value
+
 from ._metadata import (
     Any,
     SEMTransportBackendError,
@@ -36,63 +38,63 @@ class SyniscopyTransportSEMBackend:
         self.canvas_pitch_nm = _finite_nonnegative("canvas_pitch_nm", canvas_pitch_nm, minimum=1e-12)
         self.probe_sigma_px = _finite_nonnegative("sem probe sigma", probe_sigma_px, minimum=0.0)
         self.backend_mode = self.__class__.backend_mode
-        self._acceleration_kV = _finite_nonnegative("sem_acceleration_kV", params.get("sem_acceleration_kV", 5.0), minimum=1e-9)
-        self._baseline = _finite_nonnegative("sem_baseline_yield", params.get("sem_baseline_yield", 0.05), minimum=0.0)
-        self._edge_gain = _finite_nonnegative("sem_edge_contrast_gain", params.get("sem_edge_contrast_gain", 10.0), minimum=0.0)
-        self._bulk_gain = _finite_nonnegative("sem_bulk_contrast_gain", params.get("sem_bulk_contrast_gain", 1.0), minimum=0.0)
+        self._acceleration_kV = _finite_nonnegative("sem_acceleration_kV", param_value(params, 'sem_acceleration_kV'), minimum=1e-9)
+        self._baseline = _finite_nonnegative("sem_baseline_yield", param_value(params, 'sem_baseline_yield'), minimum=0.0)
+        self._edge_gain = _finite_nonnegative("sem_edge_contrast_gain", param_value(params, 'sem_edge_contrast_gain'), minimum=0.0)
+        self._bulk_gain = _finite_nonnegative("sem_bulk_contrast_gain", param_value(params, 'sem_bulk_contrast_gain'), minimum=0.0)
         self._topography_gain = _finite_nonnegative(
             "sem_topography_contrast_gain",
-            params.get("sem_topography_contrast_gain", 0.0),
+            param_value(params, 'sem_topography_contrast_gain'),
             minimum=0.0,
         )
         self._detector_acceptance = _finite_nonnegative(
             "sem_detector_acceptance",
-            params.get("sem_detector_acceptance", 1.0),
+            param_value(params, 'sem_detector_acceptance'),
             minimum=0.0,
         )
         self._takeoff_angle_deg = _finite_nonnegative(
             "sem_detector_takeoff_angle_deg",
-            params.get("sem_detector_takeoff_angle_deg", 45.0),
+            param_value(params, 'sem_detector_takeoff_angle_deg'),
             minimum=0.0,
         )
         self._escape_depth_nm = _finite_nonnegative(
             "sem_escape_depth_nm",
-            params.get("sem_escape_depth_nm", 20.0),
+            param_value(params, 'sem_escape_depth_nm'),
             minimum=0.0,
         )
         self._backscatter_fraction = _finite_nonnegative(
             "sem_backscatter_fraction",
-            params.get("sem_backscatter_fraction", 0.05),
+            param_value(params, 'sem_backscatter_fraction'),
             minimum=0.0,
         )
         self._material_scale = _finite_nonnegative(
             "sem_transport_material_scale",
-            params.get("sem_transport_material_scale", 1.0),
+            param_value(params, 'sem_transport_material_scale'),
             minimum=0.0,
         )
         self._source_exponent = _finite_nonnegative(
             "sem_transport_source_exponent",
-            params.get("sem_transport_source_exponent", 1.0),
+            param_value(params, 'sem_transport_source_exponent'),
             minimum=0.05,
         )
         self._topography_source_exponent = _finite_nonnegative(
             "sem_transport_topography_exponent",
-            params.get("sem_transport_topography_exponent", 1.0),
+            param_value(params, 'sem_transport_topography_exponent'),
             minimum=0.05,
         )
-        self._beam_current_nA = _finite_nonnegative("sem_beam_current_nA", params.get("sem_beam_current_nA", 0.0), minimum=0.0)
+        self._beam_current_nA = _finite_nonnegative("sem_beam_current_nA", param_value(params, 'sem_beam_current_nA'), minimum=0.0)
         self._dwell_time_us = _finite_nonnegative(
             "sem_dwell_time_us",
-            params.get("sem_dwell_time_us", 0.0),
+            param_value(params, 'sem_dwell_time_us'),
             minimum=0.0,
         )
         self._electrons_per_pixel_reference = _finite_nonnegative(
             "sem_electrons_per_pixel",
-            params.get("sem_electrons_per_pixel", 1000.0),
+            SemSettings.from_params(params).electrons_per_pixel,
             minimum=0.0,
         )
         self._beam_energy_gain = float(np.sqrt(self._acceleration_kV / 5.0))
-        direction_raw = params.get("sem_detector_direction_xy", [1.0, 0.0])
+        direction_raw = param_value(params, 'sem_detector_direction_xy')
         direction = np.asarray(direction_raw, dtype=float)
         if direction.shape != (2,) or not np.all(np.isfinite(direction)):
             raise SEMTransportBackendError("PARAMS['sem_detector_direction_xy'] must be a finite length-2 vector.")

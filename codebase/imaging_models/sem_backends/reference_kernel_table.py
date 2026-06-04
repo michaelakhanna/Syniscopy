@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from config.runtime import SemSettings, param_value
+
 from ._metadata import (
     Any,
     Mapping,
@@ -17,6 +19,7 @@ from ._metadata import (
     json,
     np,
 )
+from .reference_kernel_examples import example_sem_reference_kernel_payload
 
 class ReferenceKernelSEMBackend:
     """SEM backend driven by a user supplied reference-kernel table.
@@ -40,7 +43,7 @@ class ReferenceKernelSEMBackend:
         self.probe_sigma_px = _finite_nonnegative("sem_probe_sigma_px", probe_sigma_px, minimum=0.0)
         self.backend_mode = self.__class__.backend_mode
 
-        raw_path = params.get("sem_reference_kernel_path", None)
+        raw_path = param_value(params, 'sem_reference_kernel_path')
         if not raw_path:
             raise SEMTransportBackendError(
                 "PARAMS['sem_backend']='reference_kernel_table' requires "
@@ -51,7 +54,7 @@ class ReferenceKernelSEMBackend:
             raise SEMTransportBackendError(f"SEM reference-kernel table not found: {self.path}")
         self.sha256 = _sha256_file(self.path)
 
-        expected = params.get("sem_reference_kernel_sha256", None)
+        expected = param_value(params, 'sem_reference_kernel_sha256')
         if expected and str(expected).lower() != self.sha256.lower():
             raise SEMTransportBackendError(
                 "SEM reference-kernel checksum mismatch: "
@@ -79,39 +82,39 @@ class ReferenceKernelSEMBackend:
             else "diagnostic_only"
         )
 
-        self._acceleration_kV = _finite_nonnegative("sem_acceleration_kV", params.get("sem_acceleration_kV", 5.0), minimum=1e-9)
-        self._baseline = _finite_nonnegative("sem_baseline_yield", params.get("sem_baseline_yield", 0.05), minimum=0.0)
-        self._detector_acceptance = _finite_nonnegative("sem_detector_acceptance", params.get("sem_detector_acceptance", 1.0), minimum=0.0)
+        self._acceleration_kV = _finite_nonnegative("sem_acceleration_kV", param_value(params, 'sem_acceleration_kV'), minimum=1e-9)
+        self._baseline = _finite_nonnegative("sem_baseline_yield", param_value(params, 'sem_baseline_yield'), minimum=0.0)
+        self._detector_acceptance = _finite_nonnegative("sem_detector_acceptance", param_value(params, 'sem_detector_acceptance'), minimum=0.0)
         self._topography_gain = _finite_nonnegative(
             "sem_topography_contrast_gain",
-            params.get("sem_topography_contrast_gain", 0.0),
+            param_value(params, 'sem_topography_contrast_gain'),
             minimum=0.0,
         )
         self._takeoff_angle_deg = _finite_nonnegative(
             "sem_detector_takeoff_angle_deg",
-            params.get("sem_detector_takeoff_angle_deg", 45.0),
+            param_value(params, 'sem_detector_takeoff_angle_deg'),
             minimum=0.0,
         )
         self._source_depth_nm = _finite_nonnegative(
             "sem_reference_source_depth_nm",
-            params.get("sem_reference_source_depth_nm", 0.0),
+            param_value(params, 'sem_reference_source_depth_nm'),
             minimum=0.0,
         )
-        self._material_name = str(params.get("sem_reference_material", "default")).strip().lower() or "default"
-        self._geometry_name = str(params.get("sem_reference_geometry", "normal")).strip().lower() or "normal"
-        self._beam_current_nA = _finite_nonnegative("sem_beam_current_nA", params.get("sem_beam_current_nA", 0.0), minimum=0.0)
-        self._dwell_time_us = _finite_nonnegative("sem_dwell_time_us", params.get("sem_dwell_time_us", 0.0), minimum=0.0)
+        self._material_name = str(param_value(params, 'sem_reference_material')).strip().lower() or "default"
+        self._geometry_name = str(param_value(params, 'sem_reference_geometry')).strip().lower() or "normal"
+        self._beam_current_nA = _finite_nonnegative("sem_beam_current_nA", param_value(params, 'sem_beam_current_nA'), minimum=0.0)
+        self._dwell_time_us = _finite_nonnegative("sem_dwell_time_us", param_value(params, 'sem_dwell_time_us'), minimum=0.0)
         self._electrons_per_pixel_reference = _finite_nonnegative(
             "sem_electrons_per_pixel",
-            params.get("sem_electrons_per_pixel", 1000.0),
+            SemSettings.from_params(params).electrons_per_pixel,
             minimum=0.0,
         )
         self._incident_angle_deg = _finite_nonnegative(
             "sem_reference_incident_angle_deg",
-            params.get("sem_reference_incident_angle_deg", 0.0),
+            param_value(params, 'sem_reference_incident_angle_deg'),
             minimum=0.0,
         )
-        direction_raw = params.get("sem_detector_direction_xy", [1.0, 0.0])
+        direction_raw = param_value(params, 'sem_detector_direction_xy')
         direction = np.asarray(direction_raw, dtype=float)
         if direction.shape != (2,) or not np.all(np.isfinite(direction)):
             raise SEMTransportBackendError("PARAMS['sem_detector_direction_xy'] must be a finite length-2 vector.")
@@ -218,15 +221,10 @@ class ReferenceKernelSEMBackend:
             key_candidates.append(row)
 
         if not key_candidates:
-            fallback: list[dict[str, float]] = [
-                r
-                for r in self._rows
-                if r["material"] in {"*", "all", "default"}
-                and r["geometry"] in {"*", "all", geometry, "default"}
-            ]
-            if fallback:
-                return fallback
-            return self._rows
+            raise SEMTransportBackendError(
+                "SEM reference-kernel table has no rows for "
+                f"material={material!r}, geometry={geometry!r}."
+            )
 
         return key_candidates
 
@@ -350,34 +348,7 @@ class ReferenceKernelSEMBackend:
 def write_example_sem_reference_kernel(path: str | Path) -> Path:
     """Write a minimal unvalidated reference-kernel table."""
     target = Path(path)
-    payload = {
-        "schema_version": SEM_REFERENCE_KERNEL_SCHEMA_VERSION,
-        "validation_status": "physics_based_unvalidated",
-        "kernel_rows": [
-            {
-                "source": 0.0,
-                "yield": 0.0,
-                "beam_energy_kV": 5.0,
-                "source_depth_nm": 0.0,
-                "takeoff_angle_deg": 45.0,
-                "incident_angle_deg": 0.0,
-                "geometry": "normal",
-                "material": "default",
-                "backscatter_yield": 0.0,
-            },
-            {
-                "source": 1.0,
-                "yield": 0.7,
-                "beam_energy_kV": 5.0,
-                "source_depth_nm": 0.0,
-                "takeoff_angle_deg": 45.0,
-                "incident_angle_deg": 0.0,
-                "geometry": "normal",
-                "material": "default",
-                "backscatter_yield": 0.05,
-            },
-        ],
-    }
+    payload = example_sem_reference_kernel_payload()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
         json.dumps(payload, indent=2, sort_keys=True) + "\n",

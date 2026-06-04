@@ -58,6 +58,8 @@ DEFAULT = {
             },
             # Per-logical-particle scattered-field amplitude multiplier.
             "signal_multiplier": 1.0,
+            # Per-logical-particle material-source multiplier.
+            "source_multiplier": 1.0,
             "components": [
                 {
                     "shape": "sphere",
@@ -70,6 +72,8 @@ DEFAULT = {
                     "refractive_index": None,
                     # Per-component multiplier, applied inside the particle.
                     "signal_multiplier": 1.0,
+                    # Per-component material-source multiplier.
+                    "source_multiplier": 1.0,
                     # Optional component material-property overrides:
                     # fluorophore_density, emission_peak_nm,
                     # excitation_peak_nm, se_yield_coefficient,
@@ -311,8 +315,6 @@ DEFAULT = {
     "hot_pixel_value_counts": None,
     "fixed_pattern_gain_map": None,
     "fixed_pattern_offset_map": None,
-    "prnu_map": None,
-    "dsnu_map": None,
     "flat_field_map": None,
     "dark_frame_map": None,
     "hot_pixel_mask": None,

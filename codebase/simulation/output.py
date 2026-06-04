@@ -9,6 +9,7 @@ from imaging_models import get_imaging_model
 from json_utils import json_safe
 from rendering import resolve_render_canvas_geometry
 from shared_constants import KNOWN_INTERNAL_PARAM_KEYS
+from config.runtime import SamplingGeometry, internal_param_value, param_value, resolved_modality
 from trajectory import resolve_public_num_frames as _resolve_public_num_frames
 
 logger = logging.getLogger(__name__)
@@ -143,7 +144,7 @@ def _packet_sample_environment_metadata(params: dict) -> dict:
         "refractive_index_medium",
         "refractive_index_immersion",
     )
-    return {key: json_safe(params.get(key)) for key in keys if key in params}
+    return {key: json_safe(params[key]) for key in keys if key in params}
 
 
 def _source_map_provenance(params: dict, render_metadata: dict | None = None) -> dict:
@@ -151,17 +152,15 @@ def _source_map_provenance(params: dict, render_metadata: dict | None = None) ->
     render_metadata = dict(render_metadata or {})
     response = dict(render_metadata.get("response_function", {}) or {})
     if not response:
+        sampling = SamplingGeometry.from_params(params)
         response = model.compute_response_function(
-            (
-                int(params.get("image_size_pixels", 1)) * int(params.get("psf_oversampling_factor", 1)),
-                int(params.get("image_size_pixels", 1)) * int(params.get("psf_oversampling_factor", 1)),
-            ),
+            sampling.model_canvas_shape,
             params,
         )
     render_geometry = dict(render_metadata.get("render_geometry", {}) or {})
     source_diagnostics = list(render_metadata.get("source_map_diagnostics", []) or [])
     return {
-        "imaging_model": str(params.get("imaging_model", "bright_field")),
+        "imaging_model": resolved_modality(params),
         "uses_particle_material_sources": bool(
             getattr(model, "uses_particle_material_sources", False)
         ),
@@ -195,13 +194,13 @@ def _ensure_run_scope_layout_token(params: dict) -> None:
     within one run without reusing the first unseeded layout across later runs
     in the same Python process.
     """
-    if not bool(params.get("sample_environment_pattern_enabled", False)):
+    if not bool(param_value(params, 'sample_environment_pattern_enabled')):
         return
-    if not bool(params.get("sample_environment_enabled", True)):
+    if not bool(param_value(params, 'sample_environment_enabled')):
         return
-    if params.get("_substrate_pattern_layout_cache_token", None) is not None:
+    if internal_param_value(params, "_substrate_pattern_layout_cache_token") is not None:
         return
-    if params.get("random_seed", None) is not None:
+    if param_value(params, 'random_seed') is not None:
         return
     params["_substrate_pattern_layout_cache_token"] = (
         f"run:{int(np.random.SeedSequence().entropy)}"
@@ -210,9 +209,9 @@ def _ensure_run_scope_layout_token(params: dict) -> None:
 
 def _ensure_run_scope_layout_extent(params: dict) -> None:
     """Use one substrate layout extent for trajectory and optical consumers."""
-    if not bool(params.get("sample_environment_pattern_enabled", False)):
+    if not bool(param_value(params, 'sample_environment_pattern_enabled')):
         return
-    if not bool(params.get("sample_environment_enabled", True)):
+    if not bool(param_value(params, 'sample_environment_enabled')):
         return
 
     img_size = int(params["image_size_pixels"])
@@ -224,7 +223,7 @@ def _ensure_run_scope_layout_extent(params: dict) -> None:
     imaging_model = get_imaging_model(params)
     geometry = resolve_render_canvas_geometry(params, particle_instances=None, imaging_model=imaging_model)
     layout_extent_nm = float(geometry["layout_extent_nm"])
-    current_extent = params.get("_substrate_pattern_layout_extent_nm", None)
+    current_extent = internal_param_value(params, "_substrate_pattern_layout_extent_nm")
     if current_extent is not None:
         layout_extent_nm = max(float(layout_extent_nm), float(current_extent))
     params["_substrate_pattern_layout_extent_nm"] = float(layout_extent_nm)
@@ -239,7 +238,7 @@ def _multichannel_output_mode(params: dict) -> str:
     RGB visualization, per-channel grayscale sidecars, both, or returned arrays
     only.
     """
-    raw = str(params.get("multichannel_output_mode", "rgb")).strip().lower()
+    raw = str(param_value(params, 'multichannel_output_mode')).strip().lower()
     raw = raw.replace("-", "_").replace(" ", "_")
 
     allowed = {"rgb", "channels", "both", "none"}
@@ -247,7 +246,7 @@ def _multichannel_output_mode(params: dict) -> str:
         raise ValueError(
             "PARAMS['multichannel_output_mode'] must be one of "
             "{'rgb', 'channels', 'both', 'none'}; got "
-            f"{params.get('multichannel_output_mode')!r}."
+            f"{param_value(params, 'multichannel_output_mode')!r}."
         )
 
     return raw
