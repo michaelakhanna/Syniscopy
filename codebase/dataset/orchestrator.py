@@ -203,11 +203,13 @@ def generate_dataset(
     # Subdirectories for videos and masks.
     video_dir = os.path.join(base_output_dir, "videos")
     frames_root_dir = os.path.join(base_output_dir, "frames")
+    raw_camera_frames_root_dir = os.path.join(base_output_dir, "raw_camera_frames")
     masks_root_dir = os.path.join(base_output_dir, "masks")
     raw_views_dir = os.path.join(base_output_dir, "raw_frame_views")
     packets_dir = os.path.join(base_output_dir, "counterfactual_packets")
     os.makedirs(video_dir, exist_ok=True)
     os.makedirs(frames_root_dir, exist_ok=True)
+    os.makedirs(raw_camera_frames_root_dir, exist_ok=True)
     os.makedirs(masks_root_dir, exist_ok=True)
     os.makedirs(raw_views_dir, exist_ok=True)
     os.makedirs(packets_dir, exist_ok=True)
@@ -305,6 +307,7 @@ def generate_dataset(
         resume_existing=resume_existing,
         video_dir=video_dir,
         frames_root_dir=frames_root_dir,
+        raw_camera_frames_root_dir=raw_camera_frames_root_dir,
         masks_root_dir=masks_root_dir,
         raw_views_dir=raw_views_dir,
         packets_dir=packets_dir,

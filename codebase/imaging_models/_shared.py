@@ -32,7 +32,7 @@ def _ricm_particle_reflection_material(params: dict) -> str | MaterialProperties
         return explicit_text
 
     from particle_specs import get_particle_specs
-    from materials import resolve_component_material_properties
+    from particle_material_resolution import resolve_component_material_properties
 
     specs = get_particle_specs(params)
     primary = specs[0].primary_component

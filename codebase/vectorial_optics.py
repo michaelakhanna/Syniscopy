@@ -98,7 +98,7 @@ def _component_stack_for_polarization(
 
     k0 = 2.0 * np.pi / wavelength_nm
     k_medium = k0 * n_medium
-    freq = np.fft.fftfreq(samples, d=canvas_pixel_nm) * 2.0 * np.pi
+    freq = np.fft.fftshift(np.fft.fftfreq(samples, d=canvas_pixel_nm) * 2.0 * np.pi)
     kx, ky = np.meshgrid(freq, freq, indexing="xy")
     k_perp2 = kx * kx + ky * ky
     max_k_perp = k0 * NA
@@ -260,6 +260,12 @@ def _normalize_components(components: dict[str, np.ndarray]) -> dict[str, np.nda
     return {name: components[name] for name in ("Ex", "Ey", "Ez")}
 
 
+def _component_peak_amplitude(components: dict[str, np.ndarray]) -> float:
+    intensity = sum(np.abs(components[name]) ** 2 for name in ("Ex", "Ey", "Ez"))
+    peak = float(np.max(intensity)) if intensity.size else 0.0
+    return float(np.sqrt(peak)) if peak > 0.0 and np.isfinite(peak) else 1.0
+
+
 def compute_vectorial_debye_psf(
     params: dict,
     z_positions_nm,
@@ -314,6 +320,7 @@ def compute_vectorial_debye_psf(
         coverslip_metadata = dict(components.get("_coverslip_metadata", {}))
         unpolarized_average = False
 
+    field_amplitude_scale = _component_peak_amplitude(components)
     components = _normalize_components(components)
     settings = VectorialOpticsSettings.from_params(params)
     metadata = {
@@ -331,7 +338,12 @@ def compute_vectorial_debye_psf(
         **coverslip_metadata,
         "vectorial_polarization_rotation_deg": float(rotation_deg),
         "unpolarized_mode_averages_x_and_y": bool(unpolarized_average),
-        "normalization": "peak_vector_intensity_equals_one",
+        "normalization": "shape_peak_vector_intensity_equals_one",
+        "field_amplitude_scale": float(field_amplitude_scale),
+        "field_amplitude_scale_semantics": (
+            "Multiply normalized Ex/Ey/Ez fields by this factor to restore "
+            "the pre-normalization Debye/Mie scattering amplitude."
+        ),
         "z_positions_nm": z_positions.astype(float).tolist(),
     }
     return {**components, "metadata": metadata}

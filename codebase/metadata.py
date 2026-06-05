@@ -44,8 +44,8 @@ from supervision_policy import build_policy_annotation_schema, resolve_policy_co
 SIMULATOR_VERSION = "1.0.5"
 from imaging_models import get_imaging_model
 from json_utils import json_safe
-from materials import (
-    material_properties_to_dict,
+from material_serialization import material_properties_to_dict
+from particle_material_resolution import (
     resolve_component_material_properties,
     resolve_particle_material_properties,
 )
@@ -294,6 +294,7 @@ def build_video_manifest(
         "random_seed": int(video_seed),
         "source_provenance": build_source_provenance(),
         "output_video_path": relative_path(base_output_dir, output_filename),
+        "analysis_video_path": relative_path(base_output_dir, output_filename),
         "mask_root_dir": relative_path(base_output_dir, mask_output_directory),
         "num_frames": num_frames,
         "fps": fps,
@@ -301,8 +302,11 @@ def build_video_manifest(
         "image_size_pixels": image_size_pixels,
         "pixel_size_nm": pixel_size_nm,
         "frame_products": {
-            "output_video_path": "8-bit encoded preview video, not quantitative analysis data",
-            "training_frames_dir": "lossless 8-bit rendered frame sequence for downstream training",
+            "output_video_path": "8-bit background-subtracted contrast-analysis AVI",
+            "analysis_video_path": "same artifact as output_video_path; contrast-analysis preview",
+            "raw_signal_video_path": "8-bit windowed preview of raw detector signal frames",
+            "raw_camera_frame_sequence_dir": "uint16 PNG sequence of raw detector signal frames when requested",
+            "training_frames_dir": "lossless 8-bit background-subtracted frame sequence for downstream training",
             "mask_root_dir": "per-particle binary supervision sidecars on the final rendered frame grid",
             "metadata_json": "machine-readable provenance and per-particle/frame records",
         },
@@ -330,6 +334,15 @@ def build_video_manifest(
     manifest["comparison_contracts"] = contracts_manifest([modality_name])
     manifest["artifact_graph"] = artifact_graph_manifest([ArtifactNode(artifact_id=f"video:{int(video_index):04d}", artifact_path=manifest["output_video_path"], artifact_type="simulation_video_manifest", source_notebook_or_script="codebase/dataset_generator.py", model_version=backend_contract.get("backend_id", ""), paper_consumers=("dataset_manifest",), heavy_execution=False)])
     if result_metadata:
+        raw_signal_video_path = result_metadata.get("raw_signal_video_path")
+        if raw_signal_video_path:
+            manifest["raw_signal_video_path"] = relative_path(base_output_dir, str(raw_signal_video_path))
+            manifest["raw_signal_video_semantics"] = result_metadata.get(
+                "raw_signal_video_semantics",
+                "windowed_raw_detector_count_preview_uint8",
+            )
+        if result_metadata.get("analysis_video_semantics"):
+            manifest["analysis_video_semantics"] = result_metadata.get("analysis_video_semantics")
         if render_metadata is not None:
             manifest["render_metadata"] = json_safe(render_metadata, flexible_numpy=True)
         source_map_provenance = result_metadata.get("source_map_provenance")
@@ -468,7 +481,10 @@ def build_dataset_index_entry(
         "video_index": int(manifest["video_index"]),
         "video_id": f"video_{manifest['video_index']:04d}",
         "output_video_path": manifest["output_video_path"],
+        "analysis_video_path": manifest.get("analysis_video_path", manifest["output_video_path"]),
+        "raw_signal_video_path": manifest.get("raw_signal_video_path"),
         "frame_sequence_dir": manifest.get("frame_sequence_dir"),
+        "raw_camera_frame_sequence_dir": manifest.get("raw_camera_frame_sequence_dir"),
         "training_frames_dir": manifest.get("training_frames_dir", manifest.get("frame_sequence_dir")),
         "preview_video_path": manifest.get("preview_video_path", manifest.get("output_video_path")),
         "mask_root_dir": manifest["mask_root_dir"],

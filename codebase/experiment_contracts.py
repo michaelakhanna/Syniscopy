@@ -472,13 +472,30 @@ def acquisition_cost_from_profile(modality: str, params: Mapping[str, Any] | Non
             "transmitted/detected primary-electron counts under unit collection."
         )
     elif m.startswith("sem"):
-        incident_primary_electrons = _optional_float(
-            p.get("sem_electrons_per_pixel", p.get("electron_dose"))
-        )
+        beam_current_nA = _optional_float(p.get("sem_beam_current_nA"))
+        dwell_time_us = _optional_float(p.get("sem_dwell_time_us"))
+        incident_primary_electrons = None
+        if beam_current_nA is not None and dwell_time_us is not None:
+            from imaging_models.sem_backends._metadata import _electrons_from_beam_current
+
+            incident_primary_electrons = _electrons_from_beam_current(
+                beam_current_nA,
+                dwell_time_us,
+            )
+        if incident_primary_electrons is None:
+            incident_primary_electrons = _optional_float(
+                p.get("sem_electrons_per_pixel", p.get("electron_dose"))
+            )
         electron_dose = electron_dose if electron_dose is not None else incident_primary_electrons
         configured_count_budget = incident_primary_electrons
         configured_count_budget_units = "incident_primary_electrons_per_pixel"
-        count_budget_source = "sem_electrons_per_pixel" if "sem_electrons_per_pixel" in p else "electron_dose"
+        count_budget_source = (
+            "sem_beam_current_nA*sem_dwell_time_us"
+            if beam_current_nA is not None and beam_current_nA > 0.0 and dwell_time_us is not None and dwell_time_us > 0.0
+            else "sem_electrons_per_pixel"
+            if "sem_electrons_per_pixel" in p
+            else "electron_dose"
+        )
         detected_electron_count_kind = "yield_weighted_secondary_electron_count"
         count_budget_semantics = (
             "SEM signal formation multiplies secondary-electron yield by incident "
@@ -487,8 +504,10 @@ def acquisition_cost_from_profile(modality: str, params: Mapping[str, Any] | Non
             "TEM transmitted-electron counts."
         )
     elif fluorescence:
-        collection = _optional_float(p.get("fluorescence_collection_efficiency")) or 1.0
-        qe = _optional_float(p.get("fluorescence_detector_qe", p.get("detector_qe"))) or 1.0
+        collection = _optional_float(p.get("fluorescence_collection_efficiency"))
+        collection = 1.0 if collection is None else collection
+        qe = _optional_float(p.get("fluorescence_detector_qe", p.get("detector_qe")))
+        qe = 1.0 if qe is None else qe
         if p.get("fluorescence_photons_per_fluorophore_per_frame") is not None:
             emitted = _optional_float(p.get("fluorescence_photons_per_fluorophore_per_frame"))
             configured_count_budget = emitted * collection * qe if emitted is not None else None

@@ -350,12 +350,23 @@ DEFAULT = {
     # none, reference_frame, video_median.
     "background_subtraction_method": "reference_frame",
 
-    # save_frame_sequence: write lossless PNG training frames under
-    # frames/video_XXXX/. Keep True for generated datasets; AVI is preview.
+    # save_frame_sequence: write lossless 8-bit contrast-analysis PNG training
+    # frames under frames/video_XXXX/. Keep True for generated datasets; the
+    # main AVI is a compact contrast-analysis preview.
     "save_frame_sequence": True,
 
-    # save_raw_frame_views: write raw signal/reference/final frame arrays for
-    # audit. False keeps generated datasets smaller.
+    # save_raw_camera_video: write videos/video_XXXX_raw_signal.avi beside the
+    # contrast-analysis video. This preserves raw camera background structure
+    # visually, but it is still an 8-bit preview.
+    "save_raw_camera_video": True,
+
+    # save_raw_camera_frame_sequence: write uint16 detector-count PNG frames
+    # under raw_camera_frames/video_XXXX/. Enable when exact camera-frame
+    # values are needed as image files.
+    "save_raw_camera_frame_sequence": False,
+
+    # save_raw_frame_views: write compressed raw signal/reference/ideal/final
+    # arrays for audit. False keeps generated datasets smaller.
     "save_raw_frame_views": False,
 
     "mask_generation_enabled": True,

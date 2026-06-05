@@ -95,9 +95,9 @@ class SyniscopyMultisliceTEMBackend:
         self.defocus_m = float(defocus_m)
         self.alpha_rad = 1.0e-3 * float(partial_coherence_alpha_mrad)
         self.dose_per_pixel = float(dose_per_pixel)
-        self.n_slices = int(param_value(params, "tem_multislice_slices"))
+        self.n_slices = int(default_slice_count)
         if self.n_slices <= 0:
-            raise ValueError("PARAMS['tem_multislice_slices'] must be positive for syniscopy_multislice.")
+            raise ValueError("Effective multislice slice count must be positive for syniscopy_multislice.")
         raw_slice = param_value(params, "tem_slice_thickness_nm")
         self.slice_thickness_nm = None if raw_slice is None else float(raw_slice)
         if self.slice_thickness_nm is not None and self.slice_thickness_nm <= 0.0:
@@ -174,7 +174,7 @@ class SyniscopyMultisliceTEMBackend:
             raise ValueError("projected_phase stack must contain at least one slice.")
         if source.shape[0] != self.n_slices:
             raise ValueError(
-                "projected_phase stack depth must match PARAMS['tem_multislice_slices']; "
+                "projected_phase stack depth must match the effective multislice slice count; "
                 f"got {source.shape[0]} but n_slices={self.n_slices}."
             )
         return source, float(self.slice_thickness_nm)
@@ -237,7 +237,11 @@ class SyniscopyMultisliceTEMBackend:
         if not np.isfinite(voltage):
             voltage = float("nan")
         shape_pixels = self._shape_from_params(params)
-        fidelity = "high_fidelity"
+        fidelity = (
+            "reference_validated"
+            if self.reference_status == "reference_validated"
+            else "physics_based"
+        )
         validation = self.validation_status
         meta = TEMBackendMetadata(
             backend_mode=self.backend_mode,
@@ -257,9 +261,9 @@ class SyniscopyMultisliceTEMBackend:
             kind="tem_multislice",
             backend_fidelity_level=fidelity,
             fidelity_label=(
-                "syniscopy_multislice_physics_based"
+                "syniscopy_multislice_unvalidated"
                 if self.reference_status != "reference_validated"
-                else "syniscopy_multislice_external_artifact_required"
+                else "syniscopy_multislice_reference_validated"
             ),
             forward_observable="|objective-transfer(multislice exit wave)|^2",
             multislice_slices=self.n_slices,

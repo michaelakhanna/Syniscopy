@@ -74,9 +74,12 @@ PARAMS = {
     # Common values: 12, 14, 16.
     "bit_depth": 16,
 
-    # Filesystem path (including filename) of the final encoded AVI preview video.
-    # The PNG frame sequence is a lossless encoding of the 8-bit display/training
-    # frames. Enable save_raw_frame_views for quantitative raw/ideal arrays.
+    # Filesystem path (including filename) of the encoded contrast-analysis AVI.
+    # A raw-camera signal AVI is written beside it when save_raw_camera_video is
+    # true, using the same stem plus "_raw_signal". The raw-camera AVI is a
+    # windowed 8-bit preview of detector counts; enable save_raw_frame_views or
+    # save_raw_camera_frame_sequence for quantitative raw values. The PNG frame
+    # sequence is a lossless encoding of the 8-bit display/training frames.
     # Absolute or relative paths are allowed; parent directories are created if
     # they do not exist. Relative paths are resolved by Python against the
     # caller's current working directory.
@@ -151,8 +154,8 @@ PARAMS = {
     "sequence_fisher_enabled": False,
     "detected_quanta_derivative_target": "signed_contrast_scaled",
     "profile_fidelity_label": "model_conditional_profile",
-    "tem_backend": "syniscopy_multislice",
-    "sem_backend": "monte_carlo_transport",
+    "tem_backend": "multislice_physical",
+    "sem_backend": "monte_carlo_physical",
     "sem_source_representation": "volume",
     "sem_volume_slices": 8,
     "sem_volume_slice_thickness_nm": None,
@@ -510,6 +513,8 @@ PARAMS = {
     "noise_model": {},
 
     "background_subtraction_method": "video_median",
+    "save_raw_camera_video": True,
+    "save_raw_camera_frame_sequence": False,
     # Dataset generation writes background-subtracted final frames as the
     # canonical PNG frame sequence. Set True to additionally save raw
     # signal/reference/final frame arrays as compressed NPZ audit artifacts.
@@ -555,8 +560,8 @@ PARAMS = {
     "kohler_coherence_factor": 0.7,
     "kohler_source_samples": 19,
     "annular_dark_field_source_samples": 24,
-    "annular_dark_field_inner_sigma": 1.05,
-    "annular_dark_field_outer_sigma": 1.30,
+    "annular_dark_field_inner_sigma": 1.02,
+    "annular_dark_field_outer_sigma": 1.08,
     "dark_field_stop_radius_fraction": 0.35,
     "dark_field_field_gain": 1.0,
     "dark_field_sample_environment_edge_gain": 0.02,
@@ -582,8 +587,8 @@ PARAMS = {
     "qpi_visibility": 1.0,
     "qpi_detected_quanta_per_pixel": None,
     "qpi_phase_to_count_scale": 100.0,
-    # Optional QPI phase-domain calibration noise. None means use the canonical
-    # counts-domain camera-noise propagation.
+    # Optional QPI phase-domain calibration noise. None means infer phase shot
+    # noise from qpi_visibility and the detected-quanta budget.
     "qpi_phase_noise_std_rad": None,
     "ricm_interface_reflection_coefficient": 0.20,
     "ricm_particle_reflection_coefficient": 0.04,
@@ -598,6 +603,8 @@ PARAMS = {
     # here only when intentionally modeling a different particle-interface material.
     "ricm_particle_material": None,
     "ricm_wavelength_nm": 532.0,
+    "ricm_gap_nm": 0.0,
+    "ricm_use_particle_z_as_gap": True,
     "tirf_penetration_depth_nm": 120.0,
     "tirf_use_angle_derived_penetration_depth": False,
     "tirf_prism_refractive_index": 1.518,
@@ -622,8 +629,9 @@ PARAMS = {
     "iscat_collection_reference_fraction": 1.0,
     "off_axis_fringe_period_px": 10.0,
     "off_axis_fringe_angle_rad": 0.0,
+    "off_axis_reference_amplitude_scale": 1.0,
     "tem_acceleration_kV": 300.0,
-    "tem_model": "syniscopy_multislice",
+    "tem_model": "multislice_physical",
     "tem_multislice_slices": 8,
     "tem_slice_thickness_nm": 5.0,
     "tem_Cs_mm": 0.5,
@@ -639,7 +647,7 @@ PARAMS = {
     "tem_sample_environment_potential_scale": 1.0e-4,
     "tem_dose_per_pixel": 100.0,
     "sem_acceleration_kV": 5.0,
-    "sem_model": "gaussian_probe_secondary_yield",
+    "sem_model": "physical_electron_transport",
     "sem_interaction_volume_nm": 30.0,
     "sem_detector_direction_xy": [1.0, 0.0],
     "sem_topography_contrast_gain": 0.0,
@@ -669,6 +677,9 @@ PARAMS = {
     "sem_monte_carlo_range_nm": None,
     "sem_monte_carlo_scatter_std_deg": 8.0,
     "sem_monte_carlo_kernel_size_px": None,
+    "sem_physical_max_steps": 2048,
+    "sem_physical_energy_cutoff_keV": 0.05,
+    "sem_physical_elastic_model": "screened_rutherford",
     "sem_reference_material": "default",
     "sem_reference_geometry": "normal",
     "sem_reference_source_depth_nm": 0.0,

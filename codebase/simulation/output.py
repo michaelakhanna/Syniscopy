@@ -27,6 +27,18 @@ def _setup_output_dirs(params: dict) -> None:
         os.makedirs(output_dir, exist_ok=True)
 
 
+def _sibling_output_filename(filename: str, suffix: str) -> str:
+    root, ext = os.path.splitext(str(filename))
+    if not ext:
+        raise ValueError(f"output filename must include an extension; got {filename!r}.")
+    return f"{root}{suffix}{ext}"
+
+
+def _raw_signal_video_filename(params: dict) -> str:
+    """Return the raw-camera signal AVI path paired with output_filename."""
+    return _sibling_output_filename(str(params["output_filename"]), "_raw_signal")
+
+
 def _frames_to_channel_first(frames, *, channel_count: int) -> np.ndarray:
     """Convert returned display frames to the public (T, C, H, W) schema."""
     arr = np.asarray(frames)
@@ -266,6 +278,7 @@ __all__ = [
     "_jsonable_crlb_summary",
     "_multichannel_output_mode",
     "_packet_sample_environment_metadata",
+    "_raw_signal_video_filename",
     "_resolve_public_num_frames",
     "_safe_channel_filename",
     "_setup_output_dirs",

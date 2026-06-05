@@ -1,17 +1,17 @@
 {
   "counts": {
     "exposure_tier": {
-      "advanced": 159,
+      "advanced": 163,
       "core": 137,
       "hidden": 14,
-      "workflow": 31
+      "workflow": 33
     },
     "internal": 14,
-    "params": 327,
-    "rows": 341,
-    "schema_controls": 328
+    "params": 333,
+    "rows": 347,
+    "schema_controls": 334
   },
-  "generated_utc": "2026-06-03T18:04:26Z",
+  "generated_utc": "2026-06-04T20:51:36Z",
   "rows": [
     {
       "exposure_tier": "advanced",
@@ -744,6 +744,20 @@
     {
       "exposure_tier": "advanced",
       "in_params": true,
+      "in_schema": true,
+      "notes": "User-settable through schema-defined control surface.",
+      "param_key": "off_axis_reference_amplitude_scale",
+      "schema_groups": [
+        "Advanced modality"
+      ],
+      "schema_keys": [
+        "off_axis_reference_amplitude_scale"
+      ],
+      "surface": "schema-control"
+    },
+    {
+      "exposure_tier": "advanced",
+      "in_params": true,
       "in_schema": false,
       "notes": "Tunable by PARAMS override; not currently in schema controls.",
       "param_key": "particles",
@@ -1294,6 +1308,48 @@
       ],
       "schema_keys": [
         "sem_monte_carlo_trajectories"
+      ],
+      "surface": "schema-control"
+    },
+    {
+      "exposure_tier": "advanced",
+      "in_params": true,
+      "in_schema": true,
+      "notes": "User-settable through schema-defined control surface.",
+      "param_key": "sem_physical_elastic_model",
+      "schema_groups": [
+        "Advanced modality"
+      ],
+      "schema_keys": [
+        "sem_physical_elastic_model"
+      ],
+      "surface": "schema-control"
+    },
+    {
+      "exposure_tier": "advanced",
+      "in_params": true,
+      "in_schema": true,
+      "notes": "User-settable through schema-defined control surface.",
+      "param_key": "sem_physical_energy_cutoff_keV",
+      "schema_groups": [
+        "Advanced modality"
+      ],
+      "schema_keys": [
+        "sem_physical_energy_cutoff_keV"
+      ],
+      "surface": "schema-control"
+    },
+    {
+      "exposure_tier": "advanced",
+      "in_params": true,
+      "in_schema": true,
+      "notes": "User-settable through schema-defined control surface.",
+      "param_key": "sem_physical_max_steps",
+      "schema_groups": [
+        "Advanced modality"
+      ],
+      "schema_keys": [
+        "sem_physical_max_steps"
       ],
       "surface": "schema-control"
     },
@@ -4598,6 +4654,34 @@
       ],
       "schema_keys": [
         "save_frame_sequence"
+      ],
+      "surface": "schema-control"
+    },
+    {
+      "exposure_tier": "workflow",
+      "in_params": true,
+      "in_schema": true,
+      "notes": "User-settable through schema-defined control surface.",
+      "param_key": "save_raw_camera_frame_sequence",
+      "schema_groups": [
+        "Workflow"
+      ],
+      "schema_keys": [
+        "save_raw_camera_frame_sequence"
+      ],
+      "surface": "schema-control"
+    },
+    {
+      "exposure_tier": "workflow",
+      "in_params": true,
+      "in_schema": true,
+      "notes": "User-settable through schema-defined control surface.",
+      "param_key": "save_raw_camera_video",
+      "schema_groups": [
+        "Workflow"
+      ],
+      "schema_keys": [
+        "save_raw_camera_video"
       ],
       "surface": "schema-control"
     },

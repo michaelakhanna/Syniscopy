@@ -119,6 +119,13 @@ def _validate_material_properties(value: Any, *, field_name: str) -> dict[str, A
         if not np.isfinite(numeric) or numeric <= 0.0:
             raise ValueError(f"{field_name}.{key} must be finite and positive; got {out[key]!r}.")
         out[key] = numeric
+    for key in ("atomic_number", "atomic_weight_g_mol"):
+        if key not in out or out[key] is None:
+            continue
+        numeric = float(out[key])
+        if not np.isfinite(numeric) or numeric <= 0.0:
+            raise ValueError(f"{field_name}.{key} must be finite and positive; got {out[key]!r}.")
+        out[key] = numeric
     if "n_complex_visible" in out and out["n_complex_visible"] is not None:
         n_value = _coerce_optional_complex(out["n_complex_visible"])
         out["n_complex_visible"] = {"real": float(n_value.real), "imag": float(n_value.imag)}

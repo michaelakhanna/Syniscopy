@@ -80,11 +80,11 @@ cell. You can skip it and run training directly if you already know your
 parameters.
 
 The notebook generates or reuses the full Syniscopy dataset, reads the
-lossless PNG frame sequences recorded in `frame_sequence_dir` /
-`training_frames_dir`, converts them to Segment Anything Model 2's
-video-object-segmentation layout, splits videos into training and validation
-lists, trains Segment Anything Model 2 with validation after each epoch,
-and writes:
+lossless contrast-analysis PNG frame sequences recorded in
+`frame_sequence_dir` / `training_frames_dir`, converts them to Segment
+Anything Model 2's video-object-segmentation layout, splits videos into
+training and validation lists, trains Segment Anything Model 2 with validation
+after each epoch, and writes:
 
 ```text
 MyDrive/Syniscopy/<MICROSCOPE_LABEL>/weights/final_checkpoint.pt
@@ -136,6 +136,13 @@ dataset and stops before Segment Anything Model 2 setup. With
 `DATASET_ONLY = False` and `RESET_RAW_DATASET = False`, the notebook checks the Drive dataset, skips
 completed videos, regenerates only an incomplete video if needed, and then
 continues to Segment Anything Model 2 training.
+
+Each generated Syniscopy video has two visual AVI products by default:
+`video_XXXX.avi` is the contrast-analysis preview paired with
+`training_frames_dir`, and `video_XXXX_raw_signal.avi` is a raw-camera signal
+preview with the detector background left in place. The raw-camera preview is
+for inspection/audit; Segment Anything Model 2 training uses
+`training_frames_dir`.
 
 If Colab disconnects during dataset generation, rerun with
 `RESET_RAW_DATASET = False`; completed videos are preserved. If Colab

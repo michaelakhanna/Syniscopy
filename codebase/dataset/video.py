@@ -23,8 +23,10 @@ from .completeness import _validate_dataset_output_contract, _video_assets_compl
 from .overrides import apply_parameter_overrides
 from .runtime import (
     _final_frames_from_simulation_result,
+    _raw_signal_frames_from_result_metadata,
     _raw_frame_view_payload,
     _remove_video_artifacts,
+    _save_raw_camera_frame_sequence,
     _save_lossless_frame_sequence,
     _video_manifest_path,
     build_dataset_video_params,
@@ -52,6 +54,7 @@ def process_dataset_videos(
     resume_existing: bool,
     video_dir: str,
     frames_root_dir: str,
+    raw_camera_frames_root_dir: str,
     masks_root_dir: str,
     raw_views_dir: str,
     packets_dir: str,
@@ -163,6 +166,7 @@ def process_dataset_videos(
 
         video_filename = os.path.join(video_dir, f"{video_id}.avi")
         frame_sequence_dir = os.path.join(frames_root_dir, video_id)
+        raw_camera_frame_sequence_dir = os.path.join(raw_camera_frames_root_dir, video_id)
         masks_dir = os.path.join(masks_root_dir, video_id)
         raw_views_path = os.path.join(raw_views_dir, f"{video_id}.npz")
         channel_sidecar_dir = os.path.join(video_dir, "channels", video_id)
@@ -172,6 +176,9 @@ def process_dataset_videos(
         # video's owned outputs only. Completed videos are never touched by resume.
         if os.path.exists(video_filename):
             os.remove(video_filename)
+        raw_signal_video_filename = os.path.splitext(video_filename)[0] + "_raw_signal.avi"
+        if os.path.exists(raw_signal_video_filename):
+            os.remove(raw_signal_video_filename)
         if os.path.exists(raw_views_path):
             os.remove(raw_views_path)
         if os.path.exists(matched_packet_path):
@@ -181,6 +188,8 @@ def process_dataset_videos(
             os.remove(raw_views_tmp_path)
         if os.path.isdir(frame_sequence_dir):
             shutil.rmtree(frame_sequence_dir)
+        if os.path.isdir(raw_camera_frame_sequence_dir):
+            shutil.rmtree(raw_camera_frame_sequence_dir)
         if os.path.isdir(masks_dir):
             shutil.rmtree(masks_dir)
         if os.path.isdir(channel_sidecar_dir):
@@ -195,9 +204,14 @@ def process_dataset_videos(
 
         save_frame_sequence = bool(param_value(params, 'save_frame_sequence'))
         save_raw_frame_views = bool(param_value(params, 'save_raw_frame_views'))
+        save_raw_camera_frame_sequence = bool(param_value(params, 'save_raw_camera_frame_sequence'))
         simulation_result = run_simulation(
             params,
-            return_frames=bool(save_frame_sequence or save_raw_frame_views),
+            return_frames=bool(
+                save_frame_sequence
+                or save_raw_frame_views
+                or save_raw_camera_frame_sequence
+            ),
         )
         result_metadata = (
             dict(simulation_result.get("metadata", {}) or {})
@@ -212,6 +226,21 @@ def process_dataset_videos(
             final_frames_for_sequence = _final_frames_from_simulation_result(simulation_result)
             _save_lossless_frame_sequence(final_frames_for_sequence, frame_sequence_dir)
             frame_sequence_rel = os.path.join("frames", video_id)
+
+        raw_camera_frame_sequence_rel = None
+        if save_raw_camera_frame_sequence:
+            if simulation_result is None:
+                raise RuntimeError(
+                    "Raw camera frame sequence saving requires returned raw frames, "
+                    "but simulation returned None."
+                )
+            raw_signal_frames_for_sequence = _raw_signal_frames_from_result_metadata(result_metadata)
+            _save_raw_camera_frame_sequence(
+                raw_signal_frames_for_sequence,
+                raw_camera_frame_sequence_dir,
+                bit_depth=int(param_value(params, "bit_depth")),
+            )
+            raw_camera_frame_sequence_rel = os.path.join("raw_camera_frames", video_id)
 
         raw_views_rel = None
         if save_raw_frame_views and simulation_result is not None:
@@ -265,6 +294,8 @@ def process_dataset_videos(
         if raw_views_rel is not None:
             manifest["raw_frame_views_npz"] = raw_views_rel
             manifest["background_subtracted_video_path"] = manifest.get("output_video_path")
+        if raw_camera_frame_sequence_rel is not None:
+            manifest["raw_camera_frame_sequence_dir"] = raw_camera_frame_sequence_rel
         matched_modalities = param_value(params, "matched_modalities")
         if matched_modalities is not None:
             packet_payload = render_matched_modality_observations(

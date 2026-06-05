@@ -206,6 +206,10 @@ def compute_information_support(
     params: dict[str, Any],
     noise_std: float,
     noise_variance_map: np.ndarray | float | None = None,
+    *,
+    signal_units: str = "detector_count",
+    measurement_domain: str = "detector_count",
+    noise_variance_units: str = "detector_count_squared",
 ) -> tuple[float, dict[str, Any]]:
     """
     Compute CRLB metadata and a bounded information-support factor.
@@ -229,9 +233,9 @@ def compute_information_support(
             np.asarray(contrast_image, dtype=float),
             variance,
             pixel_size_nm=pixel_size_nm,
-            signal_units="detector_count",
-            measurement_domain="detector_count",
-            noise_variance_units="detector_count_squared",
+            signal_units=signal_units,
+            measurement_domain=measurement_domain,
+            noise_variance_units=noise_variance_units,
         )
     except Exception as exc:  # noqa: BLE001 - downgrade to unsupported metadata
         return 0.0, {
@@ -599,6 +603,9 @@ class SupervisionPolicy:
         all_geometry_masks: list[np.ndarray] | tuple[np.ndarray, ...] | None = None,
         noise_std: float | None = None,
         noise_variance_map: np.ndarray | float | None = None,
+        signal_units: str = "detector_count",
+        measurement_domain: str = "detector_count",
+        noise_variance_units: str = "detector_count_squared",
     ) -> dict[str, Any]:
         geom = (np.asarray(geometry_mask) > 0).astype(np.uint8) * 255
         geom_bool = geom > 0
@@ -638,6 +645,9 @@ class SupervisionPolicy:
                 params=self.params,
                 noise_std=local_noise_std,
                 noise_variance_map=noise_variance_map,
+                signal_units=signal_units,
+                measurement_domain=measurement_domain,
+                noise_variance_units=noise_variance_units,
             )
         else:
             information_support, crlb_meta = _neutral_information_support()

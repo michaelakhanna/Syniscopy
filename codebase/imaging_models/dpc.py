@@ -154,6 +154,16 @@ class DifferentialPhaseContrastImagingModel(CoherentBrightfieldImagingModel):
                     "Differential-phase-contrast vectorial backend requires "
                     f"optical_field_backend='vectorial_debye'; got {optical_backend!r}."
                 )
+            if (
+                detection_mode == cls._DPC_FULL_VECTOR_DETECTION
+                and settings.optical.polarization_model == "unpolarized"
+            ):
+                raise ValueError(
+                    "Vectorial DPC with vectorial_detection_mode='full_vector' "
+                    "requires a coherent input polarization. "
+                    "polarization_model='unpolarized' is an incoherent average; "
+                    "use linear_x, linear_y, an analyzer mode, or scalar_paraxial optics."
+                )
             use_vector_signal = True
         else:
             use_vector_signal = False

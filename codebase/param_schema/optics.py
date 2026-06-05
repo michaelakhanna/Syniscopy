@@ -34,7 +34,7 @@ OPTICS_SCHEMA: dict[str, ParamSpec] = {
     max=1e5,
     ui_label="Probe wavelength (nm)",
     group="Optics",
-    description="Optional modality-specific probe wavelength; overrides the global illumination wavelength.",
+    description="Optional modality-specific probe wavelength; overrides the global illumination wavelength. RICM uses ricm_wavelength_nm when this is unset.",
 ),
 "numerical_aperture": ParamSpec(
     key="numerical_aperture",
@@ -526,22 +526,22 @@ OPTICS_SCHEMA: dict[str, ParamSpec] = {
 "annular_dark_field_inner_sigma": ParamSpec(
     key="annular_dark_field_inner_sigma",
     type="float",
-    default=1.05,
-    min=0.0,
+    default=1.02,
+    min=1.0,
     max=100.0,
     ui_label="Dark-field annulus inner sigma",
     group="Advanced modality",
-    description="Inner annulus sigma for annular dark-field source model.",
+    description="Inner annulus sigma relative to objective NA; must exceed 1 for dark-field illumination.",
 ),
 "annular_dark_field_outer_sigma": ParamSpec(
     key="annular_dark_field_outer_sigma",
     type="float",
-    default=1.30,
-    min=0.0,
+    default=1.08,
+    min=1.0,
     max=100.0,
     ui_label="Dark-field annulus outer sigma",
     group="Advanced modality",
-    description="Outer annulus sigma for annular dark-field source model.",
+    description="Outer annulus sigma relative to objective NA; outer_sigma * NA must not exceed the immersion-medium refractive index.",
 ),
 "annular_dark_field_source_samples": ParamSpec(
     key="annular_dark_field_source_samples",
@@ -653,6 +653,20 @@ OPTICS_SCHEMA: dict[str, ParamSpec] = {
     group="Advanced modality",
     description="Fringe carrier angle in radians for off-axis holography.",
 ),
+"off_axis_reference_amplitude_scale": ParamSpec(
+    key="off_axis_reference_amplitude_scale",
+    type="float",
+    default=1.0,
+    min=0.0,
+    max=1e6,
+    ui_label="Off-axis reference amplitude scale",
+    group="Advanced modality",
+    description=(
+        "Tilted reference-arm amplitude relative to the unscattered object arm "
+        "for off-axis holography. The off-axis count scaler preserves "
+        "background_intensity as the mean empty-scene detector count level."
+    ),
+),
 "ricm_interface_reflection_model": ParamSpec(
     key="ricm_interface_reflection_model",
     type="enum",
@@ -750,6 +764,24 @@ OPTICS_SCHEMA: dict[str, ParamSpec] = {
     ui_label="RICM wavelength (nm)",
     group="Advanced modality",
     description="Wavelength used by RICM optics.",
+),
+"ricm_gap_nm": ParamSpec(
+    key="ricm_gap_nm",
+    type="float",
+    default=0.0,
+    min=0.0,
+    max=1.0e6,
+    ui_label="RICM interface gap (nm)",
+    group="Advanced modality",
+    description="Baseline optical gap between the reflecting interface and particle lower surface.",
+),
+"ricm_use_particle_z_as_gap": ParamSpec(
+    key="ricm_use_particle_z_as_gap",
+    type="bool",
+    default=True,
+    ui_label="RICM z-dependent gap",
+    group="Advanced modality",
+    description="Add the rendered particle z coordinate to the RICM gap phase for per-particle round-trip interference.",
 ),
 "fluorescence_collection_efficiency": ParamSpec(
     key="fluorescence_collection_efficiency",

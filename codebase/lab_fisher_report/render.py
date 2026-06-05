@@ -59,6 +59,10 @@ def _render_modality(
 
     model = get_imaging_model(params)
     render_metadata = dict(metadata.get("render_metadata", {}) or {})
+    noise_params = dict(params)
+    effective_exposure_time_s = render_metadata.get("effective_exposure_time_s")
+    if effective_exposure_time_s is not None:
+        noise_params["exposure_time_s"] = float(effective_exposure_time_s)
     response_function = dict(render_metadata.get("response_function", {}) or {})
     if not response_function:
         response_function = model.compute_response_function(ideal_signal_frames[0].shape, params)
@@ -68,7 +72,7 @@ def _render_modality(
         modality,
         response_function=response_function,
     )
-    detector_meta = camera_noise_metadata(params)
+    detector_meta = camera_noise_metadata(noise_params)
 
     pixel_size_nm = float(params["pixel_size_nm"])
     per_frame: list[dict[str, Any]] = []
@@ -81,7 +85,7 @@ def _render_modality(
         noise_var = analysis_contrast_noise_variance(
             signal,
             reference,
-            params,
+            noise_params,
         )
         noise_var = np.asarray(noise_var, dtype=float)
         if noise_var.shape != contrast.shape and noise_var.size != 1:

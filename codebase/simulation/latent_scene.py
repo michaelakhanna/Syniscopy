@@ -6,7 +6,7 @@ import logging
 import numpy as np
 
 from imaging_models import get_imaging_model
-from materials import (
+from particle_material_resolution import (
     resolve_component_refractive_index,
     resolve_primary_component_refractive_indices,
     resolve_particle_material_properties,

@@ -36,6 +36,8 @@ class MaterialProperties:
     mean_inner_potential_V: float = 0.0
     density_g_cm3: float = 0.0
     se_yield_coefficient: float = 0.0
+    atomic_number: float | None = None
+    atomic_weight_g_mol: float | None = None
     autofluorescence_per_nm: float = 0.0
     fluorophore_density: float = 0.0
     emission_peak_nm: float | None = None

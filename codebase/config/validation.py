@@ -227,6 +227,12 @@ def _normalize_params_in_place(params: dict, *, allowed_extra_keys: set[str] | N
                 "requires PARAMS['vectorial_detection_mode']='full_vector' for "
                 f"differential_phase_contrast; got {vectorial_detection_mode!r}."
             )
+        if polarization_model == 'unpolarized':
+            raise ValueError(
+                "PARAMS['polarization_model']='unpolarized' is an incoherent average "
+                "and cannot define a full-vector DPC phase-gradient observable. Use "
+                "linear_x, linear_y, an analyzer mode, or scalar_paraxial optics."
+            )
     dpc_output_channel = _require_choice('dpc_output_channel', params['dpc_output_channel'])
     _finite_float('dpc_phase_gradient_gain_x', nonnegative=True)
     _finite_float('dpc_phase_gradient_gain_y', nonnegative=True)
@@ -242,6 +248,25 @@ def _normalize_params_in_place(params: dict, *, allowed_extra_keys: set[str] | N
         if int(max_psf_z_slices) <= 0:
             raise ValueError(f"PARAMS['max_psf_z_slices'] must be None or a positive integer; got {max_psf_z_slices!r}.")
     _finite_float('background_intensity', nonnegative=True)
+    ann_inner = _finite_float('annular_dark_field_inner_sigma', positive=True)
+    ann_outer = _finite_float('annular_dark_field_outer_sigma', positive=True)
+    if ann_inner <= 1.0:
+        raise ValueError(
+            "PARAMS['annular_dark_field_inner_sigma'] must exceed 1.0 for dark-field illumination; "
+            f"got {ann_inner!r}."
+        )
+    if ann_inner >= ann_outer:
+        raise ValueError(
+            "Annular dark-field source sigmas must satisfy inner < outer; "
+            f"got inner={ann_inner!r}, outer={ann_outer!r}."
+        )
+    ann_outer_na = ann_outer * numerical_aperture
+    if ann_outer_na > refractive_index_medium + 1e-12:
+        raise ValueError(
+            "Annular dark-field source exceeds the immersion-medium NA: "
+            "annular_dark_field_outer_sigma * numerical_aperture must be <= refractive_index_medium; "
+            f"got {ann_outer!r} * {numerical_aperture!r} = {ann_outer_na!r} > {refractive_index_medium!r}."
+        )
     qpi_visibility = _finite_float('qpi_visibility', positive=True)
     if qpi_visibility > 1.0:
         raise ValueError("PARAMS['qpi_visibility'] must be <= 1.0.")
@@ -274,6 +299,7 @@ def _normalize_params_in_place(params: dict, *, allowed_extra_keys: set[str] | N
     _finite_float('fluorescence_recovery_rate_per_frame', nonnegative=True)
     _finite_float('fluorescence_bleaching_rate_per_frame', nonnegative=True)
     ricm_interface_model = _require_choice('ricm_interface_reflection_model', params['ricm_interface_reflection_model'])
+    _finite_float('ricm_gap_nm', nonnegative=True)
     ricm_layers = params['ricm_thinfilm_layers']
     if ricm_layers is None:
         ricm_layers = []
@@ -291,10 +317,14 @@ def _normalize_params_in_place(params: dict, *, allowed_extra_keys: set[str] | N
         raise ValueError("PARAMS['tem_backend']='multislice_lite' requires PARAMS['tem_model']='multislice_lite'.")
     if tem_model == 'syniscopy_multislice' and tem_backend != 'syniscopy_multislice':
         raise ValueError("PARAMS['tem_model']='syniscopy_multislice' requires PARAMS['tem_backend']='syniscopy_multislice'.")
+    if tem_model == 'multislice_physical' and tem_backend != 'multislice_physical':
+        raise ValueError("PARAMS['tem_model']='multislice_physical' requires PARAMS['tem_backend']='multislice_physical'.")
     if tem_model == 'weak_phase_ctf' and tem_backend != 'ctf_proxy':
         raise ValueError("PARAMS['tem_model']='weak_phase_ctf' requires PARAMS['tem_backend']='ctf_proxy'.")
     if tem_backend == 'ctf_proxy' and tem_model != 'weak_phase_ctf':
         raise ValueError("PARAMS['tem_backend']='ctf_proxy' requires PARAMS['tem_model']='weak_phase_ctf'.")
+    if tem_backend == 'multislice_physical' and tem_model != 'multislice_physical':
+        raise ValueError("PARAMS['tem_backend']='multislice_physical' requires PARAMS['tem_model']='multislice_physical'.")
     tem_potential_source = _require_choice('tem_potential_source', params['tem_potential_source'])
     tem_reference_status = _require_choice('tem_reference_status', params['tem_reference_status'])
     if tem_reference_status == 'reference_validated' and (not params['tem_reference_validation_hash']):
@@ -320,6 +350,10 @@ def _normalize_params_in_place(params: dict, *, allowed_extra_keys: set[str] | N
         raise ValueError("PARAMS['sem_backend']='interaction_volume_proxy' requires PARAMS['sem_model']='interaction_volume_proxy'.")
     if sem_model == 'interaction_volume_proxy' and sem_backend != 'interaction_volume_proxy':
         raise ValueError("PARAMS['sem_model']='interaction_volume_proxy' requires PARAMS['sem_backend']='interaction_volume_proxy'.")
+    if sem_backend == 'monte_carlo_physical' and sem_model != 'physical_electron_transport':
+        raise ValueError("PARAMS['sem_backend']='monte_carlo_physical' requires PARAMS['sem_model']='physical_electron_transport'.")
+    if sem_model == 'physical_electron_transport' and sem_backend != 'monte_carlo_physical':
+        raise ValueError("PARAMS['sem_model']='physical_electron_transport' requires PARAMS['sem_backend']='monte_carlo_physical'.")
     if sem_backend == 'reference_kernel_table' and (not params['sem_reference_kernel_path']):
         raise ValueError("PARAMS['sem_backend']='reference_kernel_table' requires PARAMS['sem_reference_kernel_path'].")
     sem_source_representation = _require_choice('sem_source_representation', params['sem_source_representation'])
@@ -330,7 +364,12 @@ def _normalize_params_in_place(params: dict, *, allowed_extra_keys: set[str] | N
     _finite_float('sem_source_z_offset_nm')
     _finite_float('sem_beam_current_nA', nonnegative=True)
     _finite_float('sem_dwell_time_us', nonnegative=True)
-    _finite_float('sem_detector_takeoff_angle_deg', nonnegative=True)
+    sem_takeoff_angle = _finite_float('sem_detector_takeoff_angle_deg', nonnegative=True)
+    if sem_takeoff_angle > 90.0:
+        raise ValueError(
+            "PARAMS['sem_detector_takeoff_angle_deg'] is measured above the specimen surface "
+            f"and must be <= 90 degrees; got {sem_takeoff_angle!r}."
+        )
     _finite_float('sem_detector_acceptance', nonnegative=True)
     _finite_float('sem_escape_depth_nm', nonnegative=True)
     _finite_float('sem_backscatter_fraction', nonnegative=True)
@@ -339,8 +378,10 @@ def _normalize_params_in_place(params: dict, *, allowed_extra_keys: set[str] | N
     if float(params['sem_backscatter_fraction']) > 1.0:
         raise ValueError("PARAMS['sem_backscatter_fraction'] must be <= 1.0.")
     _finite_float('sem_transport_material_scale', nonnegative=True)
-    _finite_float('sem_transport_source_exponent', positive=True)
-    _finite_float('sem_transport_topography_exponent', positive=True)
+    if _finite_float('sem_transport_source_exponent', positive=True) < 0.05:
+        raise ValueError("PARAMS['sem_transport_source_exponent'] must be >= 0.05.")
+    if _finite_float('sem_transport_topography_exponent', positive=True) < 0.05:
+        raise ValueError("PARAMS['sem_transport_topography_exponent'] must be >= 0.05.")
     _positive_int('sem_monte_carlo_trajectories')
     _positive_int('sem_monte_carlo_steps')
     if params['sem_monte_carlo_step_nm'] is not None:
@@ -350,6 +391,9 @@ def _normalize_params_in_place(params: dict, *, allowed_extra_keys: set[str] | N
     _finite_float('sem_monte_carlo_scatter_std_deg', nonnegative=True)
     if params['sem_monte_carlo_kernel_size_px'] is not None:
         _positive_int('sem_monte_carlo_kernel_size_px')
+    _positive_int('sem_physical_max_steps')
+    _finite_float('sem_physical_energy_cutoff_keV', positive=True)
+    _require_choice('sem_physical_elastic_model', params['sem_physical_elastic_model'])
     _finite_float('sem_reference_source_depth_nm', nonnegative=True)
     _finite_float('sem_reference_incident_angle_deg', nonnegative=True)
     if float(params['sem_reference_incident_angle_deg']) > 180.0:
@@ -471,6 +515,9 @@ def _normalize_params_in_place(params: dict, *, allowed_extra_keys: set[str] | N
         _finite_float('read_noise_e', nonnegative=True)
     _finite_float('dark_current_e_per_pixel_per_s', nonnegative=True)
     _finite_float('exposure_time_s', positive=True)
+    _finite_float('dark_offset_counts', nonnegative=True)
+    if params['hot_pixel_value_counts'] is not None:
+        _finite_float('hot_pixel_value_counts', nonnegative=True)
     if params['saturation_e'] is not None:
         _finite_float('saturation_e', positive=True)
     for key in ('fixed_pattern_gain_map', 'fixed_pattern_offset_map', 'scmos_gain_map', 'hot_pixel_mask', 'scmos_variance_map', 'scmos_read_noise_map', 'flat_field_map', 'dark_frame_map'):

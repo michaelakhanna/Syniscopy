@@ -24,8 +24,11 @@ For each source point s = (sx, sy):
 
 The final intensity is the average over source points (incoherent
 superposition across condenser angles, as required for an extended Köhler
-source). sigma = 0 with N_s = 1 reproduces exactly the coherent
-brightfield (COBRI) result; sigma -> 1 produces the fully partially
+source). In the single on-axis source-point limit, objective-bandlimited input
+fields reduce to the coherent bright-field composition rule. Arbitrary
+unfiltered fields can differ because this model applies the objective pupil in
+the Abbe decomposition while the coherent bright-field model consumes an
+already propagated/scattered field. sigma -> 1 produces the fully partially
 coherent limit of bench bright-field microscopes.
 """
 
@@ -362,8 +365,8 @@ class AnnularDarkFieldImagingModel(_AbbeKohlerBase):
     as ``coherent_dark_field``.
 
     Parameters (with defaults):
-        ``annular_dark_field_inner_sigma``: 1.05
-        ``annular_dark_field_outer_sigma``: 1.30
+        ``annular_dark_field_inner_sigma``: 1.02
+        ``annular_dark_field_outer_sigma``: 1.08
         ``annular_dark_field_source_samples``: 24
     """
 

@@ -91,6 +91,7 @@ def build_zip_manifest(files: list[Path], *, archive_prefix: str = "") -> dict:
         records.append({"path": arcname, "source_path": rel, "sha256": sha256_file(src)})
     source_provenance = build_source_provenance(str(ROOT))
     source_provenance["repo_root"] = "."
+    source_provenance["git_root"] = "."
     return {
         "schema_version": "syniscopy-source-zip-manifest-v1",
         "packager": Path(__file__).relative_to(ROOT).as_posix(),

@@ -8,6 +8,7 @@ from ._metadata import (
     Any,
     SEMTransportBackendError,
     SEMTransportMetadata,
+    _detector_takeoff_acceptance_gain,
     _electrons_from_beam_current,
     _finite_nonnegative,
     _gaussian_blur,
@@ -116,8 +117,10 @@ class SyniscopyTransportSEMBackend:
         return float(np.sqrt(self.probe_sigma_px ** 2 + escape_sigma_px ** 2))
 
     def _detector_geometry_gain(self) -> float:
-        takeoff_term = max(np.cos(np.deg2rad(self._takeoff_angle_deg)), 0.0)
-        return float(self._detector_acceptance * takeoff_term)
+        return _detector_takeoff_acceptance_gain(
+            self._detector_acceptance,
+            self._takeoff_angle_deg,
+        )
 
     def _material_response(self, source: np.ndarray) -> np.ndarray:
         material_scale = self._material_scale

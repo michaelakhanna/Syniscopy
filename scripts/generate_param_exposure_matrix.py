@@ -35,6 +35,8 @@ WORKFLOW_CONTROL_KEYS = {
     "multichannel_sidecar_directory",
     "return_ideal_float_frames",
     "save_frame_sequence",
+    "save_raw_camera_frame_sequence",
+    "save_raw_camera_video",
     "save_raw_frame_views",
 }
 

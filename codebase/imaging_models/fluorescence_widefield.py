@@ -177,6 +177,7 @@ class FluorescenceWidefieldImagingModel(ImagingModel):
 
     def compute_response_function(self, shape: tuple[int, int], params: dict) -> dict:
         response = super().compute_response_function(shape, params)
+        count_scale, count_scaling_mode = self._count_scale(params)
         response.update({
             "kind": "fluorescence_emission_psf",
             "excitation_wavelength_nm": float(param_value(params, "fluorescence_excitation_wavelength_nm")),
@@ -198,8 +199,8 @@ class FluorescenceWidefieldImagingModel(ImagingModel):
             "fluorescence_background_counts_per_pixel": self._uniform_background,
             "fluorescence_background_units": "detected_counts_per_pixel",
             "fluorescence_photon_count_scale_contract": "emitted_photon_scale_before_collection_and_qe",
-            "fluorescence_count_scale": self._count_scale(params)[0],
-            "fluorescence_count_scaling_mode": self._count_scale(params)[1],
+            "count_scale": count_scale,
+            "count_scaling_mode": count_scaling_mode,
             "spectral_bandwidth_nm": self._spectral_bandwidth_nm,
             "filter_guard_radius_pixels": self.filter_guard_radius_pixels(params),
             "source_input_kind": "projected_2d_fluorophore_emitter_density",
@@ -487,11 +488,11 @@ class FluorescenceWidefieldImagingModel(ImagingModel):
         *,
         frame_index: int = 0,
     ) -> np.ndarray:
-        del background_field, params
+        del background_field
         source = np.asarray(particle_source_map, dtype=float)
         return self._detector_signal_from_source(
             source,
-            {},
+            params,
             frame_index=frame_index,
             include_background=False,
         )

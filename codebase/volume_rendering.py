@@ -98,7 +98,13 @@ def combine_volume_stack(
 
 
 def params_for_focus_plane(params: dict, z_plane_nm: float) -> dict:
-    """Return params whose particle initial z positions are shifted by a focus plane."""
+    """Return single-plane params for an explicit focus-plane render.
+
+    Explicit particle initial z positions are shifted by ``z_plane_nm``.
+    Auto-placed particles keep ``initial_position_nm=None`` so the volumetric
+    renderer can preserve the shared latent x/y placement instead of pinning
+    them to the image origin.
+    """
     out = deepcopy(params)
     out["volumetric_imaging_mode"] = "single_plane"
     out["scene_dimensionality"] = "single_plane_particle_scene"
@@ -108,7 +114,7 @@ def params_for_focus_plane(params: dict, z_plane_nm: float) -> dict:
         motion = particle.setdefault("motion", {})
         pos = motion.get("initial_position_nm")
         if pos is None:
-            pos = [0.0, 0.0, 0.0]
+            continue
         coords = list(np.asarray(pos, dtype=float).reshape(-1))
         if len(coords) < 3:
             coords = (coords + [0.0, 0.0, 0.0])[:3]

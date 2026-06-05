@@ -308,15 +308,21 @@ def compute_complex_psf_stack(params, particle_diameter_nm, particle_refractive_
             detection_mode == "full_vector"
             and active_modality in COHERENT_REFERENCE_MODALITIES
         )
-        if use_full_vectorial_coherent:
+        if use_full_vectorial_dpc or use_full_vectorial_coherent:
             polarization_model = str(param_value(params, 'polarization_model')).strip().lower()
             if polarization_model == "scalar":
                 polarization_model = "linear_x"
-            if polarization_model == "unpolarized":
+            if polarization_model == "unpolarized" and use_full_vectorial_coherent:
                 raise ValueError(
                     "polarization_model='unpolarized' is an incoherent average and "
                     "cannot be used with vectorial_detection_mode='full_vector' for "
                     f"coherent imaging_model={active_modality!r}. Use linear_x, "
+                    "linear_y, an analyzer mode, or optical_field_backend='scalar_paraxial'."
+                )
+            if polarization_model == "unpolarized" and use_full_vectorial_dpc:
+                raise ValueError(
+                    "polarization_model='unpolarized' is an incoherent average and "
+                    "cannot be used with full-vector DPC fields. Use linear_x, "
                     "linear_y, an analyzer mode, or optical_field_backend='scalar_paraxial'."
                 )
         if use_full_vectorial_dpc or use_full_vectorial_coherent:

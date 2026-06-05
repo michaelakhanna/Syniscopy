@@ -10,7 +10,7 @@ import numpy as np
 
 from backend_fidelity import attach_backend_fidelity_metadata
 # Single-source the elementary charge from the one electron-optics constants
-# home instead of re-declaring the literal here (Phase 1: remove value shadows).
+# import the canonical value directly from shared constants to avoid duplication.
 from imaging_models.electron_constants import (
     _ELEMENTARY_CHARGE_C as _E_CHARGE_C,
 )
@@ -83,6 +83,27 @@ def _electrons_from_beam_current(
     if electrons <= 0.0 or not np.isfinite(electrons):
         return None
     return float(electrons)
+
+
+def _validate_takeoff_angle_deg(takeoff_angle_deg: float) -> float:
+    angle = float(takeoff_angle_deg)
+    if not np.isfinite(angle) or angle < 0.0 or angle > 90.0:
+        raise SEMTransportBackendError(
+            "SEM detector takeoff angle is measured above the specimen surface "
+            f"and must be in [0, 90] degrees; got {takeoff_angle_deg!r}."
+        )
+    return angle
+
+
+def _detector_takeoff_acceptance_gain(detector_acceptance: float, takeoff_angle_deg: float) -> float:
+    """Return collection gain for takeoff measured above the specimen surface."""
+    angle = _validate_takeoff_angle_deg(takeoff_angle_deg)
+    acceptance = _finite_nonnegative(
+        "sem_detector_acceptance",
+        detector_acceptance,
+        minimum=0.0,
+    )
+    return float(acceptance * max(np.sin(np.deg2rad(angle)), 0.0))
 
 
 def _gaussian_kernel_1d(sigma_px: float) -> np.ndarray:
@@ -162,6 +183,7 @@ __all__ = [
     "json",
     "np",
     "_E_CHARGE_C",
+    "_detector_takeoff_acceptance_gain",
     "_electrons_from_beam_current",
     "_fft_convolve_centered",
     "_finite_nonnegative",
@@ -170,4 +192,5 @@ __all__ = [
     "_gradient_components",
     "_gradient_magnitude",
     "_sha256_file",
+    "_validate_takeoff_angle_deg",
 ]

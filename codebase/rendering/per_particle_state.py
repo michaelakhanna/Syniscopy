@@ -6,6 +6,10 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from imaging_models.sem_source import (
+    source_like_crop,
+    source_like_normalize_exposure,
+)
 from particle_model import ParticleInstance, ParticleType
 
 
@@ -34,7 +38,7 @@ class _ParticleFrameRenderState:
     def normalize_exposure(self, num_subsamples: int) -> None:
         self.field_canvas /= float(num_subsamples)
         if self.source_canvas is not None:
-            self.source_canvas /= float(num_subsamples)
+            source_like_normalize_exposure(self.source_canvas, num_subsamples)
 
     def rendered_position_nm(self, fallback_position_nm: np.ndarray) -> np.ndarray:
         if self.rendered_position_count <= 0:
@@ -51,11 +55,7 @@ class _ParticleFrameRenderState:
     def source_fov(self, crop_start: int, crop_end: int) -> np.ndarray | None:
         if self.source_canvas is None:
             return None
-        if self.source_canvas.ndim == 3:
-            return self.source_canvas[
-                :, crop_start:crop_end, crop_start:crop_end
-            ]
-        return self.source_canvas[crop_start:crop_end, crop_start:crop_end]
+        return source_like_crop(self.source_canvas, crop_start, crop_end)
 
 
 def _accumulate_projected_geometry_disk(

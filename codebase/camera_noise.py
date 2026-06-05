@@ -32,7 +32,6 @@ from config.runtime import (
     resolved_dark_field_illumination_count,
     resolved_detector_qe,
     resolved_modality,
-    resolved_qpi_phase_to_count_scale,
 )
 from measurement_units import normalize_detector_noise_input_domain
 from modality_registry import canonical_modality_name, is_electron_modality, is_fluorescence_modality
@@ -462,12 +461,18 @@ def resolve_camera_noise_config(params: dict[str, Any] | None = None) -> CameraN
         "hot_pixel_fraction": hot_fraction,
         "scan_line_noise_counts": line_noise,
         "background_offset_counts": background_offset,
+        "dark_offset_counts": dark_offset,
         "dark_current_e_per_pixel_per_s": dark_current_e,
         "exposure_time_s": exposure_time_s,
         "adc_quantization_counts": adc_quantization_counts,
     }.items():
         if not np.isfinite(value) or value < 0.0:
             raise ValueError(f"{key} must be finite and non-negative; got {value}.")
+    if hot_value is not None and (not np.isfinite(hot_value) or hot_value < 0.0):
+        raise ValueError(
+            "hot_pixel_value_counts must be finite and non-negative when supplied; "
+            f"got {hot_value}."
+        )
 
     # Hot pixel fraction is additionally bounded above by one.
     if hot_fraction > 1.0:
@@ -591,15 +596,18 @@ def camera_noise_metadata(params: dict[str, Any] | None = None) -> dict[str, Any
     return meta
 
 
-def shot_noise_std_counts(signal_counts: np.ndarray | float, params: dict[str, Any] | None = None) -> np.ndarray:
+def shot_noise_std_counts(
+    signal_counts: np.ndarray | float,
+    params: dict[str, Any] | None = None,
+    *,
+    runtime: DetectorNoiseRuntime | None = None,
+) -> np.ndarray:
     """Return shot-noise standard deviation in camera counts."""
     cfg = resolve_camera_noise_config(params)
-    counts = np.asarray(signal_counts, dtype=float)
     if not cfg.shot_noise_enabled:
-        return np.zeros_like(counts, dtype=float)
-    counts_pos = np.where(np.isfinite(counts) & (counts > 0.0), counts, 0.0)
-    if cfg.detector_input_is_incident_quanta:
-        counts_pos = counts_pos * cfg.detector_qe
+        return np.zeros_like(np.asarray(signal_counts, dtype=float), dtype=float)
+    detected_mean = detected_mean_counts_before_noise(signal_counts, params, runtime=runtime)
+    counts_pos = np.where(np.isfinite(detected_mean) & (detected_mean > 0.0), detected_mean, 0.0)
     shot_variance = counts_pos / cfg.camera_gain_e_per_count
     if cfg.emccd_enabled:
         shot_variance = shot_variance * cfg.emccd_excess_noise_factor
@@ -614,7 +622,7 @@ def total_noise_std_counts(
 ) -> np.ndarray:
     """Return combined shot and read-noise standard deviation in camera counts."""
     cfg = resolve_camera_noise_config(params)
-    shot = shot_noise_std_counts(signal_counts, params)
+    shot = shot_noise_std_counts(signal_counts, params, runtime=runtime)
     if not cfg.gaussian_noise_enabled:
         read = np.zeros_like(np.asarray(signal_counts, dtype=float), dtype=float)
     else:
@@ -659,6 +667,87 @@ def total_noise_variance_counts(
     """Return combined shot and read-noise variance in camera-count units."""
     std = total_noise_std_counts(signal_counts, params, runtime=runtime)
     return std * std
+
+
+def detected_mean_counts_before_noise(
+    signal_counts: np.ndarray | float,
+    params: dict[str, Any] | None = None,
+    *,
+    runtime: DetectorNoiseRuntime | None = None,
+) -> np.ndarray:
+    """Return the renderer's Poisson/input-referred detector mean in count units."""
+    cfg = resolve_camera_noise_config(params)
+    counts = np.asarray(signal_counts, dtype=float)
+    noisy_mean = counts.astype(float, copy=True)
+    shape = noisy_mean.shape
+    active_runtime = runtime or DetectorNoiseRuntime()
+    dark_frame_map, _ = _resolve_map_shape(
+        "dark_frame_map",
+        cfg.dark_frame_map,
+        shape,
+        dtype=float,
+        runtime=active_runtime,
+    )
+    if dark_frame_map is not None:
+        dark_frame_map = _map_to_array(dark_frame_map, shape)
+    if cfg.background_offset_counts:
+        noisy_mean = noisy_mean + cfg.background_offset_counts
+    if cfg.dark_current_e_per_pixel_per_s and cfg.exposure_time_s:
+        noisy_mean = noisy_mean + (
+            cfg.dark_current_e_per_pixel_per_s
+            * cfg.exposure_time_s
+            / cfg.camera_gain_e_per_count
+        )
+    if cfg.dark_offset_counts:
+        noisy_mean = noisy_mean + cfg.dark_offset_counts
+    if dark_frame_map is not None:
+        noisy_mean = noisy_mean + dark_frame_map
+    if cfg.detector_input_is_incident_quanta:
+        noisy_mean = noisy_mean * cfg.detector_qe
+    return np.asarray(noisy_mean, dtype=float)
+
+
+def qpi_phase_noise_variance_rad2(
+    signal_counts: np.ndarray | float,
+    params: dict[str, Any] | None = None,
+    *,
+    variance_floor: float = 1e-30,
+) -> np.ndarray:
+    """Return QPI phase-domain variance from visibility/quanta/readout settings."""
+    params = dict(params or {})
+    signal = np.asarray(signal_counts, dtype=float)
+    phase_noise = param_value(params, 'qpi_phase_noise_std_rad')
+    visibility = float(param_value(params, 'qpi_visibility'))
+    detected_quanta_raw = param_value(params, 'qpi_detected_quanta_per_pixel')
+    if detected_quanta_raw is None:
+        detected_quanta_raw = resolved_background_intensity(params)
+    detected_quanta = float(detected_quanta_raw)
+    exposure_scale = float(params.get("_exposure_signal_scale", 1.0))
+    if not np.isfinite(exposure_scale) or exposure_scale <= 0.0:
+        raise ValueError(
+            "Internal exposure signal scale must be positive and finite for QPI noise; "
+            f"got {exposure_scale!r}."
+        )
+    detected_quanta *= exposure_scale
+    if not np.isfinite(visibility) or visibility <= 0.0:
+        raise ValueError(f"qpi_visibility must be positive and finite; got {visibility!r}.")
+    if not np.isfinite(detected_quanta) or detected_quanta <= 0.0:
+        raise ValueError(
+            "qpi_detected_quanta_per_pixel/background_intensity must be positive "
+            f"for QPI phase noise; got {detected_quanta!r}."
+        )
+    shot_variance = 1.0 / (visibility * visibility * detected_quanta)
+    readout_variance = 0.0
+    if phase_noise is not None:
+        sigma = float(phase_noise)
+        if not np.isfinite(sigma) or sigma < 0.0:
+            raise ValueError(
+                "qpi_phase_noise_std_rad must be non-negative and finite "
+                f"when supplied; got {phase_noise!r}."
+            )
+        readout_variance = sigma * sigma
+    variance = float(shot_variance + readout_variance)
+    return np.maximum(np.full(signal.shape, variance, dtype=float), float(variance_floor))
 
 
 def contrast_noise_variance_counts(
@@ -723,10 +812,9 @@ def analysis_contrast_noise_variance(
     Most modalities use count-domain contrast conventions and can delegate
     directly to :func:`contrast_noise_variance_counts`. Phase-output modalities
     such as QPI expose phase contrast in radians, while their rendered signal
-    and reference frames are count-like display images. For those modes, count
-    variance is converted to phase variance by the square of the configured
-    phase-to-count scale unless an explicit phase-noise standard deviation is
-    supplied.
+    and reference frames are count-like display images. For those modes, phase
+    variance is inferred from visibility and detected quanta, plus any explicit
+    phase-readout calibration noise.
     """
     params = dict(params or {})
     imaging_model_name = resolved_modality(params)
@@ -734,34 +822,12 @@ def analysis_contrast_noise_variance(
 
     output_type = getattr(get_imaging_model_class(imaging_model_name), "output_type", "intensity")
     if output_type == "phase":
-        phase_noise = param_value(params, 'qpi_phase_noise_std_rad')
-        signal = np.asarray(signal_counts, dtype=float)
-        if phase_noise is not None:
-            sigma = float(phase_noise)
-            if not np.isfinite(sigma) or sigma < 0.0:
-                raise ValueError(
-                    "qpi_phase_noise_std_rad must be non-negative and finite "
-                    f"when supplied; got {phase_noise!r}."
-                )
-            return np.maximum(
-                np.full(signal.shape, sigma * sigma, dtype=float),
-                float(variance_floor),
-            )
-        phase_to_count = resolved_qpi_phase_to_count_scale(params)
-        if not np.isfinite(phase_to_count) or phase_to_count <= 0.0:
-            raise ValueError(
-                "qpi_phase_to_count_scale must be positive and finite for "
-                "phase-domain noise propagation."
-            )
-        count_variance = contrast_noise_variance_counts(
+        del reference_counts, relative_reference, runtime
+        return qpi_phase_noise_variance_rad2(
             signal_counts,
-            reference_counts,
             params,
-            relative_reference=False if relative_reference is None else relative_reference,
             variance_floor=variance_floor,
-            runtime=runtime,
         )
-        return np.maximum(count_variance / (phase_to_count * phase_to_count), float(variance_floor))
 
     return contrast_noise_variance_counts(
         signal_counts,
@@ -970,9 +1036,12 @@ def apply_camera_noise_counts(
     if dark_frame_map is not None:
         noisy = noisy + dark_frame_map
 
+    if cfg.detector_input_is_incident_quanta:
+        noisy = noisy * cfg.detector_qe
+
     if cfg.shot_noise_enabled:
         counts_pos = np.where(np.isfinite(noisy) & (noisy > 0.0), noisy, 0.0)
-        detected_counts_mean = counts_pos * cfg.detector_qe if cfg.detector_input_is_incident_quanta else counts_pos
+        detected_counts_mean = counts_pos
         electron_mean = detected_counts_mean * cfg.camera_gain_e_per_count
         electron_sample = rng.poisson(electron_mean).astype(float)
         poisson_counts = electron_sample / cfg.camera_gain_e_per_count

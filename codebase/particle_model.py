@@ -6,7 +6,7 @@ from typing import Dict, List, Tuple, Optional, Any
 import numpy as np
 
 from optics import ComplexPSFZInterpolator
-from materials import (
+from particle_material_resolution import (
     resolve_component_material_properties,
     resolve_component_refractive_index,
 )

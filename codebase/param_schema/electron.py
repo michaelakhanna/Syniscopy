@@ -9,32 +9,34 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 "tem_model": ParamSpec(
     key="tem_model",
     type="enum",
-    default="syniscopy_multislice",
+    default="multislice_physical",
     choices=[
         "weak_phase_ctf",
         "multislice_lite",
         "syniscopy_multislice",
+        "multislice_physical",
     ],
     ui_label="TEM model",
     group="Advanced modality",
     description=(
-        "Syniscopy-native high-fidelity multislice by default; weak-phase CTF "
-        "and projected-phase multislice-lite are available for reduced-fidelity "
-        "benchmarking."
+        "Physical multislice by default; weak-phase CTF, projected-phase "
+        "multislice-lite, and the older Syniscopy split-step backend are "
+        "available for reduced-fidelity benchmarking."
     ),
 ),
 "tem_backend": ParamSpec(
     key="tem_backend",
     type="enum",
-    default="syniscopy_multislice",
+    default="multislice_physical",
     choices=[
         "ctf_proxy",
         "multislice_lite",
         "syniscopy_multislice",
+        "multislice_physical",
     ],
     ui_label="TEM backend",
     group="Advanced modality",
-    description="Selects Syniscopy high-fidelity multislice by default; legacy weak-phase CTF and Syniscopy native multislice-lite proxy remain available.",
+    description="Selects physical multislice by default; weak-phase CTF, multislice-lite, and Syniscopy split-step remain available as explicit lower-fidelity modes.",
 ),
 "tem_objective_aperture_mrad": ParamSpec(
     key="tem_objective_aperture_mrad",
@@ -54,7 +56,7 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
     max=1e9,
     ui_label="TEM z-slice thickness (nm)",
     group="Advanced modality",
-    description="Slice thickness for syniscopy_multislice. Required when TEM high-fidelity backend is selected.",
+    description="Slice thickness for multislice_physical and syniscopy_multislice source stacks.",
 ),
 "tem_multislice_slices": ParamSpec(
     key="tem_multislice_slices",
@@ -202,31 +204,38 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 "sem_model": ParamSpec(
     key="sem_model",
     type="enum",
-    default="gaussian_probe_secondary_yield",
+    default="physical_electron_transport",
     choices=[
         "gaussian_probe_secondary_yield",
         "interaction_volume_proxy",
+        "physical_electron_transport",
     ],
     ui_label="SEM model",
     group="Advanced modality",
     description=(
-        "Gaussian-probe secondary-yield proxy or interaction-volume proxy."
+        "Gaussian-probe secondary-yield proxy, interaction-volume proxy, or "
+        "physical electron-transport Monte Carlo."
     ),
 ),
 "sem_backend": ParamSpec(
     key="sem_backend",
     type="enum",
-    default="monte_carlo_transport",
+    default="monte_carlo_physical",
     choices=[
         "gaussian_probe_proxy",
         "interaction_volume_proxy",
         "monte_carlo_transport",
+        "monte_carlo_physical",
         "syniscopy_transport_lite",
         "reference_kernel_table",
     ],
     ui_label="SEM backend",
     group="Advanced modality",
-    description="Selects SEM forward model fidelity: Monte Carlo interaction-volume default, transport-lite/proxy variants, or reference-kernel table variants.",
+    description=(
+        "Selects SEM forward model fidelity: material-resolved physical "
+        "Monte Carlo transport default, transport-lite/proxy variants, or "
+        "reference-kernel table variants."
+    ),
 ),
 "sem_source_representation": ParamSpec(
     key="sem_source_representation",
@@ -307,10 +316,10 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
     type="float",
     default=45.0,
     min=0.0,
-    max=180.0,
+    max=90.0,
     ui_label="SEM takeoff angle (deg)",
     group="Advanced modality",
-    description="Detector takeoff angle in degrees for geometry scaling.",
+    description="Detector takeoff angle above the specimen surface in degrees.",
 ),
 "sem_detector_acceptance": ParamSpec(
     key="sem_detector_acceptance",
@@ -356,7 +365,7 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
     key="sem_transport_source_exponent",
     type="float",
     default=1.0,
-    min=0.01,
+    min=0.05,
     max=5.0,
     ui_label="SEM source exponent",
     group="Advanced modality",
@@ -366,7 +375,7 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
     key="sem_transport_topography_exponent",
     type="float",
     default=1.0,
-    min=0.01,
+    min=0.05,
     max=5.0,
     ui_label="SEM topography exponent",
     group="Advanced modality",
@@ -441,6 +450,42 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
     ui_label="SEM MC kernel size",
     group="Advanced modality",
     description="Optional odd interaction-kernel size in canvas pixels; even values are rounded up internally.",
+),
+"sem_physical_max_steps": ParamSpec(
+    key="sem_physical_max_steps",
+    type="int",
+    default=2048,
+    min=1,
+    max=1000000,
+    ui_label="SEM physical max steps",
+    group="Advanced modality",
+    description="Maximum elastic-scattering steps per electron history in the physical SEM Monte Carlo backend.",
+),
+"sem_physical_energy_cutoff_keV": ParamSpec(
+    key="sem_physical_energy_cutoff_keV",
+    type="float",
+    default=0.05,
+    min=1e-9,
+    max=1000.0,
+    ui_label="SEM physical cutoff (keV)",
+    group="Advanced modality",
+    description="Termination and BSE escape cutoff energy for physical SEM Monte Carlo transport.",
+),
+"sem_physical_elastic_model": ParamSpec(
+    key="sem_physical_elastic_model",
+    type="enum",
+    default="screened_rutherford",
+    choices=[
+        "mott_browning",
+        "screened_rutherford",
+    ],
+    ui_label="SEM elastic scattering model",
+    group="Advanced modality",
+    description=(
+        "Elastic cross-section model for physical SEM transport. "
+        "screened_rutherford is the current validation baseline; "
+        "mott_browning exposes Browning's empirical Mott surrogate for explicit studies."
+    ),
 ),
 "sem_reference_material": ParamSpec(
     key="sem_reference_material",

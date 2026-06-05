@@ -41,13 +41,20 @@ def find_supplemental_root() -> Path:
     """Locate the uploaded supplemental folder without relying on cwd."""
 
     for resolved in _candidate_roots():
+        nested = resolved / "supplemental"
+        if (
+            (nested / SOURCE_ZIP_NAME).exists()
+            or (nested / "source" / "codebase").is_dir()
+            or (nested / "E01.ipynb").exists()
+            or (nested / "E07.ipynb").exists()
+        ):
+            return nested
         if (
             (resolved / SOURCE_ZIP_NAME).exists()
             or (resolved / "source" / "codebase").is_dir()
             or (resolved / "outputs").is_dir()
             or (resolved / "E01.ipynb").exists()
             or (resolved / "E07.ipynb").exists()
-            or (resolved.parent / "codebase").is_dir()
         ):
             return resolved
     raise RuntimeError(

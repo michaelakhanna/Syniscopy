@@ -5,8 +5,9 @@ Clean entry point for users who want to fine-tune or run Segment Anything Model
 
 - `sam2training.ipynb`: Colab training notebook. It extracts the Syniscopy
   source zip, previews generated frame views, generates the synthetic dataset
-  on Colab, reads Syniscopy's lossless PNG frame sequences, converts them to
-  Segment Anything Model 2's video-object-segmentation layout, creates a video-level validation
+  on Colab, reads Syniscopy's lossless contrast-analysis PNG frame sequences,
+  converts them to Segment Anything Model 2's video-object-segmentation layout,
+  creates a video-level validation
   split, trains with validation after each epoch, and writes
   `weights/final_checkpoint.pt` from the best validation checkpoint for the
   selected configuration label.
@@ -18,6 +19,9 @@ Clean entry point for users who want to fine-tune or run Segment Anything Model
   notebook's inline Segment Anything Model 2 setup keeps unsupported object pixels out of the loss.
   Background pixels remain supervised; `LossWeight/` only modulates positive
   target pixels, so broad false-positive masks are penalized.
+  Generated datasets also include `*_raw_signal.avi` raw-camera previews by
+  default; those preserve microscope-style detector backgrounds for inspection
+  but are not the default SAM2 training frames.
 - `sam2inference.ipynb`: Colab inference notebook. It selects a configuration
   label, auto-loads `weights/final_checkpoint.pt`, accepts a direct video
   upload into the runtime, displays the first extracted frame before prompt

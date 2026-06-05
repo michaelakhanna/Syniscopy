@@ -20,7 +20,12 @@ from json_utils import json_safe
 from modality_profiles import profile_card_for_model
 from modality_registry import canonical_modality_name
 from particle_specs import get_particle_specs
-from postprocessing import apply_background_subtraction, compute_single_frame_contrast, save_video
+from postprocessing import (
+    apply_background_subtraction,
+    compute_single_frame_contrast,
+    normalize_raw_camera_frames,
+    save_video,
+)
 from rendering import generate_video_and_masks
 from trajectory import (
     resolve_translational_diameters_nm,
@@ -36,6 +41,7 @@ from .output import (
     _ensure_run_scope_layout_token,
     _jsonable_crlb_summary,
     _packet_sample_environment_metadata,
+    _raw_signal_video_filename,
     _resolve_public_num_frames,
     _setup_output_dirs,
     _simulation_result,
@@ -91,12 +97,23 @@ def _render_scene_with_params(
             })
         return None
 
+    analysis_video_path = None
+    raw_signal_video_path = None
     if save_video_output:
         img_size = (params["image_size_pixels"], params["image_size_pixels"])
-        save_video(params["output_filename"], final_frames, params["fps"], img_size)
+        analysis_video_path = str(params["output_filename"])
+        save_video(analysis_video_path, final_frames, params["fps"], img_size)
+        if bool(param_value(params, "save_raw_camera_video")):
+            raw_signal_video_path = _raw_signal_video_filename(params)
+            raw_camera_frames = normalize_raw_camera_frames(raw_signal_frames, params)
+            save_video(raw_signal_video_path, raw_camera_frames, params["fps"], img_size)
 
     if return_frames:
         return _simulation_result(final_frames, ["default"], {
+            "analysis_video_path": analysis_video_path,
+            "raw_signal_video_path": raw_signal_video_path,
+            "analysis_video_semantics": "background_subtracted_contrast_normalized_uint8",
+            "raw_signal_video_semantics": "windowed_raw_detector_count_preview_uint8",
             "raw_signal_frames": list(raw_signal_frames),
             "raw_reference_frames": list(raw_reference_frames),
             "ideal_signal_frames": list(ideal_signal_frames),
@@ -273,10 +290,15 @@ def render_matched_modality_observations(
             reference_frame,
             modality_params,
         )
+        render_metadata = dict(metadata.get("render_metadata", {}) or {})
+        noise_params = dict(modality_params)
+        effective_exposure_time_s = render_metadata.get("effective_exposure_time_s")
+        if effective_exposure_time_s is not None:
+            noise_params["exposure_time_s"] = float(effective_exposure_time_s)
         noise_variance = analysis_contrast_noise_variance(
             signal_frame,
             reference_frame,
-            modality_params,
+            noise_params,
         )
         model = get_imaging_model(modality_params)
         output_type = getattr(model, "output_type", "intensity")

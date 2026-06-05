@@ -10,7 +10,11 @@ from config import normalize_params
 from config.runtime import internal_param_value, param_value, resolved_modality, resolved_random_seed
 from imaging_models import get_imaging_model
 from modality_registry import is_fluorescence_modality
-from postprocessing import apply_background_subtraction, save_video
+from postprocessing import (
+    apply_background_subtraction,
+    normalize_raw_camera_frames,
+    save_video,
+)
 
 _VISIBLE_WAVELENGTH_MIN_NM = 380.0
 _VISIBLE_WAVELENGTH_FULL_INTENSITY_MIN_NM = 420.0
@@ -28,6 +32,7 @@ from .latent_scene import _simulate_latent_scene
 from .output import (
     _RUNTIME_PARAM_KEYS,
     _multichannel_output_mode,
+    _raw_signal_video_filename,
     _safe_channel_filename,
     _simulation_result,
 )
@@ -337,7 +342,10 @@ def _background_subtract_rgb(
         sig_c = [np.asarray(f, dtype=float)[:, :, c] for f in signal_rgb_frames]
         ref_c = [np.asarray(f, dtype=float)[:, :, c] for f in reference_rgb_frames]
         final_c = apply_background_subtraction(sig_c, ref_c, params)
-        final_channels.append([np.asarray(x, dtype=np.uint8) for x in final_c])
+        final_channels.append([
+            np.clip(np.asarray(x, dtype=float), 0.0, 255.0).astype(np.uint8)
+            for x in final_c
+        ])
 
     n_frames = min(len(final_channels[0]), len(final_channels[1]), len(final_channels[2]))
     return [
@@ -492,8 +500,13 @@ def _run_multichannel_simulation(
     final_rgb = _background_subtract_rgb(signal_rgb_noisy, reference_rgb_noisy, params)
     output_mode = _multichannel_output_mode(params)
     written_channel_sidecars = []
+    raw_signal_video_path = None
     if output_mode in {"rgb", "both"}:
         _save_rgb_video(params["output_filename"], final_rgb, float(params["fps"]))
+        if bool(param_value(params, "save_raw_camera_video")):
+            raw_signal_video_path = _raw_signal_video_filename(params)
+            raw_rgb_preview = normalize_raw_camera_frames(signal_rgb_noisy, params)
+            _save_rgb_video(raw_signal_video_path, raw_rgb_preview, float(params["fps"]))
     if output_mode in {"channels", "both"}:
         written_channel_sidecars = _save_channel_videos(
             params,
@@ -516,6 +529,10 @@ def _run_multichannel_simulation(
             "raw_signal_frames_rgb": signal_rgb_noisy,
             "raw_reference_frames_rgb": reference_rgb_noisy,
             "background_subtracted_frames_rgb": final_rgb,
+            "analysis_video_path": str(params["output_filename"]) if output_mode in {"rgb", "both"} else None,
+            "raw_signal_video_path": raw_signal_video_path,
+            "analysis_video_semantics": "background_subtracted_contrast_normalized_rgb_uint8",
+            "raw_signal_video_semantics": "windowed_raw_detector_count_preview_rgb_uint8",
             "multichannel_output_mode": output_mode,
             "channel_sidecar_videos": written_channel_sidecars,
         })

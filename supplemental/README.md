@@ -10,11 +10,15 @@ assemble paper figures or write directly into `paper/figures/`; the paper
 assembly scripts consume these outputs and write provenance manifests next to
 the generated figure and table files.
 The CPU notebooks do not require GPU acceleration. The synthetic-corpus
-notebook writes both the raw Syniscopy dataset and the derived Segment Anything
-Model 2 video-object-segmentation cache under its output folder. The Segment
-Anything Model 2 training and transfer-inference notebooks need a GPU runtime;
-the training notebook reads the generated Segment Anything Model 2 cache and
-writes weights/logs under its output folder.
+notebook writes the Syniscopy dataset with both contrast-analysis artifacts
+(`videos/video_XXXX.avi`, `frames/video_XXXX/`) and raw-camera visual artifacts
+(`videos/video_XXXX_raw_signal.avi`, plus optional `raw_camera_frames/` or
+`raw_frame_views/` count arrays when enabled). Segment Anything Model 2 training
+uses the contrast-analysis frame sequence recorded in `training_frames_dir`;
+the raw-camera artifacts are for microscope-style preview and audit. The
+Segment Anything Model 2 training and transfer-inference notebooks need a GPU
+runtime; the training notebook reads the generated Segment Anything Model 2
+cache and writes weights/logs under its output folder.
 
 ```text
 E01.ipynb

@@ -31,6 +31,7 @@ MODALITY_SPECS: dict[str, ModalitySpec] = {
         label_free_optical=True,
         relative_reference_contrast=True,
         vectorial_full_field=True,
+        lab_optical=True,
     ),
     "fluorescence_widefield": ModalitySpec(
         "fluorescence_widefield",
@@ -122,6 +123,7 @@ MODALITY_SPECS: dict[str, ModalitySpec] = {
         label_free_optical=True,
         relative_reference_contrast=True,
         vectorial_full_field=True,
+        lab_optical=True,
     ),
     "coherent_bright_field": ModalitySpec(
         "coherent_bright_field",

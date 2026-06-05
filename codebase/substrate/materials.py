@@ -22,6 +22,12 @@ def _catalog_material(material_name: str, *, display_name: str | None = None) ->
         mean_inner_potential_V=float(electron.get("mean_inner_potential_V", 0.0)),
         density_g_cm3=float(electron.get("density_g_cm3", 0.0)),
         se_yield_coefficient=float(electron.get("se_yield_coefficient", 0.0)),
+        atomic_number=None if electron.get("atomic_number") is None else float(electron["atomic_number"]),
+        atomic_weight_g_mol=(
+            None
+            if electron.get("atomic_weight_g_mol") is None
+            else float(electron["atomic_weight_g_mol"])
+        ),
         autofluorescence_per_nm=float(fluorescence.get("autofluorescence_per_nm", 0.0) or 0.0),
         fluorophore_density=float(fluorescence.get("fluorophore_density", 0.0) or 0.0),
         emission_peak_nm=fluorescence.get("emission_peak_nm"),
@@ -40,6 +46,8 @@ SI = MaterialProperties(
     mean_inner_potential_V=11.7,
     density_g_cm3=2.33,
     se_yield_coefficient=0.13,
+    atomic_number=14.0,
+    atomic_weight_g_mol=28.085,
 )
 CARBON = _catalog_material("carbon")
 GOLD = _catalog_material("gold")

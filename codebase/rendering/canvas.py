@@ -24,7 +24,7 @@ def _source_footprint_guard_radius_pixels(
         for spec in get_particle_specs(params):
             for component in spec.components:
                 offset = np.asarray(component.offset_nm, dtype=float)
-                offset_radius_nm = float(np.linalg.norm(offset[:2])) if offset.size >= 2 else 0.0
+                offset_radius_nm = float(np.linalg.norm(offset)) if offset.size >= 2 else 0.0
                 sub_radius_nm = 0.5 * float(component.diameter_nm)
                 max_diameter_nm = max(max_diameter_nm, 2.0 * (offset_radius_nm + sub_radius_nm))
     else:
@@ -34,7 +34,7 @@ def _source_footprint_guard_radius_pixels(
             if getattr(ptype, "is_composite", False) and getattr(ptype, "sub_particles", None):
                 for sub in ptype.sub_particles:
                     offset = np.asarray(getattr(sub, "offset_nm", [0.0, 0.0, 0.0]), dtype=float)
-                    offset_radius_nm = float(np.linalg.norm(offset[:2])) if offset.size >= 2 else 0.0
+                    offset_radius_nm = float(np.linalg.norm(offset)) if offset.size >= 2 else 0.0
                     sub_radius_nm = 0.5 * float(getattr(sub, "diameter_nm", 0.0))
                     max_diameter_nm = max(max_diameter_nm, 2.0 * (offset_radius_nm + sub_radius_nm))
     guard = 0.5 * max_diameter_nm / pixel_size_nm * float(os_factor)
@@ -97,4 +97,3 @@ def resolve_render_canvas_geometry(
         "requires_optical_scattered_field": bool(requires_optical_scattered_field),
         "uses_particle_material_sources": bool(uses_particle_sources),
     }
-

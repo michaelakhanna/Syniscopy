@@ -77,7 +77,9 @@ def _remove_video_artifacts(base_output_dir: str, video_index: int) -> None:
     video_id = f"video_{video_index:04d}"
     removals = [
         os.path.join(base_output_dir, "videos", f"{video_id}.avi"),
+        os.path.join(base_output_dir, "videos", f"{video_id}_raw_signal.avi"),
         os.path.join(base_output_dir, "frames", video_id),
+        os.path.join(base_output_dir, "raw_camera_frames", video_id),
         os.path.join(base_output_dir, "masks", video_id),
         os.path.join(base_output_dir, "raw_frame_views", f"{video_id}.npz"),
         os.path.join(base_output_dir, "raw_frame_views", f"{video_id}.npz.tmp"),
@@ -119,11 +121,12 @@ def _final_frames_from_simulation_result(simulation_result: Mapping[str, Any]) -
 
 def _save_lossless_frame_sequence(frames: np.ndarray, frame_dir: str) -> int:
     """
-    Write background-subtracted final frames as a PNG sequence.
+    Write background-subtracted contrast-analysis frames as a PNG sequence.
 
     These PNGs losslessly encode the 8-bit display/training frames. They are not
     the quantitative raw/ideal simulation arrays; enable save_raw_frame_views for
-    those audit artifacts. The AVI video is only a compact preview.
+    those audit artifacts or save_raw_camera_frame_sequence for uint16 raw camera
+    frames. The main AVI video is a compact contrast-analysis preview.
     """
     import cv2
 
@@ -164,6 +167,65 @@ def _save_lossless_frame_sequence(frames: np.ndarray, frame_dir: str) -> int:
             raise RuntimeError(f"Failed to write lossless frame {out_path!r}.")
 
     return int(frames.shape[0])
+
+
+def _raw_signal_frames_from_result_metadata(result_metadata: Mapping[str, Any]) -> np.ndarray:
+    if "raw_signal_frames_rgb" in result_metadata:
+        return np.asarray(result_metadata["raw_signal_frames_rgb"])
+    if "raw_signal_frames" in result_metadata:
+        return np.asarray(result_metadata["raw_signal_frames"])
+    raise ValueError(
+        "Raw camera frame sequence requested, but simulation metadata does not "
+        "contain raw_signal_frames or raw_signal_frames_rgb."
+    )
+
+
+def _save_raw_camera_frame_sequence(
+    frames: np.ndarray,
+    frame_dir: str,
+    *,
+    bit_depth: int,
+) -> int:
+    """Write raw detector signal frames as uint16 PNG files."""
+    import cv2
+
+    frames = np.asarray(frames)
+    if frames.ndim < 3 or frames.shape[0] == 0:
+        raise ValueError("Cannot save a raw camera frame sequence from an empty frame array.")
+    bit_depth = int(bit_depth)
+    if bit_depth < 1 or bit_depth > 16:
+        raise ValueError(f"bit_depth must be in [1, 16] for raw camera PNG output; got {bit_depth}.")
+    max_count = float((1 << bit_depth) - 1)
+
+    if os.path.isdir(frame_dir):
+        shutil.rmtree(frame_dir)
+    os.makedirs(frame_dir, exist_ok=True)
+
+    for frame_index, frame in enumerate(frames):
+        arr = np.asarray(frame, dtype=float)
+        if not np.all(np.isfinite(arr)):
+            raise ValueError(
+                "Cannot save non-finite raw camera frame data; "
+                f"frame {frame_index} contains NaN or Inf."
+            )
+        arr_u16 = np.rint(np.clip(arr, 0.0, max_count)).astype(np.uint16)
+        if arr_u16.ndim == 2:
+            to_write = arr_u16
+        elif arr_u16.ndim == 3 and arr_u16.shape[2] == 3:
+            to_write = cv2.cvtColor(arr_u16, cv2.COLOR_RGB2BGR)
+        else:
+            raise ValueError(
+                "Raw camera frames must be grayscale or RGB arrays; "
+                f"got {arr_u16.shape}."
+            )
+
+        out_path = os.path.join(frame_dir, f"{frame_index:06d}.png")
+        ok = cv2.imwrite(out_path, to_write)
+        if not ok:
+            raise RuntimeError(f"Failed to write raw camera frame {out_path!r}.")
+
+    return int(frames.shape[0])
+
 
 def _build_params_for_video(preset_name: Optional[str]) -> Dict[str, Any]:
     """

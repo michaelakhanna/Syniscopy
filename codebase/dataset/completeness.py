@@ -131,6 +131,7 @@ def _video_assets_complete(base_output_dir: str, video_index: int) -> bool:
     if not isinstance(manifest, dict):
         return False
     video_rel = manifest.get("output_video_path")
+    raw_signal_video_rel = manifest.get("raw_signal_video_path")
     frames_rel = manifest.get("frame_sequence_dir")
     mask_rel = manifest.get("mask_root_dir")
     if not video_rel or not frames_rel or not mask_rel:
@@ -144,7 +145,18 @@ def _video_assets_complete(base_output_dir: str, video_index: int) -> bool:
         return False
     if not _avi_video_complete(video_path, expected_num_frames):
         return False
+    if raw_signal_video_rel and not _avi_video_complete(
+        os.path.join(base_output_dir, str(raw_signal_video_rel)),
+        expected_num_frames,
+    ):
+        return False
     if not _frame_sequence_complete(frames_path, expected_num_frames):
+        return False
+    raw_camera_frames_rel = manifest.get("raw_camera_frame_sequence_dir")
+    if raw_camera_frames_rel and not _frame_sequence_complete(
+        os.path.join(base_output_dir, str(raw_camera_frames_rel)),
+        expected_num_frames,
+    ):
         return False
     if bool(manifest.get("mask_generation_enabled", True)) and not _mask_outputs_complete(
         mask_path,
@@ -190,9 +202,10 @@ def _validate_dataset_output_contract(params: Mapping[str, Any]) -> None:
     if not bool(param_value(params, 'save_frame_sequence')):
         raise ValueError(
             "Dataset generation requires save_frame_sequence=True. "
-            "PNG frame sequences are the canonical 8-bit training/inference "
-            "artifact; AVI is only a preview. Enable save_raw_frame_views for "
-            "quantitative raw/ideal arrays."
+            "PNG frame sequences are the canonical 8-bit contrast-analysis "
+            "training/inference artifact. Enable save_raw_camera_video for a "
+            "raw-camera preview and save_raw_frame_views for quantitative "
+            "raw/ideal arrays."
         )
     volumetric_mode = str(param_value(params, 'volumetric_imaging_mode')).strip().lower()
     if volumetric_mode != "single_plane":

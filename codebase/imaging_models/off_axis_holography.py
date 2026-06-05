@@ -38,6 +38,7 @@ class OffAxisHolographyImagingModel(ImagingModel):
     Parameters (all taken from PARAMS with nominal defaults):
         off_axis_fringe_period_px   (default 10.0)
         off_axis_fringe_angle_rad   (default 0.0, fringes run along y)
+        off_axis_reference_amplitude_scale (default 1.0)
 
     Validation:
         reference_field_amplitude must be > 0.
@@ -54,6 +55,18 @@ class OffAxisHolographyImagingModel(ImagingModel):
             raise ValueError(
                 "PARAMS['reference_field_amplitude'] must be positive for "
                 "OffAxisHolographyImagingModel (imaging_model='off_axis_holography')."
+            )
+        self._reference_amplitude = float(E_ref_amplitude)
+        self._reference_amplitude_scale = float(
+            param_value(params, "off_axis_reference_amplitude_scale")
+        )
+        if (
+            not np.isfinite(self._reference_amplitude_scale)
+            or self._reference_amplitude_scale < 0.0
+        ):
+            raise ValueError(
+                "off_axis_reference_amplitude_scale must be finite and nonnegative; got "
+                f"{self._reference_amplitude_scale}."
             )
         self._period_detector_px = float(param_value(params, "off_axis_fringe_period_px"))
         if not np.isfinite(self._period_detector_px) or self._period_detector_px < 2.0:
@@ -116,15 +129,62 @@ class OffAxisHolographyImagingModel(ImagingModel):
         params: dict,
     ) -> np.ndarray:
         """
-        Off-axis fringe frame: |E_ref · e^{iK·r} + E_sca_total|².
+        Off-axis camera frame:
+
+            |E_obj + E_sca_total + E_ref · exp(iK·r)|².
+
+        The unscattered object/reference background remains in the signal
+        frame, so an empty scene has carrier fringes as in a raw off-axis
+        hologram. Downstream single-frame contrast subtracts the no-particle
+        reference frame when an analysis contrast image is requested.
         """
         carrier = self._tilt_field(E_sca_total.shape)
-        E_ref = reference_vector_for_scattered(
-            np.asarray(background_field, dtype=np.complex128) * carrier,
+        object_field = reference_vector_for_scattered(
+            np.asarray(background_field, dtype=np.complex128),
             E_sca_total,
             params,
         )
-        return field_intensity(E_ref + E_sca_total)
+        reference_field = reference_vector_for_scattered(
+            self._reference_amplitude * self._reference_amplitude_scale * carrier,
+            E_sca_total,
+            params,
+        )
+        return field_intensity(object_field + E_sca_total + reference_field)
+
+    def scale_intensity_to_counts(
+        self,
+        intensity: np.ndarray,
+        background_final: np.ndarray,
+        E_ref_intensity_final: np.ndarray,
+        params: dict,
+    ) -> np.ndarray:
+        """
+        Scale raw off-axis interferograms to detector counts.
+
+        The empty-scene interferogram is
+        ``|E_obj + a E_ref exp(iK.r)|^2``. Its carrier-averaged intensity is
+        ``|E_obj|^2 * (1 + a^2)`` for reference-arm amplitude ratio ``a``.
+        Dividing by that factor keeps ``background_intensity`` as the mean
+        empty-scene count level while preserving the raw carrier modulation.
+        """
+        del params
+        reference_scale = float(self._reference_amplitude_scale)
+        empty_mean_intensity = np.maximum(
+            E_ref_intensity_final * (1.0 + reference_scale * reference_scale),
+            1e-12,
+        )
+        counts = background_final * (np.asarray(intensity, dtype=float) / empty_mean_intensity)
+        if np.any(~np.isfinite(counts)):
+            raise ValueError(
+                "OffAxisHolographyImagingModel.scale_intensity_to_counts produced "
+                "non-finite counts."
+            )
+        if np.any(counts < 0.0):
+            raise ValueError(
+                "OffAxisHolographyImagingModel.scale_intensity_to_counts produced "
+                "negative counts."
+            )
+        return counts
 
     def compute_response_function(self, shape: tuple[int, int], params: dict) -> dict:
         response = super().compute_response_function(shape, params)
@@ -133,7 +193,11 @@ class OffAxisHolographyImagingModel(ImagingModel):
                 "off_axis_fringe_period_detector_px": self._period_detector_px,
                 "off_axis_fringe_period_canvas_px": self._period_canvas_px,
                 "off_axis_fringe_angle_rad": self._angle_rad,
+                "off_axis_reference_amplitude_scale": self._reference_amplitude_scale,
                 "off_axis_carrier_units": "model_canvas_pixels",
+                "off_axis_frame_contract": "raw_object_reference_carrier_interferogram",
+                "off_axis_empty_scene_contains_carrier_fringes": True,
+                "off_axis_count_scaling": "empty_interferogram_mean_preserving",
             }
         )
         return response
@@ -145,15 +209,23 @@ class OffAxisHolographyImagingModel(ImagingModel):
         params: dict,
     ) -> np.ndarray:
         """
-        Per-particle fringe contrast: |E_ref · e^{iK·r} + E_sca_i|² − |E_ref|².
+        Per-particle fringe contrast:
+
+            |E_obj + E_sca_i + E_ref exp(iK·r)|²
+            − |E_obj + E_ref exp(iK·r)|².
         """
         carrier = self._tilt_field(E_sca_particle.shape)
-        E_ref = reference_vector_for_scattered(
-            np.asarray(background_field, dtype=np.complex128) * carrier,
+        object_field = reference_vector_for_scattered(
+            np.asarray(background_field, dtype=np.complex128),
             E_sca_particle,
             params,
         )
-        ref_intensity = field_intensity(E_ref)
-        return field_intensity(E_ref + E_sca_particle) - ref_intensity
+        reference_field = reference_vector_for_scattered(
+            self._reference_amplitude * self._reference_amplitude_scale * carrier,
+            E_sca_particle,
+            params,
+        )
+        empty_frame = object_field + reference_field
+        return field_intensity(empty_frame + E_sca_particle) - field_intensity(empty_frame)
 
 __all__ = ['OffAxisHolographyImagingModel']

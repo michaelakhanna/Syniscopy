@@ -17,6 +17,7 @@ from .electron_constants import (
 from .tem_backends import (
     CTFProxyTEMBackend,
     MultisliceLiteTEMBackend,
+    PhysicalMultisliceTEMBackend,
     SyniscopyMultisliceTEMBackend,
 )
 
@@ -38,7 +39,7 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
     intensity becomes
         I(r) ~= 1 - 2 sigma V_proj * PSF_TEM(r),
     with the TEM point-spread function given in Fourier space by
-        CTF(k)    = -2 sin(chi(k)) * E(k),
+        CTF(k)    = 2 sin(chi(k)) * E(k),
         chi(k)    = pi C_s lambda^3 k^4 / 2  -  pi lambda Delta_f k^2,
         E(k)      = exp(-pi^2 alpha^2 (C_s lambda^2 k^3 - Delta_f k)^2),
     where lambda is the relativistic de Broglie wavelength of the electron,
@@ -53,8 +54,8 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
     applies the CTF in Fourier space and returns the linearized weak-phase
     intensity ``1 + CTF * source``, clamped at zero for count-domain noise
     sampling. This is the configurable weak-phase proxy path; when
-    ``tem_backend='syniscopy_multislice'``, Syniscopy uses the native split-step
-    multislice TEM backend.
+    ``tem_backend='multislice_physical'``, Syniscopy uses its physical
+    Cowley-Moodie/Kirkland-style multislice TEM backend.
 
     Parameters (PARAMS keys, all optional with nominal defaults)
     ------------------------------------------------------------
@@ -100,20 +101,56 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
     _TEM_POTENTIAL_SOURCE_SAMPLE_ENVIRONMENT = "sample_environment_projected_potential"
     _TEM_POTENTIAL_SOURCE_COMPOSITE = "material_plus_sample_environment"
 
+    @staticmethod
+    def _required_multislice_slices_from_particles(params: dict, slice_thickness_nm: float | None) -> int:
+        if slice_thickness_nm is None:
+            return 1
+        dz = float(slice_thickness_nm)
+        if not np.isfinite(dz) or dz <= 0.0:
+            return 1
+        from particle_specs import get_particle_specs
+
+        max_depth_nm = 0.0
+        for spec in get_particle_specs(params):
+            z_low = np.inf
+            z_high = -np.inf
+            for component in spec.components:
+                radius_nm = 0.5 * float(component.diameter_nm)
+                offset_z_nm = float(component.offset_nm[2])
+                z_low = min(z_low, offset_z_nm - radius_nm)
+                z_high = max(z_high, offset_z_nm + radius_nm)
+            if np.isfinite(z_low) and np.isfinite(z_high):
+                max_depth_nm = max(max_depth_nm, z_high - z_low)
+        if max_depth_nm <= 0.0:
+            return 1
+        return max(1, int(np.ceil(max_depth_nm / dz)))
+
     def __init__(self, params: dict) -> None:
         settings = TemSettings.from_params(params)
         self._tem_model = str(param_value(params, "tem_model")).strip().lower()
-        if self._tem_model not in {"weak_phase_ctf", "multislice_lite", "syniscopy_multislice"}:
+        if self._tem_model not in {
+            "weak_phase_ctf",
+            "multislice_lite",
+            "syniscopy_multislice",
+            "multislice_physical",
+        }:
             raise ValueError(
                 "PARAMS['tem_model'] must be 'weak_phase_ctf', "
-                "'multislice_lite', or 'syniscopy_multislice'; "
+                "'multislice_lite', 'syniscopy_multislice', or "
+                "'multislice_physical'; "
                 f"got {self._tem_model!r}."
             )
         self._tem_backend = str(param_value(params, "tem_backend")).strip().lower()
-        if self._tem_backend not in {"ctf_proxy", "multislice_lite", "syniscopy_multislice"}:
+        if self._tem_backend not in {
+            "ctf_proxy",
+            "multislice_lite",
+            "syniscopy_multislice",
+            "multislice_physical",
+        }:
             raise ValueError(
                 "PARAMS['tem_backend'] must be 'ctf_proxy', 'multislice_lite', "
-                f"'syniscopy_multislice'; got {self._tem_backend!r}."
+                "'syniscopy_multislice', or 'multislice_physical'; "
+                f"got {self._tem_backend!r}."
             )
         if self._tem_backend == "multislice_lite" and self._tem_model != "multislice_lite":
             raise ValueError(
@@ -125,6 +162,11 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
                 "PARAMS['tem_model']='syniscopy_multislice' requires "
                 "PARAMS['tem_backend']='syniscopy_multislice'."
             )
+        if self._tem_model == "multislice_physical" and self._tem_backend != "multislice_physical":
+            raise ValueError(
+                "PARAMS['tem_model']='multislice_physical' requires "
+                "PARAMS['tem_backend']='multislice_physical'."
+            )
         if self._tem_model == "weak_phase_ctf" and self._tem_backend != "ctf_proxy":
             raise ValueError(
                 "PARAMS['tem_model']='weak_phase_ctf' requires "
@@ -134,6 +176,11 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
             raise ValueError(
                 "PARAMS['tem_backend']='ctf_proxy' requires "
                 "PARAMS['tem_model']='weak_phase_ctf'."
+            )
+        if self._tem_backend == "multislice_physical" and self._tem_model != "multislice_physical":
+            raise ValueError(
+                "PARAMS['tem_backend']='multislice_physical' requires "
+                "PARAMS['tem_model']='multislice_physical'."
             )
         self._tem_potential_source = self._resolve_tem_potential_source(
             param_value(params, "tem_potential_source")
@@ -207,7 +254,7 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
             )
 
         self._dose_per_pixel = settings.dose_per_pixel
-        self._multislice_slices = settings.multislice_slices
+        self._configured_multislice_slices = settings.multislice_slices
         self._objective_aperture_mrad = param_value(params, "tem_objective_aperture_mrad")
         if self._objective_aperture_mrad is not None:
             self._objective_aperture_mrad = float(self._objective_aperture_mrad)
@@ -224,6 +271,14 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
                 "PARAMS['tem_slice_thickness_nm'] must be positive and finite when set; "
                 f"got {slice_thickness_raw!r}."
             )
+        self._required_multislice_slices = self._required_multislice_slices_from_particles(
+            params,
+            self._slice_thickness_nm,
+        )
+        self._multislice_slices = max(
+            int(self._configured_multislice_slices),
+            int(self._required_multislice_slices),
+        )
         # Cache the CTF array per frame shape. The CTF depends only on
         # the shape, pixel pitch, lambda, Cs, defocus, alpha, so once
         # computed it is reused across all frames of a run.
@@ -234,6 +289,7 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
             Cs_mm=self._Cs_mm,
             defocus_m=self._defocus_m,
             partial_coherence_alpha_mrad=self._alpha_mrad,
+            objective_aperture_mrad=self._objective_aperture_mrad,
         )
         self._multislice_lite_backend = MultisliceLiteTEMBackend(
             ctf_backend=self._ctf_backend,
@@ -243,7 +299,18 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
             slice_thickness_nm=self._slice_thickness_nm,
         )
         self._tem_high_fidelity_backend = None
-        if self._tem_backend == "syniscopy_multislice":
+        if self._tem_backend == "multislice_physical":
+            self._tem_high_fidelity_backend = PhysicalMultisliceTEMBackend(
+                params,
+                ctf_backend=self._ctf_backend,
+                electron_wavelength_m=self._lambda_m,
+                pixel_size_m=self._pixel_size_m,
+                dose_per_pixel=self._dose_per_pixel,
+                default_slice_count=self._multislice_slices,
+                default_slice_thickness_nm=self._slice_thickness_nm,
+                default_objective_aperture_mrad=self._objective_aperture_mrad,
+            )
+        elif self._tem_backend == "syniscopy_multislice":
             self._tem_high_fidelity_backend = SyniscopyMultisliceTEMBackend(
                 params,
                 pixel_size_m=self._pixel_size_m,
@@ -433,6 +500,7 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
             "weak_phase_ctf": "tem_ctf",
             "multislice_lite": "tem_multislice_lite",
             "syniscopy_multislice": "tem_multislice",
+            "multislice_physical": "tem_multislice_physical",
         }
         response.update({
             "kind": kind_by_model[self._tem_model],
@@ -451,6 +519,8 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
             "forward_observable": (
                 "|multislice-lite exit wave with objective CTF readout|^2"
                 if self._tem_model == "multislice_lite"
+                else "|physical multislice exit wave with objective transfer|^2"
+                if self._tem_model == "multislice_physical"
                 else "1 + CTF(projected electrostatic phase)"
             ),
             "acceleration_kV": self._V_kV,
@@ -463,7 +533,14 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
             "ctf_pixel_size_nm": float(self._pixel_size_m * 1.0e9),
             "dose_per_pixel": self._dose_per_pixel,
             "multislice_slices": self._multislice_slices,
+            "configured_multislice_slices": self._configured_multislice_slices,
+            "required_multislice_slices_for_particle_depth": self._required_multislice_slices,
             "slice_thickness_nm": self._slice_thickness_nm,
+            "multislice_source_extent_nm": (
+                float(self._multislice_slices * self._slice_thickness_nm)
+                if self._slice_thickness_nm is not None
+                else None
+            ),
             "filter_guard_radius_pixels": self.filter_guard_radius_pixels(params),
             "fidelity_label": (
                 "multislice_lite_projected_phase_proxy"
@@ -489,7 +566,7 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
                     else "weak-phase CTF projected potential proxy"
                 ),
                 implemented_approximation_level=(
-                    "physics_based_unvalidated"
+                    "physics_based"
                     if self._tem_model == "multislice_lite"
                     else "proxy"
                 ),

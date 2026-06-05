@@ -268,6 +268,30 @@ DATASET_SCHEMA: dict[str, ParamSpec] = {
     group="Workflow",
     description="Write rendered PNG/AVI frame outputs for the final image sequence.",
 ),
+"save_raw_camera_video": ParamSpec(
+    key="save_raw_camera_video",
+    type="bool",
+    default=True,
+    ui_label="Save raw-camera video",
+    group="Workflow",
+    description=(
+        "Write a raw-camera signal AVI beside the contrast-analysis AVI. "
+        "The raw-camera AVI is windowed from detector counts to 8-bit without "
+        "background subtraction; quantitative counts remain in raw-frame arrays."
+    ),
+),
+"save_raw_camera_frame_sequence": ParamSpec(
+    key="save_raw_camera_frame_sequence",
+    type="bool",
+    default=False,
+    ui_label="Save raw-camera frame sequence",
+    group="Workflow",
+    description=(
+        "Write a uint16 PNG sequence of raw detector signal frames. This is "
+        "larger than the 8-bit contrast frame sequence but preserves camera "
+        "count values up to the configured bit depth."
+    ),
+),
 "save_raw_frame_views": ParamSpec(
     key="save_raw_frame_views",
     type="bool",

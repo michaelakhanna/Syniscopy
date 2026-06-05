@@ -412,20 +412,41 @@ class AnnularDarkFieldSettings:
                 "PARAMS['annular_dark_field_source_samples'] must be positive; "
                 f"got {source_samples!r}."
             )
+        inner_sigma = _finite_float(
+            param_value(params, "annular_dark_field_inner_sigma"),
+            key="annular_dark_field_inner_sigma",
+            positive=True,
+        )
+        outer_sigma = _finite_float(
+            param_value(params, "annular_dark_field_outer_sigma"),
+            key="annular_dark_field_outer_sigma",
+            positive=True,
+        )
+        optical = OpticalModeSettings.from_params(params)
+        if inner_sigma <= 1.0:
+            raise ValueError(
+                "PARAMS['annular_dark_field_inner_sigma'] must exceed 1.0 "
+                f"for dark-field illumination; got {inner_sigma!r}."
+            )
+        if inner_sigma >= outer_sigma:
+            raise ValueError(
+                "Annular dark-field source sigmas must satisfy inner < outer; "
+                f"got inner={inner_sigma!r}, outer={outer_sigma!r}."
+            )
+        source_na = outer_sigma * optical.numerical_aperture
+        if source_na > optical.refractive_index_medium + 1e-12:
+            raise ValueError(
+                "Annular dark-field source exceeds the immersion-medium NA: "
+                "outer_sigma * numerical_aperture must be <= refractive_index_medium; "
+                f"got {outer_sigma!r} * {optical.numerical_aperture!r} = {source_na!r} "
+                f"> {optical.refractive_index_medium!r}."
+            )
         return cls(
-            inner_sigma=_finite_float(
-                param_value(params, "annular_dark_field_inner_sigma"),
-                key="annular_dark_field_inner_sigma",
-                positive=True,
-            ),
-            outer_sigma=_finite_float(
-                param_value(params, "annular_dark_field_outer_sigma"),
-                key="annular_dark_field_outer_sigma",
-                positive=True,
-            ),
+            inner_sigma=inner_sigma,
+            outer_sigma=outer_sigma,
             source_samples=source_samples,
             dark_field=DarkFieldSettings.from_params(params),
-            optical=OpticalModeSettings.from_params(params),
+            optical=optical,
         )
 
 
@@ -492,6 +513,8 @@ class RicmSettings:
     particle_reflection_coefficient: float
     interface_phase_shift_rad: float
     reference_field_amplitude: float
+    gap_nm: float
+    use_particle_z_as_gap: bool
 
     @classmethod
     def from_params(cls, params: Mapping[str, Any]) -> "RicmSettings":
@@ -515,6 +538,12 @@ class RicmSettings:
                 key="ricm_interface_phase_shift_rad",
             ),
             reference_field_amplitude=resolved_reference_field_amplitude(params),
+            gap_nm=_finite_float(
+                param_value(params, "ricm_gap_nm"),
+                key="ricm_gap_nm",
+                nonnegative=True,
+            ),
+            use_particle_z_as_gap=bool(param_value(params, "ricm_use_particle_z_as_gap")),
         )
 
 

@@ -239,12 +239,55 @@ def generate_volumetric_views(params: dict) -> dict:
         }
 
     z_planes = resolve_volume_z_planes_nm(params_local)
+    shared_scene_params = params_for_focus_plane(params_local, 0.0)
+    shared_scene_params["background_subtraction_method"] = "reference_frame"
+    _resolve_public_num_frames(shared_scene_params)
+    _ensure_run_scope_layout_token(shared_scene_params)
+    shared_scene_params = normalize_params(
+        shared_scene_params,
+        allowed_internal_keys=_RUNTIME_PARAM_KEYS,
+    )
+    _ensure_run_scope_layout_extent(shared_scene_params)
+    shared_scene_params = normalize_params(
+        shared_scene_params,
+        allowed_internal_keys=_RUNTIME_PARAM_KEYS,
+    )
+    shared_latent_scene = _simulate_latent_scene(shared_scene_params)
+    shared_positions = np.asarray(
+        shared_latent_scene.get("trajectories_nm", []),
+        dtype=float,
+    )
+    if (
+        shared_positions.ndim != 3
+        or shared_positions.shape[1] < 1
+        or shared_positions.shape[2] < 3
+    ):
+        raise RuntimeError(
+            "Volumetric rendering could not resolve shared particle positions."
+        )
+    params_with_shared_positions = deepcopy(params_local)
+    particles_for_planes = params_with_shared_positions.get("particles", []) or []
+    if len(particles_for_planes) != shared_positions.shape[0]:
+        raise RuntimeError(
+            "Volumetric shared-scene particle count does not match PARAMS['particles']."
+        )
+    for particle, position_nm in zip(particles_for_planes, shared_positions[:, 0, :]):
+        motion = particle.setdefault("motion", {})
+        motion["initial_position_nm"] = [
+            float(position_nm[0]),
+            float(position_nm[1]),
+            float(position_nm[2]),
+        ]
+
     plane_views = []
     contrast_frames = []
     signal_frames = []
     reference_frames = []
     for z_plane in z_planes:
-        plane_params = params_for_focus_plane(params_local, float(z_plane))
+        plane_params = params_for_focus_plane(
+            params_with_shared_positions,
+            float(z_plane),
+        )
         plane_params["background_subtraction_method"] = "reference_frame"
         plane_view = generate_single_frame_views(plane_params)
         plane_views.append(plane_view)

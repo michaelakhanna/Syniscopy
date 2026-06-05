@@ -384,6 +384,63 @@ def normalize_contrast_frames(contrast_frames, original_frame_shape):
     return display_frames
 
 
+def normalize_raw_camera_frames(signal_frames, params):
+    """
+    Convert detector-domain signal frames to an 8-bit raw-camera preview.
+
+    The returned frames are not background-subtracted. They use one robust
+    detector-count display window over the whole sequence, preserving the raw
+    camera background structure while making low-count microscopy previews
+    visible in an 8-bit AVI. Quantitative detector counts remain in the raw
+    uint16 frame sequence or raw/ideal arrays.
+    """
+    if signal_frames is None or len(signal_frames) == 0:
+        return []
+
+    arrays = [
+        _frame_as_float(frame, name="raw_signal_frames", index=idx)
+        for idx, frame in enumerate(signal_frames)
+    ]
+    first_shape = arrays[0].shape
+    for idx, arr in enumerate(arrays[1:], start=1):
+        if arr.shape != first_shape:
+            raise ValueError(
+                "All raw camera preview frames must have the same shape; "
+                f"frame 0 has {first_shape}, frame {idx} has {arr.shape}."
+            )
+
+    stack = np.stack(arrays, axis=0)
+    lo, hi = np.percentile(stack, [0.5, 99.5])
+    lo = float(lo)
+    hi = float(hi)
+    if np.isfinite(lo) and np.isfinite(hi) and hi > lo:
+        return [
+            np.clip(255.0 * (arr - lo) / (hi - lo), 0.0, 255.0).astype(np.uint8)
+            for arr in arrays
+        ]
+
+    bit_depth = int(param_value(params, "bit_depth"))
+    if bit_depth < 1 or bit_depth > 16:
+        raise ValueError(f"bit_depth must be in [1, 16] for raw camera preview; got {bit_depth}.")
+
+    saturation_level = param_value(params, "saturation_level")
+    if saturation_level is None:
+        max_count = float((1 << bit_depth) - 1)
+    else:
+        max_count = float(saturation_level)
+        if not np.isfinite(max_count) or max_count <= 0.0:
+            raise ValueError(
+                "saturation_level must be finite and positive when used for "
+                f"raw camera preview scaling; got {saturation_level!r}."
+            )
+
+    preview_frames = []
+    for arr in arrays:
+        normalized = np.clip(arr, 0.0, max_count) / max_count
+        preview_frames.append(np.clip(255.0 * normalized, 0.0, 255.0).astype(np.uint8))
+    return preview_frames
+
+
 def apply_background_subtraction(signal_frames, reference_frames, params):
     """
     Compute the selected contrast view and normalize it to an 8-bit range for

@@ -42,6 +42,7 @@ GITHUB_SOURCE_DIRS = [
     "examples",
     "recipes",
     "sam2_starter",
+    "validation",
 ]
 
 SCRIPT_FILES = [
@@ -607,7 +608,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--version",
-        default="v1.1.2",
+        default="v1.1.3",
         help="Version label used in generated asset filenames.",
     )
     parser.add_argument(

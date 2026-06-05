@@ -1,15 +1,15 @@
 # Parameter Exposure Summary
 
-Generated (UTC): `2026-06-03T18:04:26Z`
+Generated (UTC): `2026-06-04T20:51:36Z`
 
 ## Totals
 
-- Params: 327
-- Schema controls: 328
+- Params: 333
+- Schema controls: 334
 - Internal/runtime keys: 14
 
-- Decision (core+advanced): 296
-- Workflow: 31
+- Decision (core+advanced): 300
+- Workflow: 33
 - Hidden: 14
 
 ## Tiered parameter lists
@@ -31,7 +31,7 @@ Generated (UTC): `2026-06-03T18:04:26Z`
 - `_substrate_pattern_layout_rng` (internal) — Derived/runtime key intentionally excluded from user surfaces.
 - `_write_mask_files` (internal) — Derived/runtime key intentionally excluded from user surfaces.
 
-### Workflow (31)
+### Workflow (33)
 
 - `allow_broadband_overwrite_channels` (schema-control) — User-settable through schema-defined control surface.
 - `broadband_wavelengths_nm` (schema-control) — User-settable through schema-defined control surface.
@@ -55,6 +55,8 @@ Generated (UTC): `2026-06-03T18:04:26Z`
 - `random_seed` (schema-control) — User-settable through schema-defined control surface.
 - `return_ideal_float_frames` (schema-control) — User-settable through schema-defined control surface.
 - `save_frame_sequence` (schema-control) — User-settable through schema-defined control surface.
+- `save_raw_camera_frame_sequence` (schema-control) — User-settable through schema-defined control surface.
+- `save_raw_camera_video` (schema-control) — User-settable through schema-defined control surface.
 - `save_raw_frame_views` (schema-control) — User-settable through schema-defined control surface.
 - `scene_dimensionality` (schema-control) — User-settable through schema-defined control surface.
 - `spectral_integration_model` (schema-control) — User-settable through schema-defined control surface.
@@ -205,7 +207,7 @@ Generated (UTC): `2026-06-03T18:04:26Z`
 - `z_stack_range_nm` (schema-control) — User-settable through schema-defined control surface.
 - `z_stack_step_nm` (schema-control) — User-settable through schema-defined control surface.
 
-### Advanced (159)
+### Advanced (163)
 
 - `annular_dark_field_inner_sigma` (schema-control) — User-settable through schema-defined control surface.
 - `annular_dark_field_outer_sigma` (schema-control) — User-settable through schema-defined control surface.
@@ -259,6 +261,7 @@ Generated (UTC): `2026-06-03T18:04:26Z`
 - `kohler_source_samples` (schema-control) — User-settable through schema-defined control surface.
 - `off_axis_fringe_angle_rad` (schema-control) — User-settable through schema-defined control surface.
 - `off_axis_fringe_period_px` (schema-control) — User-settable through schema-defined control surface.
+- `off_axis_reference_amplitude_scale` (schema-control) — User-settable through schema-defined control surface.
 - `particles` (params-json / recipe override) — Tunable by PARAMS override; not currently in schema controls.
 - `profile_fidelity_label` (schema-control) — User-settable through schema-defined control surface.
 - `qpi_detected_quanta_per_pixel` (schema-control) — User-settable through schema-defined control surface.
@@ -299,6 +302,9 @@ Generated (UTC): `2026-06-03T18:04:26Z`
 - `sem_monte_carlo_step_nm` (schema-control) — User-settable through schema-defined control surface.
 - `sem_monte_carlo_steps` (schema-control) — User-settable through schema-defined control surface.
 - `sem_monte_carlo_trajectories` (schema-control) — User-settable through schema-defined control surface.
+- `sem_physical_elastic_model` (schema-control) — User-settable through schema-defined control surface.
+- `sem_physical_energy_cutoff_keV` (schema-control) — User-settable through schema-defined control surface.
+- `sem_physical_max_steps` (schema-control) — User-settable through schema-defined control surface.
 - `sem_probe_sigma_nm` (schema-control) — User-settable through schema-defined control surface.
 - `sem_probe_sigma_pixels` (schema-control) — User-settable through schema-defined control surface.
 - `sem_reference_geometry` (schema-control) — User-settable through schema-defined control surface.

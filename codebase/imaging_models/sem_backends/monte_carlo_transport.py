@@ -8,6 +8,7 @@ from ._metadata import (
     Any,
     SEMTransportBackendError,
     SEMTransportMetadata,
+    _detector_takeoff_acceptance_gain,
     _electrons_from_beam_current,
     _fft_convolve_centered,
     _finite_nonnegative,
@@ -131,8 +132,10 @@ class MonteCarloSEMTransportBackend:
         return self._electrons_from_beam_current() or self._electrons_per_pixel_reference
 
     def _detector_geometry_gain(self) -> float:
-        takeoff_term = max(np.cos(np.deg2rad(self._takeoff_angle_deg)), 0.0)
-        return float(self._detector_acceptance * takeoff_term)
+        return _detector_takeoff_acceptance_gain(
+            self._detector_acceptance,
+            self._takeoff_angle_deg,
+        )
 
     def _deposit(self, kernel: np.ndarray, x_nm: float, y_nm: float, weight: float) -> None:
         if weight <= 0.0 or not np.isfinite(weight):

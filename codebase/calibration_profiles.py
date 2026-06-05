@@ -121,6 +121,8 @@ def native_params(case: dict[str, Any]) -> dict[str, Any]:
             "scan_line_noise_counts": 0.0,
             "return_ideal_float_frames": True,
             "save_frame_sequence": False,
+            "save_raw_camera_video": False,
+            "save_raw_camera_frame_sequence": False,
             "save_raw_frame_views": False,
             "mask_generation_enabled": False,
             "sample_environment_enabled": False,
@@ -472,7 +474,7 @@ CALIBRATION_PROFILES: dict[str, dict[str, Any]] = {
             "dark_field_background_count": 10.0,
             "dark_field_field_gain": 30.0,
             "annular_dark_field_inner_sigma": 1.02,
-            "annular_dark_field_outer_sigma": 1.45,
+            "annular_dark_field_outer_sigma": 1.08,
         },
     },
     "coherent_dark_field": {
@@ -676,9 +678,9 @@ CALIBRATION_PROFILES: dict[str, dict[str, Any]] = {
         },
     },
     "tem_phase_contrast": {
-        "profile_id": "tem_ctf_bonevich_nist_native",
+        "profile_id": "tem_multislice_bonevich_nist_native",
         "modality": "tem_phase_contrast",
-        "profile_summary": "Native-pitch TEM weak-phase CTF check for nanoparticle dimensional metrology scale.",
+        "profile_summary": "Native-pitch physical multislice TEM check for nanoparticle dimensional metrology scale.",
         "classification": "DIMENSIONAL_METROLOGY_SCALE_NOT_LOCALIZATION",
         "classification_reason": "Bonevich et al. address TEM nanoparticle size/dimensional metrology, not a lateral particle-center localization bound.",
         "parameter_match_status": "not_applicable",
@@ -691,7 +693,11 @@ CALIBRATION_PROFILES: dict[str, dict[str, Any]] = {
         "diameter_nm": 100.0,
         "pixel_size_nm": 2.0,
         "background_intensity": 1.0e8,
-        "overrides": {"tem_dose_per_pixel": 1.0e8},
+        "overrides": {
+            "tem_model": "multislice_physical",
+            "tem_backend": "multislice_physical",
+            "tem_dose_per_pixel": 1.0e8,
+        },
     },
     "sem_secondary_electron": {
         "profile_id": "sem_crouzier_2019_native",

@@ -12,10 +12,19 @@ from scipy.ndimage import map_coordinates
 from tqdm import tqdm
 
 from backend_fidelity import extract_backend_fidelity_metadata
-from camera_noise import DetectorNoiseRuntime, contrast_noise_variance_counts
+from camera_noise import (
+    DetectorNoiseRuntime,
+    analysis_contrast_noise_variance,
+)
 from config import OpticalModeSettings, RenderRuntimeConfig, param_value
 from config.runtime import internal_param_value, resolved_modality
 from imaging_models import get_imaging_model
+from imaging_models.sem_source import (
+    source_like_numeric_array,
+    source_like_projected_array,
+    source_like_scaled,
+    source_like_sum,
+)
 from json_utils import json_safe
 from mask_generation import generate_central_lobe_mask
 from modality_profiles import profile_card_for_model
@@ -130,6 +139,11 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
             "PARAMS['exposure_time_ms'] must satisfy exposure_time_ms <= 1000 / fps "
             "so that the exposure window is contained within a single frame interval."
         )
+    signal_exposure_scale = float(exposure_time_s / frame_interval_s)
+    params = dict(params)
+    params["_exposure_signal_scale"] = signal_exposure_scale
+    noise_params = dict(params)
+    noise_params["exposure_time_s"] = float(exposure_time_s)
 
     num_particles = len(particle_instances)
     expected_particle_count = particle_count(params)
@@ -143,11 +157,20 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
     img_size = render_config.image_size_pixels
     pixel_size_nm = render_config.pixel_size_nm
     os_factor = render_config.psf_oversampling_factor
-    final_size = (img_size, img_size)
+    final_shape_hw = (img_size, img_size)
+    final_dsize_wh = (img_size, img_size)
 
     # Instantiate before sizing the render canvas: Fourier-domain models need
     # a wider guard band than point-placement alone.
     imaging_model = get_imaging_model(params)
+    model_output_type = getattr(imaging_model, "output_type", "intensity")
+    scale_signal_counts_for_exposure = model_output_type != "phase"
+
+    def _apply_signal_exposure_scale(counts: np.ndarray) -> np.ndarray:
+        if not scale_signal_counts_for_exposure or signal_exposure_scale == 1.0:
+            return counts
+        return np.asarray(counts, dtype=float) * signal_exposure_scale
+
     requires_optical_scattered_field = bool(
         getattr(imaging_model, "requires_optical_scattered_field", True)
     )
@@ -168,13 +191,9 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
     crop_start = int(geometry["crop_start"])
     crop_end = int(geometry["crop_end"])
 
-    # Full-canvas coordinate grids for sub-pixel particle placement. The
-    # per-particle radial PSF profile is evaluated at every canvas pixel's
-    # distance from the particle's actual float canvas coordinate (no
-    # integer rounding), so the rendered field carries the particle's true
-    # sub-pixel position rather than snapping to the oversampled-canvas
-    # grid. These are computed once per run and reused across every
-    # frame / particle / sub-particle.
+    # Full-canvas coordinate grids for sub-pixel particle placement. Native
+    # scalar-paraxial PSFs use continuous radial placement; vectorial and
+    # vectorial-derived scalar fields use direct 2-D field sampling.
     if requires_optical_scattered_field:
         _yy_canvas_grid, _xx_canvas_grid = np.indices(
             (os_canvas_size, os_canvas_size), dtype=np.int32,
@@ -241,17 +260,17 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
         )
         E_ref_os_base = E_ref_model_base[crop_start:crop_end, crop_start:crop_end]
         background_os_base = background_model_base[crop_start:crop_end, crop_start:crop_end]
-        E_ref_final_base = _resize_complex_area(E_ref_os_base, final_size)
+        E_ref_final_base = _resize_complex_area(E_ref_os_base, final_dsize_wh)
         background_final_base = cv2.resize(
             background_os_base,
-            final_size,
+            final_dsize_wh,
             interpolation=cv2.INTER_AREA,
         ).astype(float)
     else:
         E_ref_os_base, E_ref_final_base, background_final_base = generate_reference_and_background_maps(
             reference_map_params,
             fov_shape_os=fov_shape_os,
-            final_fov_shape=final_size,
+            final_fov_shape=final_shape_hw,
             layout_extent_nm=layout_extent_nm,
         )
         E_ref_model_base = E_ref_os_base
@@ -308,7 +327,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
 
     roughness_model_base = np.ones((model_shape_os[0], model_shape_os[1]), dtype=np.complex128)
     roughness_os_base = np.ones(fov_shape_os, dtype=np.complex128)
-    roughness_final_base = np.ones(final_size, dtype=np.complex128)
+    roughness_final_base = np.ones(final_shape_hw, dtype=np.complex128)
     if use_roughness:
         roughness_model_base = generate_sample_environment_roughness_field(
             reference_map_params,
@@ -321,7 +340,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
             if pre_crop_optical_filtering
             else roughness_model_base
         )
-        roughness_final_base = _resize_complex_area(roughness_os_base, final_size)
+        roughness_final_base = _resize_complex_area(roughness_os_base, final_dsize_wh)
 
     empirical_background_enabled = bool(
         param_value(params, 'empirical_background_enabled')
@@ -338,7 +357,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
             ]
             empirical_background_final = cv2.resize(
                 empirical_background_os,
-                final_size,
+                final_dsize_wh,
                 interpolation=cv2.INTER_AREA,
             )
             empirical_background_final = np.clip(
@@ -347,7 +366,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
         else:
             empirical_background_final = generate_empirical_background_field(
                 params,
-                final_size,
+                final_shape_hw,
                 rng=rng,
             )
             empirical_background_os = resize_empirical_background_field(
@@ -448,7 +467,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
     render_metadata = {
         "imaging_model": resolved_modality(params),
         "model_class": imaging_model.__class__.__name__,
-        "output_type": getattr(imaging_model, "output_type", "intensity"),
+        "output_type": model_output_type,
         "uses_particle_material_sources": uses_particle_sources,
         "requires_optical_scattered_field": requires_optical_scattered_field,
         "sample_environment_roughness": {
@@ -467,6 +486,15 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
         "response_function": response_function,
         "backend_fidelity_metadata": backend_fidelity_metadata,
         "modality_profile_card": profile_card,
+        "effective_exposure_time_ms": float(exposure_time_ms),
+        "effective_exposure_time_s": float(exposure_time_s),
+        "frame_interval_s": float(frame_interval_s),
+        "signal_exposure_scale": float(signal_exposure_scale),
+        "signal_exposure_scaling": (
+            "detector_count_budget_scaled_by_exposure_time_over_frame_interval"
+            if scale_signal_counts_for_exposure
+            else "phase_output_signal_not_display_scaled; noise_quanta_scaled_by_exposure"
+        ),
         "clip_diagnostics": [],
         "source_map_diagnostics": [],
     }
@@ -557,7 +585,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
 
     def _model_arrays_from_states(
         states: list[_ParticleFrameRenderState],
-    ) -> tuple[np.ndarray, list[np.ndarray], list[np.ndarray] | None]:
+    ) -> tuple[np.ndarray, list[np.ndarray], list[object] | None]:
         particle_field_canvases = [state.field_canvas for state in states]
         if particle_field_canvases:
             E_sca_total_canvas = np.sum(particle_field_canvases, axis=0)
@@ -667,7 +695,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
     def _apply_roughness_to_model_arrays(
         E_sca_total_for_model: np.ndarray,
         particle_fields_for_model: list[np.ndarray],
-        particle_source_maps_for_model: list[np.ndarray] | None,
+        particle_source_maps_for_model: list[object] | None,
         roughness_field_for_model: np.ndarray | None,
         roughness_intensity_gain_for_model: np.ndarray | None,
         roughness_source_coupling_mode: str,
@@ -675,13 +703,13 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
     ) -> tuple[
         np.ndarray,
         list[np.ndarray],
-        list[np.ndarray] | None,
+        list[object] | None,
     ]:
         if roughness_field_for_model is None:
             return (
                 np.asarray(E_sca_total_for_model, dtype=np.complex128),
                 [np.asarray(field, dtype=np.complex128) for field in particle_fields_for_model],
-                None if particle_source_maps_for_model is None else [np.asarray(source, dtype=float) for source in particle_source_maps_for_model],
+                None if particle_source_maps_for_model is None else list(particle_source_maps_for_model),
             )
 
         roughness_field = np.asarray(roughness_field_for_model, dtype=np.complex128)
@@ -705,25 +733,19 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
             ]
         else:
             if particle_source_maps_for_model:
-                def _project_source_for_envelope(source_map: np.ndarray) -> np.ndarray:
-                    source_arr = np.asarray(source_map, dtype=float)
-                    if source_arr.ndim == 3:
-                        return np.sum(source_arr, axis=0)
-                    return source_arr
-
                 total_source = np.zeros_like(
-                    _project_source_for_envelope(particle_source_maps_for_model[0]),
+                    source_like_projected_array(particle_source_maps_for_model[0]),
                     dtype=np.complex128,
                 )
                 for source_map in particle_source_maps_for_model:
                     total_source += np.asarray(
-                        _project_source_for_envelope(source_map),
+                        source_like_projected_array(source_map),
                         dtype=np.complex128,
                     )
                 scene_envelope = _roughness_scene_envelope(total_source)
                 source_envelopes = [
                     _roughness_scene_envelope(
-                        np.asarray(_project_source_for_envelope(source_map), dtype=np.complex128)
+                        np.asarray(source_like_projected_array(source_map), dtype=np.complex128)
                     )
                     for source_map in particle_source_maps_for_model
                 ]
@@ -749,7 +771,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
                     )
                 intensity_gain = np.asarray(roughness_intensity_gain_for_model, dtype=float)
                 source_maps_coupled = [
-                    np.asarray(source_map, dtype=float) * intensity_gain
+                    source_like_scaled(source_map, intensity_gain)
                     for source_map in particle_source_maps_for_model
                 ]
             elif roughness_source_coupling_mode == "field_weighted":
@@ -759,13 +781,15 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
                     )
                 intensity_gain = np.asarray(roughness_intensity_gain_for_model, dtype=float)
                 source_maps_coupled = [
-                    np.asarray(source_map, dtype=float)
-                    * intensity_gain
-                    * np.asarray(
-                        source_envelopes[idx]
-                        if idx < len(source_envelopes)
-                        else scene_envelope,
-                        dtype=float,
+                    source_like_scaled(
+                        source_map,
+                        intensity_gain
+                        * np.asarray(
+                            source_envelopes[idx]
+                            if idx < len(source_envelopes)
+                            else scene_envelope,
+                            dtype=float,
+                        ),
                     )
                     for idx, source_map in enumerate(particle_source_maps_for_model)
                 ]
@@ -776,7 +800,10 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
                     )
                 intensity_gain = np.asarray(roughness_intensity_gain_for_model, dtype=float)
                 source_maps_coupled = [
-                    np.asarray(source_map, dtype=float) * intensity_gain * np.asarray(scene_envelope, dtype=float)
+                    source_like_scaled(
+                        source_map,
+                        intensity_gain * np.asarray(scene_envelope, dtype=float),
+                    )
                     for source_map in particle_source_maps_for_model
                 ]
             elif roughness_source_coupling_mode == "channel_weighted":
@@ -786,13 +813,15 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
                     )
                 intensity_gain = np.asarray(roughness_intensity_gain_for_model, dtype=float)
                 source_maps_coupled = [
-                    np.asarray(source_map, dtype=float)
-                    * intensity_gain
-                    * np.asarray(
-                        channel_envelopes[idx]
-                        if idx < len(channel_envelopes)
-                        else scene_envelope,
-                        dtype=float,
+                    source_like_scaled(
+                        source_map,
+                        intensity_gain
+                        * np.asarray(
+                            channel_envelopes[idx]
+                            if idx < len(channel_envelopes)
+                            else scene_envelope,
+                            dtype=float,
+                        ),
                     )
                     for idx, source_map in enumerate(particle_source_maps_for_model)
                 ]
@@ -803,7 +832,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
                     )
                 intensity_gain = np.asarray(roughness_intensity_gain_for_model, dtype=float)
                 source_maps_coupled = [
-                    np.asarray(source_map, dtype=float) * intensity_gain
+                    source_like_scaled(source_map, intensity_gain)
                     for source_map in particle_source_maps_for_model
                 ]
 
@@ -857,15 +886,31 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
                 sample_environment=sample_environment_model,
             )
         else:
-            intensity_for_model = imaging_model.compute_scene_intensity(
-                particle_fields_for_model,
-                [particle_instances[state.particle_index] for state in states],
-                E_sca_total_for_model,
-                E_ref_model_current,
-                params,
-                particle_source_maps=particle_source_maps_for_model,
-                frame_index=frame_index,
+            scene_from_render_states = getattr(
+                imaging_model,
+                "compute_scene_intensity_from_render_states",
+                None,
             )
+            if callable(scene_from_render_states):
+                intensity_for_model = scene_from_render_states(
+                    particle_fields_for_model,
+                    states,
+                    E_sca_total_for_model,
+                    E_ref_model_current,
+                    params,
+                    particle_source_maps=particle_source_maps_for_model,
+                    frame_index=frame_index,
+                )
+            else:
+                intensity_for_model = imaging_model.compute_scene_intensity(
+                    particle_fields_for_model,
+                    [particle_instances[state.particle_index] for state in states],
+                    E_sca_total_for_model,
+                    E_ref_model_current,
+                    params,
+                    particle_source_maps=particle_source_maps_for_model,
+                    frame_index=frame_index,
+                )
             intensity_for_model = imaging_model.apply_sample_environment(
                 intensity=intensity_for_model,
                 E_sca_total=E_sca_total_for_model,
@@ -899,14 +944,16 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
         )
         intensity_current = cv2.resize(
             intensity_os_current,
-            final_size,
+            final_dsize_wh,
             interpolation=cv2.INTER_AREA,
         )
-        return imaging_model.scale_intensity_to_counts(
-            intensity=intensity_current,
-            background_final=background_final_current,
-            E_ref_intensity_final=E_ref_intensity_final_current,
-            params=params,
+        return _apply_signal_exposure_scale(
+            imaging_model.scale_intensity_to_counts(
+                intensity=intensity_current,
+                background_final=background_final_current,
+                E_ref_intensity_final=E_ref_intensity_final_current,
+                params=params,
+            )
         )
 
     return_mask_arrays = bool(internal_param_value(params, "_return_mask_arrays"))
@@ -973,7 +1020,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
                     if pre_crop_optical_filtering
                     else roughness_model_f
                 )
-                roughness_final_f = _resize_complex_area(roughness_os_f, final_size)
+                roughness_final_f = _resize_complex_area(roughness_os_f, final_dsize_wh)
             else:
                 roughness_model_f = roughness_model_base
                 roughness_os_f = roughness_os_base
@@ -1034,19 +1081,22 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
             # physical sub-exposure times back to this frame-centered index.
             time_index_float = (current_time / frame_interval_s) - 0.5
 
-            frame_idx_floor = int(np.floor(time_index_float))
-            if frame_idx_floor < 0:
+            if num_frames == 1:
                 frame_idx_floor = 0
-
-            if frame_idx_floor >= num_frames - 1:
-                frame_idx_floor = num_frames - 1
-                frame_idx_ceil = num_frames - 1
+                frame_idx_ceil = 0
                 interp_factor = 0.0
+            elif time_index_float < 0.0:
+                frame_idx_floor = 0
+                frame_idx_ceil = 1
+                interp_factor = time_index_float
+            elif time_index_float >= num_frames - 1:
+                frame_idx_floor = num_frames - 2
+                frame_idx_ceil = num_frames - 1
+                interp_factor = time_index_float - frame_idx_floor
             else:
+                frame_idx_floor = int(np.floor(time_index_float))
                 frame_idx_ceil = frame_idx_floor + 1
                 interp_factor = time_index_float - frame_idx_floor
-                if interp_factor < 0.0:
-                    interp_factor = 0.0
 
             for i, instance in enumerate(particle_instances):
                 frame_state = particle_frame_states[i]
@@ -1105,6 +1155,12 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
                             raise ValueError(
                                 "Particle PSF must be 2D scalar or 3xHxW vectorial."
                             )
+                        field_metadata = getattr(sub_interp, "metadata", {}) or {}
+                        use_radial_scalar_placement = (
+                            not is_vector_field
+                            and field_metadata.get("backend") == "scalar_paraxial"
+                            and field_metadata.get("scalar_compatibility_reduction") == "native_scalar_paraxial"
+                        )
 
                         for component_index, E_component in enumerate(field_components):
                             pupil_samples = E_component.shape[0]
@@ -1114,7 +1170,9 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
                             nm_per_pixel_canvas = pixel_size_nm / os_factor
                             nm_per_pixel_psf = nm_per_pixel_canvas
                             amplitude_scale = (
-                                instance.signal_multiplier * local_multiplier
+                                instance.signal_multiplier
+                                * local_multiplier
+                                * float(field_metadata.get("field_amplitude_scale", 1.0))
                             )
 
                             if is_vector_field:
@@ -1139,39 +1197,57 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
                                 field_contribution = (E_real + 1j * E_imag) * amplitude_scale
                                 for target_state in (frame_state, subsample_state):
                                     target_state.field_canvas[component_index] += field_contribution
-                            else:
+                            elif use_radial_scalar_placement:
                                 E_radial_line = E_component[center_psf, center_psf:]
                                 max_bin_psf = E_radial_line.size - 1
-
-                                if max_bin_psf > 0:
-                                    r_bins_nm = np.arange(
-                                        max_bin_psf + 1, dtype=float,
-                                    ) * nm_per_pixel_psf
-
-                                    dx_canvas = xx_canvas_full - particle_x_canvas
-                                    dy_canvas = yy_canvas_full - particle_y_canvas
-                                    r_canvas_nm = np.sqrt(
-                                        dx_canvas * dx_canvas + dy_canvas * dy_canvas
-                                    ) * nm_per_pixel_canvas
-
-                                    E_real = np.interp(
-                                        r_canvas_nm.ravel(),
-                                        r_bins_nm,
-                                        E_radial_line.real,
-                                        right=0.0,
-                                    ).reshape(r_canvas_nm.shape)
-                                    E_imag = np.interp(
-                                        r_canvas_nm.ravel(),
-                                        r_bins_nm,
-                                        E_radial_line.imag,
-                                        right=0.0,
-                                    ).reshape(r_canvas_nm.shape)
-
-                                    field_contribution = (
-                                        E_real + 1j * E_imag
-                                    ) * amplitude_scale
-                                    for target_state in (frame_state, subsample_state):
-                                        target_state.field_canvas += field_contribution
+                                if max_bin_psf <= 0:
+                                    continue
+                                r_bins_nm = (
+                                    np.arange(max_bin_psf + 1, dtype=float)
+                                    * nm_per_pixel_psf
+                                )
+                                dx_canvas = xx_canvas_full - particle_x_canvas
+                                dy_canvas = yy_canvas_full - particle_y_canvas
+                                r_canvas_nm = np.sqrt(
+                                    dx_canvas * dx_canvas + dy_canvas * dy_canvas
+                                ) * nm_per_pixel_canvas
+                                E_real = np.interp(
+                                    r_canvas_nm.ravel(),
+                                    r_bins_nm,
+                                    E_radial_line.real,
+                                    right=0.0,
+                                ).reshape(r_canvas_nm.shape)
+                                E_imag = np.interp(
+                                    r_canvas_nm.ravel(),
+                                    r_bins_nm,
+                                    E_radial_line.imag,
+                                    right=0.0,
+                                ).reshape(r_canvas_nm.shape)
+                                field_contribution = (E_real + 1j * E_imag) * amplitude_scale
+                                for target_state in (frame_state, subsample_state):
+                                    target_state.field_canvas += field_contribution
+                            else:
+                                dx_canvas = xx_canvas_full - particle_x_canvas
+                                dy_canvas = yy_canvas_full - particle_y_canvas
+                                x_psf = center_psf + dx_canvas * nm_per_pixel_canvas / nm_per_pixel_psf
+                                y_psf = center_psf + dy_canvas * nm_per_pixel_canvas / nm_per_pixel_psf
+                                E_real = map_coordinates(
+                                    E_component.real,
+                                    [y_psf, x_psf],
+                                    order=1,
+                                    mode="constant",
+                                    cval=0.0,
+                                )
+                                E_imag = map_coordinates(
+                                    E_component.imag,
+                                    [y_psf, x_psf],
+                                    order=1,
+                                    mode="constant",
+                                    cval=0.0,
+                                )
+                                field_contribution = (E_real + 1j * E_imag) * amplitude_scale
+                                for target_state in (frame_state, subsample_state):
+                                    target_state.field_canvas += field_contribution
 
                     # Source-canvas accumulation uses the same sub-pixel canvas
                     # coordinate as the scattered-field placement.
@@ -1215,11 +1291,12 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
                 if state.source_canvas is not None
             ]
             if source_maps:
-                source_sum = np.sum(source_maps, axis=0)
-                if np.asarray(source_sum).ndim == 3:
-                    source_fov = source_sum[:, crop_start:crop_end, crop_start:crop_end]
+                source_sum = source_like_sum(source_maps)
+                source_sum_array = source_like_numeric_array(source_sum)
+                if np.asarray(source_sum_array).ndim == 3:
+                    source_fov = source_sum_array[:, crop_start:crop_end, crop_start:crop_end]
                 else:
-                    source_fov = source_sum[crop_start:crop_end, crop_start:crop_end]
+                    source_fov = source_sum_array[crop_start:crop_end, crop_start:crop_end]
                 diag = {"frame_index": int(f)}
                 diag.update(_array_diagnostics(source_fov, prefix="source_map"))
                 diag["source_map_ndim"] = int(np.asarray(source_fov).ndim)
@@ -1252,13 +1329,15 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
         if intensity_os_sum is None:
             raise RuntimeError("No detector-domain subexposure intensity was rendered.")
         intensity_os = intensity_os_sum / float(num_subsamples)
-        intensity = cv2.resize(intensity_os, final_size, interpolation=cv2.INTER_AREA)
+        intensity = cv2.resize(intensity_os, final_dsize_wh, interpolation=cv2.INTER_AREA)
 
-        intensity_scaled = imaging_model.scale_intensity_to_counts(
-            intensity=intensity,
-            background_final=background_final,
-            E_ref_intensity_final=E_ref_intensity_final,
-            params=params,
+        intensity_scaled = _apply_signal_exposure_scale(
+            imaging_model.scale_intensity_to_counts(
+                intensity=intensity,
+                background_final=background_final,
+                E_ref_intensity_final=E_ref_intensity_final,
+                params=params,
+            )
         )
 
         # Render a no-particle reference through the same model and sample
@@ -1308,19 +1387,21 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
             reference_intensity_os = reference_intensity_for_model
         reference_intensity = cv2.resize(
             reference_intensity_os,
-            final_size,
+            final_dsize_wh,
             interpolation=cv2.INTER_AREA,
         )
-        reference_frame_ideal = imaging_model.scale_intensity_to_counts(
-            intensity=reference_intensity,
-            background_final=background_final,
-            E_ref_intensity_final=E_ref_intensity_final,
-            params=params,
+        reference_frame_ideal = _apply_signal_exposure_scale(
+            imaging_model.scale_intensity_to_counts(
+                intensity=reference_intensity,
+                background_final=background_final,
+                E_ref_intensity_final=E_ref_intensity_final,
+                params=params,
+            )
         )
-        supervision_noise_variance = contrast_noise_variance_counts(
+        supervision_noise_variance = analysis_contrast_noise_variance(
             intensity_scaled,
             reference_frame_ideal,
-            params,
+            noise_params,
             relative_reference=False,
             runtime=detector_noise_runtime,
         )
@@ -1376,18 +1457,34 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
                     else:
                         contribution_sum += np.asarray(contribution, dtype=float)
                 if contribution_sum is None:
-                    contrast_final_counts = np.zeros(final_size[::-1], dtype=float)
+                    contrast_final_counts = np.zeros(final_shape_hw, dtype=float)
                 else:
                     contrast_final_counts = contribution_sum / float(
                         len(subsample_states_by_exposure)
                     )
+                if getattr(imaging_model, "output_type", "intensity") == "phase":
+                    phase_to_count = float(param_value(params, "qpi_phase_to_count_scale"))
+                    if not np.isfinite(phase_to_count) or phase_to_count <= 0.0:
+                        raise ValueError(
+                            "PARAMS['qpi_phase_to_count_scale'] must be positive "
+                            "for phase-domain supervision support."
+                        )
+                    contrast_for_support = contrast_final_counts / phase_to_count
+                    support_signal_units = "radian"
+                    support_measurement_domain = "phase"
+                    support_noise_variance_units = "radian_squared"
+                else:
+                    contrast_for_support = contrast_final_counts
+                    support_signal_units = "detector_count"
+                    support_measurement_domain = "detector_count"
+                    support_noise_variance_units = "detector_count_squared"
 
-                H, W = contrast_final_counts.shape
+                H, W = contrast_for_support.shape
                 geometry_os = frame_state.geometry_canvas[
                     crop_start:crop_end, crop_start:crop_end
                 ]
                 geometry_final = cv2.resize(
-                    geometry_os, final_size, interpolation=cv2.INTER_AREA
+                    geometry_os, final_dsize_wh, interpolation=cv2.INTER_AREA
                 )
                 projected_geometry_mask = (geometry_final > 0.0).astype(np.uint8) * 255
                 if projected_geometry_mask.shape != (H, W):
@@ -1427,7 +1524,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
                         "particle_index": i,
                         "frame_index": f,
                         "position_nm": position_nm,
-                        "contrast_image": contrast_final_counts,
+                        "contrast_image": contrast_for_support,
                         "geometry_mask": geometry_mask,
                         "mask_geometry_metadata": mask_geometry_metadata,
                     }
@@ -1451,6 +1548,9 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
                     all_geometry_masks=all_geometry_masks,
                     noise_std=supervision_noise_std,
                     noise_variance_map=supervision_noise_variance,
+                    signal_units=support_signal_units,
+                    measurement_domain=support_measurement_domain,
+                    noise_variance_units=support_noise_variance_units,
                 )
 
                 masks = policy_result["masks"]
@@ -1485,7 +1585,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
 
         signal_frame_noisy = imaging_model.compute_noise(
             intensity_scaled,
-            params,
+            noise_params,
             rng=rng,
             detector_noise_runtime=detector_noise_runtime,
         )
@@ -1507,7 +1607,7 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
             )
         reference_frame_noisy = imaging_model.compute_noise(
             reference_frame_ideal,
-            params,
+            noise_params,
             rng=rng,
             detector_noise_runtime=detector_noise_runtime,
         )
@@ -1534,6 +1634,13 @@ def generate_video_and_masks(params: dict, particle_instances: list[ParticleInst
             supervision_records=supervision_records,
             supervision_audit_summary=supervision_audit_summary or {},
         )
+    response_function = json_safe(
+        imaging_model.compute_response_function(model_shape_os, params)
+    )
+    render_metadata["response_function"] = response_function
+    render_metadata["backend_fidelity_metadata"] = json_safe(
+        extract_backend_fidelity_metadata(response_function, backend_contract=None)
+    )
     return RenderedFrameSet(
         signal_frames=all_signal_frames,
         reference_frames=all_reference_frames,

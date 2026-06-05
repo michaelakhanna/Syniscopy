@@ -82,6 +82,8 @@ def _base_params(modality: str, image_size: int, pupil_samples: int) -> dict[str
             "duration_seconds": 1.0 / float(params.get("fps", 24.0)),
             "psf_oversampling_factor": 1,
             "return_ideal_float_frames": True,
+            "save_raw_camera_video": False,
+            "save_raw_camera_frame_sequence": False,
             "save_raw_frame_views": False,
             "mask_generation_enabled": False,
             "background_subtraction_method": "reference_frame",

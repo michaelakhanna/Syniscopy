@@ -92,7 +92,9 @@ class QuantitativePhaseImagingModel(ImagingModel):
         detected_quanta_raw = param_value(params, 'qpi_detected_quanta_per_pixel')
         if detected_quanta_raw is None:
             detected_quanta_raw = CountBudgetSettings.from_params(params).background_intensity
-        detected_quanta = float(detected_quanta_raw)
+        configured_detected_quanta = float(detected_quanta_raw)
+        exposure_scale = float(params.get("_exposure_signal_scale", 1.0))
+        detected_quanta = configured_detected_quanta * exposure_scale
         readout_variance = 0.0 if phase_noise is None else float(phase_noise) ** 2
         shot_variance = (
             1.0 / (visibility * visibility * detected_quanta)
@@ -107,6 +109,8 @@ class QuantitativePhaseImagingModel(ImagingModel):
             display_count_scaling="display_only",
             qpi_visibility=visibility,
             qpi_detected_quanta_per_pixel=detected_quanta,
+            qpi_configured_detected_quanta_per_pixel=configured_detected_quanta,
+            qpi_detected_quanta_exposure_scale=exposure_scale,
             qpi_phase_readout_variance_rad2=readout_variance,
             qpi_phase_variance_rad2=float(shot_variance + readout_variance),
             phase_noise_model="1/(V^2 nQ)+sigma_phi_readout^2",
@@ -137,5 +141,29 @@ class QuantitativePhaseImagingModel(ImagingModel):
         del E_ref_intensity_final
         phase_to_count = CountBudgetSettings.from_params(params).qpi_phase_to_count_scale
         return np.asarray(background_final, dtype=float) + phase_to_count * np.asarray(intensity, dtype=float)
+
+    def compute_noise(
+        self,
+        frame_counts: np.ndarray,
+        params: dict,
+        rng: np.random.Generator | None = None,
+        *,
+        detector_noise_runtime=None,
+    ) -> np.ndarray:
+        """Apply QPI phase-domain noise, then return display-count values."""
+        del detector_noise_runtime
+        counts = np.asarray(frame_counts, dtype=float)
+        settings = CountBudgetSettings.from_params(params)
+        phase_to_count = settings.qpi_phase_to_count_scale
+        from camera_noise import qpi_phase_noise_variance_rad2
+
+        variance = qpi_phase_noise_variance_rad2(counts, params)
+        generator = rng if rng is not None else np.random.default_rng()
+        phase_noise = generator.normal(
+            loc=0.0,
+            scale=np.sqrt(np.maximum(variance, 0.0)),
+            size=counts.shape,
+        )
+        return counts + phase_to_count * phase_noise
 
 __all__ = ['QuantitativePhaseImagingModel']

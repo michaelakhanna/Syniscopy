@@ -74,6 +74,8 @@ def _apply_cli_overrides(params: dict[str, Any], args: argparse.Namespace) -> No
 
     params["return_ideal_float_frames"] = True
     params["save_frame_sequence"] = False
+    params["save_raw_camera_video"] = False
+    params["save_raw_camera_frame_sequence"] = False
     params["save_raw_frame_views"] = False
     params["mask_generation_enabled"] = False
     params["num_frames"] = num_frames
@@ -110,10 +112,12 @@ def _apply_cli_overrides(params: dict[str, Any], args: argparse.Namespace) -> No
     if args.material is not None:
         component["material"] = str(args.material)
 
-    side_nm = float(params["image_size_pixels"]) * float(params["pixel_size_nm"])
+    center_nm = 0.5 * (
+        float(params["image_size_pixels"]) - 1.0
+    ) * float(params["pixel_size_nm"])
     first["motion"]["initial_position_nm"] = [
-        0.5 * side_nm,
-        0.5 * side_nm,
+        center_nm,
+        center_nm,
         float(args.z_nm),
     ]
     params["initial_z_span_nm"] = max(

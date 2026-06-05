@@ -126,6 +126,13 @@ Generate a small local dataset:
 python codebase/create_dataset.py --output datasets/syniscopy_dataset --num-videos 1 --seed 12345 --reset --verbose
 ```
 
+Each generated video entry now has two public visual products by default:
+`videos/video_XXXX.avi` is the background-subtracted contrast-analysis preview
+used with the 8-bit training frame sequence, while
+`videos/video_XXXX_raw_signal.avi` is a raw-camera signal preview with the
+detector background left in place. Enable `save_raw_camera_frame_sequence` or
+`save_raw_frame_views` when exact raw detector counts are needed.
+
 ## Segment Anything Model 2 Starter Package
 
 Build the source ZIP expected by the Segment Anything Model 2 starter notebooks. The Python command

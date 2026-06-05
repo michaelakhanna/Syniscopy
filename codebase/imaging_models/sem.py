@@ -10,10 +10,16 @@ from ._shared import (
 from backend_fidelity import attach_backend_fidelity_metadata
 from config.runtime import SemSettings, param_value
 from .electron_constants import electron_wavelength_m
+from .sem_source import (
+    SEMMaterialSourceCanvas,
+    source_like_numeric_array,
+    source_like_sum,
+)
 from .sem_backends import (
     GaussianProbeSEMProxyBackend,
     InteractionVolumeSEMProxyBackend,
     MonteCarloSEMTransportBackend,
+    PhysicalMonteCarloSEMTransportBackend,
     ReferenceKernelSEMBackend,
     SyniscopyTransportSEMBackend,
 )
@@ -79,22 +85,28 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
             param_value(params, "sem_model")
         ).strip().lower()
         self._sem_model = _sem_model_raw
-        if self._sem_model not in {"gaussian_probe_secondary_yield", "interaction_volume_proxy"}:
+        if self._sem_model not in {
+            "gaussian_probe_secondary_yield",
+            "interaction_volume_proxy",
+            "physical_electron_transport",
+        }:
             raise ValueError(
                 "PARAMS['sem_model'] must be 'gaussian_probe_secondary_yield' "
-                f"or 'interaction_volume_proxy'; got {self._sem_model!r}."
+                "'interaction_volume_proxy', or 'physical_electron_transport'; "
+                f"got {self._sem_model!r}."
             )
         self._sem_backend = str(param_value(params, "sem_backend")).strip().lower()
         if self._sem_backend not in {
             "gaussian_probe_proxy",
             "interaction_volume_proxy",
             "monte_carlo_transport",
+            "monte_carlo_physical",
             "syniscopy_transport_lite",
             "reference_kernel_table",
         }:
             raise ValueError(
                 "PARAMS['sem_backend'] must be 'gaussian_probe_proxy', "
-                f"'interaction_volume_proxy', 'monte_carlo_transport', "
+                f"'interaction_volume_proxy', 'monte_carlo_transport', 'monte_carlo_physical', "
                 "'syniscopy_transport_lite', or 'reference_kernel_table'; got "
                 f"{self._sem_backend!r}."
             )
@@ -112,6 +124,16 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
                 "PARAMS['sem_backend']='interaction_volume_proxy' requires "
                 "PARAMS['sem_model']='interaction_volume_proxy'."
             )
+        if self._sem_model == "physical_electron_transport" and self._sem_backend != "monte_carlo_physical":
+            raise ValueError(
+                "PARAMS['sem_model']='physical_electron_transport' requires "
+                "PARAMS['sem_backend']='monte_carlo_physical'."
+            )
+        if self._sem_backend == "monte_carlo_physical" and self._sem_model != "physical_electron_transport":
+            raise ValueError(
+                "PARAMS['sem_backend']='monte_carlo_physical' requires "
+                "PARAMS['sem_model']='physical_electron_transport'."
+            )
         self._sem_source_representation = str(param_value(params, "sem_source_representation")).strip().lower()
         if self._sem_source_representation not in {"projected", "volume"}:
             raise ValueError(
@@ -120,7 +142,7 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
             )
         self._sem_effective_source_representation = (
             "volume"
-            if self._sem_backend == "monte_carlo_transport"
+            if self._sem_backend in {"monte_carlo_transport", "monte_carlo_physical"}
             and self._sem_source_representation == "volume"
             else "projected"
         )
@@ -158,6 +180,12 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
 
         if self._sem_backend == "monte_carlo_transport":
             self._sem_transport_backend = MonteCarloSEMTransportBackend(
+                params,
+                canvas_pitch_nm=self._canvas_pitch_nm,
+                probe_sigma_px=self._probe_sigma_px,
+            )
+        elif self._sem_backend == "monte_carlo_physical":
+            self._sem_transport_backend = PhysicalMonteCarloSEMTransportBackend(
                 params,
                 canvas_pitch_nm=self._canvas_pitch_nm,
                 probe_sigma_px=self._probe_sigma_px,
@@ -232,6 +260,46 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
                 raise ValueError(
                     "PARAMS['sem_volume_slice_thickness_nm'] must be positive when supplied."
                 )
+
+    def _backend_response_contract(self) -> dict:
+        if self._sem_backend == "gaussian_probe_proxy":
+            edge_convention = "gradient_magnitude"
+            topography_convention = "not_supported"
+            detector_direction_role = "not_used"
+            topography_supported = False
+            detector_direction_used = False
+        elif self._sem_backend == "interaction_volume_proxy":
+            edge_convention = "positive_directed_detector_gradient"
+            topography_convention = "gradient_magnitude"
+            detector_direction_role = "edge_term_positive_projection"
+            topography_supported = True
+            detector_direction_used = self._edge_gain > 0.0
+        else:
+            edge_convention = "gradient_magnitude"
+            topography_convention = "absolute_directed_detector_gradient"
+            detector_direction_role = "topography_term_absolute_projection"
+            topography_supported = True
+            detector_direction_used = self._topography_gain > 0.0
+
+        return {
+            "sem_backend_edge_convention": edge_convention,
+            "sem_backend_topography_convention": topography_convention,
+            "sem_backend_detector_direction_role": detector_direction_role,
+            "sem_backend_active_terms": {
+                "bulk": self._bulk_gain > 0.0,
+                "edge": self._edge_gain > 0.0,
+                "topography": topography_supported and self._topography_gain > 0.0,
+                "detector_direction": detector_direction_used,
+            },
+            "sem_backend_consumes_topography_gain": topography_supported,
+            "sem_backend_consumes_detector_direction": detector_direction_role != "not_used",
+            "sem_sample_environment_z_policy": (
+                "surface_source_first_slice"
+                if self._sem_effective_source_representation == "volume"
+                else "projected_surface_source"
+            ),
+            "sem_sample_environment_uses_particle_world_z": False,
+        }
         
     def compute_response_function(self, shape: tuple[int, int], params: dict) -> dict:
         response = super().compute_response_function(shape, params)
@@ -335,6 +403,7 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
                 )
             ),
         })
+        response.update(self._backend_response_contract())
         if self._sem_transport_backend is not None:
             response.update(self._sem_transport_backend.metadata(params))
         elif self._sem_reference_kernel_backend is not None:
@@ -357,6 +426,20 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
                 comparison_contract_id=response.get("comparison_contract_id", "Contract-NR"),
                 artifact_provenance_id=response.get("artifact_provenance_id"),
             )
+        beam_current_nA = float(param_value(params, "sem_beam_current_nA"))
+        dwell_time_us = float(param_value(params, "sem_dwell_time_us"))
+        if self._sem_transport_backend is not None:
+            response["electrons_per_pixel"] = self._sem_transport_backend.electrons_per_pixel()
+        elif self._sem_reference_kernel_backend is not None:
+            response["electrons_per_pixel"] = self._sem_reference_kernel_backend.electrons_per_pixel()
+        else:
+            response["electrons_per_pixel"] = SemSettings.from_params(params).electrons_per_pixel
+        if beam_current_nA > 0.0 and dwell_time_us > 0.0:
+            response["count_scaling_mode"] = "sem_beam_current_nA_times_sem_dwell_time_us"
+            response["incident_primary_electrons_source"] = "beam_current_and_dwell_time"
+        else:
+            response["count_scaling_mode"] = "sem_electrons_per_pixel"
+            response["incident_primary_electrons_source"] = "sem_electrons_per_pixel"
         return response
 
     def probe_wavelength_nm(self, params: dict) -> float:
@@ -389,31 +472,63 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
         rho = np.abs(E_sca_total) ** 2
         return self._yield_from_source(rho)
 
-    def _yield_from_source(self, source: np.ndarray) -> np.ndarray:
+    def _proxy_numeric_source(self, source) -> np.ndarray:
+        if isinstance(source, SEMMaterialSourceCanvas):
+            out = np.zeros(source.shape, dtype=float)
+            for key, value in source.channels.items():
+                out += key.se_yield_coefficient * np.asarray(value, dtype=float)
+            if out.ndim == 3 and self._sem_effective_source_representation != "volume":
+                return np.sum(out, axis=0)
+            return out
+        return self._source_for_selected_backend(source)
+
+    def _yield_from_source(self, source) -> np.ndarray:
         source = self._source_for_selected_backend(source)
         if self._sem_transport_backend is not None:
-            return self._sem_transport_backend.yield_from_source(source, baseline=self._baseline)
+            transport_source = (
+                source if self._sem_backend == "monte_carlo_physical" else self._proxy_numeric_source(source)
+            )
+            return self._sem_transport_backend.yield_from_source(transport_source, baseline=self._baseline)
         if self._sem_reference_kernel_backend is not None:
-            return self._sem_reference_kernel_backend.yield_from_source(source, baseline=self._baseline)
+            return self._sem_reference_kernel_backend.yield_from_source(
+                self._proxy_numeric_source(source),
+                baseline=self._baseline,
+            )
         if self._sem_reference_backend is not None:
-            return self._sem_reference_backend.yield_from_source(source, baseline=self._baseline)
+            return self._sem_reference_backend.yield_from_source(
+                self._proxy_numeric_source(source),
+                baseline=self._baseline,
+            )
         if self._sem_proxy_backend is None:
             raise RuntimeError("SEM proxy backend was not initialized.")
-        return self._sem_proxy_backend.yield_from_source(source, baseline=self._baseline)
+        return self._sem_proxy_backend.yield_from_source(
+            self._proxy_numeric_source(source),
+            baseline=self._baseline,
+        )
 
-    def _contrast_from_source(self, source: np.ndarray) -> np.ndarray:
+    def _contrast_from_source(self, source) -> np.ndarray:
         source = self._source_for_selected_backend(source)
         if self._sem_transport_backend is not None:
-            return self._sem_transport_backend.contrast_from_source(source)
+            transport_source = (
+                source if self._sem_backend == "monte_carlo_physical" else self._proxy_numeric_source(source)
+            )
+            return self._sem_transport_backend.contrast_from_source(transport_source)
         if self._sem_reference_kernel_backend is not None:
-            return self._sem_reference_kernel_backend.contrast_from_source(source)
+            return self._sem_reference_kernel_backend.contrast_from_source(self._proxy_numeric_source(source))
         if self._sem_reference_backend is not None:
-            return self._sem_reference_backend.contrast_from_source(source)
+            return self._sem_reference_backend.contrast_from_source(self._proxy_numeric_source(source))
         if self._sem_proxy_backend is None:
             raise RuntimeError("SEM proxy backend was not initialized.")
-        return self._sem_proxy_backend.contrast_from_source(source)
+        return self._sem_proxy_backend.contrast_from_source(self._proxy_numeric_source(source))
 
-    def _source_for_selected_backend(self, source: np.ndarray) -> np.ndarray:
+    def _source_for_selected_backend(self, source):
+        if isinstance(source, SEMMaterialSourceCanvas):
+            if source.ndim == 3 and self._sem_effective_source_representation != "volume":
+                projected = SEMMaterialSourceCanvas(shape=source.shape[-2:])
+                for key, value in source.channels.items():
+                    projected.channels[key] = np.sum(np.asarray(value, dtype=float), axis=0)
+                return projected
+            return source
         src = np.asarray(source, dtype=float)
         if src.ndim == 3 and self._sem_effective_source_representation != "volume":
             return np.sum(src, axis=0)
@@ -422,8 +537,8 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
     def initialize_particle_source_canvas(self, shape: tuple[int, int], params: dict):
         del params
         if self._sem_effective_source_representation == "volume":
-            return np.zeros((self._sem_volume_slices, *shape), dtype=float)
-        return np.zeros(shape, dtype=float)
+            return SEMMaterialSourceCanvas(shape=(self._sem_volume_slices, *shape))
+        return SEMMaterialSourceCanvas(shape=shape)
 
     def accumulate_particle_source(
         self,
@@ -442,14 +557,15 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
         del params
         if source_canvas is None:
             return
-        yield_coeff = float(getattr(material_properties, "se_yield_coefficient", 0.0))
-        if yield_coeff <= 0.0:
-            return
         radius_px = max(0.5, 0.5 * float(diameter_nm) / float(pixel_size_nm) * float(os_factor))
-        if np.asarray(source_canvas).ndim == 3:
-            _, h, w = source_canvas.shape
+        if isinstance(source_canvas, SEMMaterialSourceCanvas):
+            target_canvas = source_canvas.channel_for(material_properties)
         else:
-            h, w = source_canvas.shape
+            target_canvas = source_canvas
+        if np.asarray(target_canvas).ndim == 3:
+            _, h, w = target_canvas.shape
+        else:
+            h, w = target_canvas.shape
         x0 = max(0, int(np.floor(center_x_canvas - radius_px - 2)))
         x1 = min(w, int(np.ceil(center_x_canvas + radius_px + 3)))
         y0 = max(0, int(np.floor(center_y_canvas - radius_px - 2)))
@@ -471,7 +587,7 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
         multiplier = float(source_multiplier)
         if not np.isfinite(multiplier) or multiplier < 0.0:
             raise ValueError(f"source_multiplier must be finite and non-negative; got {source_multiplier!r}.")
-        if np.asarray(source_canvas).ndim == 3:
+        if np.asarray(target_canvas).ndim == 3:
             radius_nm = 0.5 * float(diameter_nm)
             lateral_nm = r * (float(pixel_size_nm) / float(os_factor))
             chord_half_nm = np.zeros_like(lateral_nm, dtype=float)
@@ -488,7 +604,7 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
             else:
                 z_top_nm = radius_nm - chord_half_nm + self._sem_source_z_offset_nm
                 z_bottom_nm = radius_nm + chord_half_nm + self._sem_source_z_offset_nm
-            for slice_idx in range(source_canvas.shape[0]):
+            for slice_idx in range(target_canvas.shape[0]):
                 slice_z0 = slice_idx * self._sem_volume_slice_thickness_nm
                 slice_z1 = slice_z0 + self._sem_volume_slice_thickness_nm
                 overlap_nm = np.maximum(
@@ -496,14 +612,23 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
                     0.0,
                 )
                 if np.any(overlap_nm > 0.0):
-                    source_canvas[slice_idx, y0:y1, x0:x1] += (
+                    target_canvas[slice_idx, y0:y1, x0:x1] += (
                         multiplier
-                        * yield_coeff
                         * (overlap_nm / max(float(diameter_nm), 1e-12))
                         * taper
                     )
             return
-        source_canvas[y0:y1, x0:x1] += multiplier * yield_coeff * (thickness_px / diameter_px) * taper
+        target_canvas[y0:y1, x0:x1] += multiplier * (thickness_px / diameter_px) * taper
+
+    def _merged_source_from_particles(self, particle_source_maps, E_sca_total):
+        if particle_source_maps is None or len(particle_source_maps) == 0:
+            if self._sem_backend == "monte_carlo_physical":
+                image_shape = tuple(np.asarray(E_sca_total).shape[-2:])
+                if self._sem_effective_source_representation == "volume":
+                    return SEMMaterialSourceCanvas(shape=(self._sem_volume_slices, *image_shape))
+                return SEMMaterialSourceCanvas(shape=image_shape)
+            return np.abs(E_sca_total) ** 2
+        return source_like_sum(particle_source_maps)
 
     def compute_scene_intensity(
         self,
@@ -517,16 +642,7 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
         frame_index: int = 0,
     ) -> np.ndarray:
         del E_sca_particles, particle_instances, background_field, params, frame_index
-        if particle_source_maps is None or len(particle_source_maps) == 0:
-            source = np.abs(E_sca_total) ** 2
-        else:
-            source = np.sum(
-                [
-                    np.asarray(source_map, dtype=float)
-                    for source_map in particle_source_maps
-                ],
-                axis=0,
-            )
+        source = self._merged_source_from_particles(particle_source_maps, E_sca_total)
         return self._yield_from_source(source)
 
     def _sample_environment_source(
@@ -534,20 +650,27 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
         sample_environment: SampleEnvironment,
         params: dict,
         image_shape: tuple[int, int],
-    ) -> np.ndarray:
+    ) -> SEMMaterialSourceCanvas:
         topo = np.asarray(sample_environment.substrate.topography_gradient(), dtype=float)
-        yield_map = np.asarray(sample_environment.substrate.secondary_electron_yield_map(), dtype=float)
-        if topo.shape != tuple(image_shape) or yield_map.shape != tuple(image_shape):
+        frac = np.asarray(sample_environment.substrate.material_fraction_map, dtype=float)
+        height = np.asarray(sample_environment.substrate.height_map_nm, dtype=float)
+        if topo.shape != tuple(image_shape) or frac.shape != tuple(image_shape):
             raise ValueError(
                 "SEM sample-environment maps must match the SEM source image shape; "
-                f"got topography {topo.shape}, yield {yield_map.shape}, expected {tuple(image_shape)}."
+                f"got topography {topo.shape}, material fraction {frac.shape}, expected {tuple(image_shape)}."
             )
         edge_gain = float(param_value(params, "sem_sample_environment_edge_gain"))
-        source_2d = yield_map + edge_gain * topo
+        frac = np.where(height > 0.0, frac, 0.0)
+        layer_source = frac + edge_gain * topo
+        substrate_source = 1.0 - frac
         if self._sem_effective_source_representation != "volume":
-            return source_2d
-        source = np.zeros((self._sem_volume_slices, *source_2d.shape), dtype=float)
-        source[0] = source_2d
+            source = SEMMaterialSourceCanvas(shape=tuple(image_shape))
+            source.channel_for(sample_environment.substrate.material_layer)[:, :] += layer_source
+            source.channel_for(sample_environment.substrate.material_substrate)[:, :] += substrate_source
+            return source
+        source = SEMMaterialSourceCanvas(shape=(self._sem_volume_slices, *tuple(image_shape)))
+        source.channel_for(sample_environment.substrate.material_layer)[0] += layer_source
+        source.channel_for(sample_environment.substrate.material_substrate)[0] += substrate_source
         return source
 
     def compute_scene_intensity_with_sample_environment(
@@ -563,25 +686,19 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
         sample_environment: SampleEnvironment | None = None,
     ) -> np.ndarray:
         del E_sca_particles, particle_instances, background_field, frame_index
-        if particle_source_maps is None or len(particle_source_maps) == 0:
-            source = np.abs(E_sca_total) ** 2
-        else:
-            source = np.sum(
-                [
-                    np.asarray(source_map, dtype=float)
-                    for source_map in particle_source_maps
-                ],
-                axis=0,
-            )
+        source = self._merged_source_from_particles(particle_source_maps, E_sca_total)
         if sample_environment is not None:
-            source_arr = np.asarray(source, dtype=float)
+            source_arr = source_like_numeric_array(source)
             image_shape = tuple(source_arr.shape[-2:])
             environment_source = self._sample_environment_source(sample_environment, params, image_shape)
-            if source_arr.ndim == 2 and np.asarray(environment_source).ndim == 3:
-                promoted_source = np.zeros_like(environment_source, dtype=float)
-                promoted_source[0] = source_arr
-                source_arr = promoted_source
-            source = source_arr + np.asarray(environment_source, dtype=float)
+            if isinstance(source, SEMMaterialSourceCanvas):
+                source = source_like_sum([source, environment_source])
+            elif np.any(source_arr):
+                raise ValueError(
+                    "SEM sample-environment rendering with non-material particle sources is unsupported."
+                )
+            else:
+                source = environment_source
         return self._yield_from_source(source)
 
     def apply_sample_environment(

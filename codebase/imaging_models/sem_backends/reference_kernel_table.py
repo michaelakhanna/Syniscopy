@@ -15,6 +15,7 @@ from ._metadata import (
     _gaussian_blur,
     _gradient_components,
     _sha256_file,
+    _validate_takeoff_angle_deg,
     attach_backend_fidelity_metadata,
     json,
     np,
@@ -95,6 +96,7 @@ class ReferenceKernelSEMBackend:
             param_value(params, 'sem_detector_takeoff_angle_deg'),
             minimum=0.0,
         )
+        _validate_takeoff_angle_deg(self._takeoff_angle_deg)
         self._source_depth_nm = _finite_nonnegative(
             "sem_reference_source_depth_nm",
             param_value(params, 'sem_reference_source_depth_nm'),
@@ -229,8 +231,7 @@ class ReferenceKernelSEMBackend:
         return key_candidates
 
     def _detector_gain(self) -> float:
-        takeoff_term = max(np.cos(np.deg2rad(self._takeoff_angle_deg)), 0.0)
-        return float(self._detector_acceptance * takeoff_term)
+        return float(self._detector_acceptance)
 
     def _interpolate_rows(self, source: np.ndarray) -> np.ndarray:
         rows = self._select_rows(self._material_name, self._geometry_name)
@@ -257,10 +258,9 @@ class ReferenceKernelSEMBackend:
             d += abs(q["incident_angle_deg"] - row["incident_angle_deg"]) / self._axis_scales["incident_angle_deg"]
             d += abs(q["takeoff_angle_deg"] - row["takeoff_angle_deg"]) / self._axis_scales["takeoff_angle_deg"]
             row_yield = row["yield"]
-            row_backscatter = row.get("backscatter_yield", 0.0)
             d_with_source = d + np.abs(source_query - row["source"]) / self._axis_scales["source"]
             weight = 1.0 / (1.0 + d_with_source)
-            num += weight * (row_yield + row_backscatter)
+            num += weight * row_yield
             den += weight
         den = np.where(den <= 0.0, 1.0, den)
         out = num / den

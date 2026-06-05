@@ -73,7 +73,6 @@ def run_report(args: argparse.Namespace) -> Path:
             continue
 
         resolved = render_meta["resolved_params"]
-        resolved_modalities.append(modality)
         num_frames = int(render_meta.get("num_frames", 1))
         per_frame = rendered.get("per_frame", [])
         fisher_matrices = rendered.get("fisher_matrices", [])
@@ -89,6 +88,7 @@ def run_report(args: argparse.Namespace) -> Path:
         frame_rows, summary = _build_sequence_summary_rows(modality, per_frame)
         sequence_rows.extend(frame_rows)
         sequence_summaries[modality] = summary
+        resolved_modalities.append(modality)
 
         first = per_frame[0]
         contrast = np.asarray(first["contrast"], dtype=float)
