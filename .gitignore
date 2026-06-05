@@ -23,6 +23,7 @@ update.py
 *.rtf
 RELEASE_PLAN.md
 release_uploads/
+scripts/
 
 # --- LaTeX build artifacts ---
 paper/*
