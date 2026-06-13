@@ -41,7 +41,7 @@ class InteractionVolumeSEMProxyBackend:
 
     def contrast_from_source(self, source: np.ndarray) -> np.ndarray:
         source = np.maximum(np.asarray(source, dtype=float), 0.0)
-        gx, gy = _gradient_components(source)
+        gx, gy = _gradient_components(source, self.canvas_pitch_nm)
         directed_edge = np.maximum(
             gx * self.detector_direction_xy[0] + gy * self.detector_direction_xy[1],
             0.0,

@@ -1,7 +1,8 @@
 """
 Native-regime reference-check profiles for Syniscopy modalities.
 
-These profiles are separate from the shared cross-modality ranking profile.
+These profiles are separate from the shared configured-microscope comparison
+profile.
 Each case configures one modality in a literature-adjacent native regime,
 renders a single centered particle, propagates counts-domain detector noise
 into the contrast frame, and computes a lateral localization CRLB. The
@@ -12,6 +13,7 @@ metrology scale that must not be read as a center-localization bound.
 """
 
 from __future__ import annotations
+from configured_parameters import configured_assign
 
 from copy import deepcopy
 from pathlib import Path
@@ -21,16 +23,30 @@ from typing import Any
 
 import numpy as np
 
-from camera_noise import analysis_contrast_noise_variance
-from config import PARAMS
-from fisher import compute_fisher_information, compute_localization_crlb
+from camera_noise import (
+    analysis_contrast_noise_model,
+    analysis_noise_params_for_frame,
+    detector_contrast_frames_for_analysis,
+)
+from config import SamplingGeometry, SemSettings, TemSettings, default_params
+from config.runtime import FluorescenceSettings
+from fisher import (
+    compute_fisher_information,
+    compute_localization_crlb,
+    compute_off_axis_demodulated_localization_crlb,
+    is_off_axis_holography_modality,
+    lateral_derivative_plan_metadata,
+    require_array_only_spectral_lateral_derivative_ready,
+)
 from imaging_models import (
     get_imaging_model,
     modality_uses_relative_reference_contrast,
 )
 from json_utils import json_safe
+from noise_contracts import summarize_analysis_noise_model
 from simulation import generate_single_frame_views
 from modality_registry import SUPPORTED_MODALITIES, canonical_modality_name, modality_display_name
+from postprocessing import compute_single_frame_contrast
 
 
 DEFAULT_IMAGE_SIZE = 128
@@ -48,6 +64,240 @@ LOCALIZATION_SCALE_CLASSIFICATIONS = {
 NONLOCALIZATION_NUMERIC_SCALE_CLASSIFICATIONS = {
     "DIMENSIONAL_METROLOGY_SCALE_NOT_LOCALIZATION",
 }
+
+PRINCIPLE_CITATION_CLASSIFICATIONS = {
+    "MODALITY_PRINCIPLE_CITATION_ONLY",
+}
+
+STRICT_VALIDATION = "strict_validation"
+REFERENCE_SCALE_CHECK = "reference_scale_check"
+PROXY_CALIBRATION_CHECK = "proxy_calibration_check"
+NONLOCALIZATION_REFERENCE = "nonlocalization_reference"
+PRINCIPLE_CITATION = "principle_citation"
+
+VALIDATION_TIERS = {
+    STRICT_VALIDATION,
+    REFERENCE_SCALE_CHECK,
+    PROXY_CALIBRATION_CHECK,
+    NONLOCALIZATION_REFERENCE,
+    PRINCIPLE_CITATION,
+}
+
+VALIDATION_TIER_LABELS = {
+    STRICT_VALIDATION: "strict validation",
+    REFERENCE_SCALE_CHECK: "reference scale check",
+    PROXY_CALIBRATION_CHECK: "proxy calibration check",
+    NONLOCALIZATION_REFERENCE: "nonlocalization reference",
+    PRINCIPLE_CITATION: "principle citation",
+}
+
+VALIDATION_TIER_OUTPUT_FILES = {
+    STRICT_VALIDATION: "strict_validation_table.csv",
+    REFERENCE_SCALE_CHECK: "reference_scale_checks.csv",
+    PROXY_CALIBRATION_CHECK: "proxy_calibration_checks.csv",
+    NONLOCALIZATION_REFERENCE: "nonlocalization_reference_checks.csv",
+    PRINCIPLE_CITATION: "principle_citations.csv",
+}
+
+STRICT_BACKEND_FIDELITY_LEVELS = {"high_fidelity", "reference_validated"}
+STRICT_BACKEND_VALIDATION_STATUSES = {"validated", "reference_validated"}
+
+
+def _normalized_text(value: Any) -> str:
+    return "" if value is None else str(value).strip().lower()
+
+
+def _backend_fidelity_record(response: dict[str, Any] | None) -> dict[str, Any]:
+    payload = dict(response or {})
+    nested = payload.get("backend_fidelity_metadata")
+    metadata = dict(nested) if isinstance(nested, dict) else {}
+    reference = metadata.get("reference_backend_metadata")
+    if reference is None:
+        reference = payload.get("reference_backend_metadata")
+    return {
+        "present": bool(metadata) or any(
+            key in payload
+            for key in (
+                "backend_fidelity_level",
+                "validation_status",
+                "implemented_approximation_level",
+                "reference_backend_metadata",
+            )
+        ),
+        "backend_name": (
+            metadata.get("backend_name")
+            or payload.get("backend_name")
+            or payload.get("kind")
+            or payload.get("tem_backend")
+            or payload.get("sem_backend")
+            or payload.get("fluorescence_backend")
+            or ""
+        ),
+        "backend_fidelity_level": _normalized_text(
+            metadata.get("backend_fidelity_level", payload.get("backend_fidelity_level"))
+        ),
+        "backend_validation_status": _normalized_text(
+            metadata.get("validation_status", payload.get("validation_status"))
+        ),
+        "implemented_approximation_level": _normalized_text(
+            metadata.get(
+                "implemented_approximation_level",
+                payload.get("implemented_approximation_level", payload.get("fidelity_label")),
+            )
+        ),
+        "reference_backend_metadata": reference if isinstance(reference, dict) else {},
+    }
+
+
+def _source_claim_flags(classification: str) -> tuple[bool, bool, bool]:
+    normalized = str(classification).upper()
+    return (
+        normalized in LOCALIZATION_SCALE_CLASSIFICATIONS,
+        normalized in NONLOCALIZATION_NUMERIC_SCALE_CLASSIFICATIONS,
+        normalized in PRINCIPLE_CITATION_CLASSIFICATIONS,
+    )
+
+
+def _strict_validation_blockers(
+    *,
+    modality: str,
+    case: dict[str, Any],
+    params: dict[str, Any],
+    response: dict[str, Any] | None,
+    classification: str,
+    parameter_match_status: str,
+    source_has_localization_scale: bool,
+    source_has_nonlocalization_scale: bool,
+    is_principle_citation: bool,
+    proxy_tuning_target_sigma_xy_nm: float | None,
+) -> list[str]:
+    blockers: list[str] = []
+    if not source_has_localization_scale:
+        if source_has_nonlocalization_scale:
+            blockers.append("nonlocalization_reference_not_center_localization")
+        elif is_principle_citation:
+            blockers.append("principle_citation_no_numeric_localization_target")
+        else:
+            blockers.append("no_source_localization_bound")
+    if parameter_match_status != "yes":
+        blockers.append(f"parameter_match_status={parameter_match_status}")
+    if proxy_tuning_target_sigma_xy_nm is not None:
+        blockers.append("proxy_tuning_target_present")
+    if str(case.get("comparison_kind", "")).strip().lower() == "scale_context_only":
+        blockers.append("comparison_kind=scale_context_only")
+
+    text_for_tuning_check = " ".join(
+        str(case.get(key, ""))
+        for key in ("classification_reason", "parameter_match_note", "profile_summary", "notes")
+    ).lower()
+    if "proxy tuning" in text_for_tuning_check:
+        blockers.append("proxy_tuning_note_present")
+    elif "scale tuning" in text_for_tuning_check:
+        blockers.append("scale_tuning_note_present")
+
+    backend = _backend_fidelity_record(response)
+    validates_lower_level_formula = bool(case.get("validates_lower_level_analytic_formula", False))
+    if backend["present"] and not validates_lower_level_formula:
+        fidelity_level = str(backend["backend_fidelity_level"])
+        validation_status = str(backend["backend_validation_status"])
+        approximation_level = str(backend["implemented_approximation_level"])
+        if fidelity_level and fidelity_level not in STRICT_BACKEND_FIDELITY_LEVELS:
+            blockers.append(f"backend_fidelity_level={fidelity_level}")
+        if validation_status and validation_status not in STRICT_BACKEND_VALIDATION_STATUSES:
+            blockers.append(f"backend_validation_status={validation_status}")
+        if "proxy" in approximation_level:
+            blockers.append(f"implemented_approximation_level={approximation_level}")
+
+    modality_name = str(modality)
+    if "fluorescence" in modality_name or "tirf" in modality_name:
+        fluorescence_settings = FluorescenceSettings.from_params(params)
+        if fluorescence_settings.absorbed_excitation_photons_per_fluorophore_per_frame <= 0.0:
+            blockers.append("fluorescence_absorbed_excitation_photon_budget_missing")
+
+    if modality_name == "tem_phase_contrast":
+        tem_settings = TemSettings.from_params(params)
+        if tem_settings.reference_status != "reference_validated":
+            blockers.append("tem_reference_status_not_reference_validated")
+        if not tem_settings.reference_validation_hash:
+            blockers.append("tem_reference_validation_hash_missing")
+
+    if modality_name == "sem_secondary_electron":
+        reference_meta = backend.get("reference_backend_metadata", {})
+        reference_status = _normalized_text(reference_meta.get("reference_status"))
+        sem_settings = SemSettings.from_params(params)
+        reference_hash = (
+            reference_meta.get("reference_validation_hash")
+            or reference_meta.get("sem_reference_kernel_sha256")
+            or sem_settings.reference_kernel_sha256
+        )
+        if reference_status != "reference_validated":
+            blockers.append("sem_reference_status_not_reference_validated")
+        if not reference_hash:
+            blockers.append("sem_reference_validation_hash_missing")
+
+    return sorted(set(blockers))
+
+
+def _validation_tier_for_claim(
+    *,
+    source_has_localization_scale: bool,
+    source_has_nonlocalization_scale: bool,
+    is_principle_citation: bool,
+    strict_validation_blockers: list[str],
+) -> str:
+    if source_has_localization_scale:
+        return STRICT_VALIDATION if not strict_validation_blockers else REFERENCE_SCALE_CHECK
+    if source_has_nonlocalization_scale:
+        return NONLOCALIZATION_REFERENCE
+    if is_principle_citation:
+        return PRINCIPLE_CITATION
+    return PROXY_CALIBRATION_CHECK
+
+
+def _profile_claim_metadata(
+    modality: str,
+    case: dict[str, Any],
+    params: dict[str, Any],
+    response: dict[str, Any] | None,
+) -> dict[str, Any]:
+    classification = str(case.get("classification", "LITERATURE_LOCALIZATION_SCALE")).upper()
+    source_has_localization_scale, source_has_nonlocalization_scale, is_principle_citation = (
+        _source_claim_flags(classification)
+    )
+    parameter_match_status = str(case.get("parameter_match_status", "partial")).lower()
+    if parameter_match_status not in {"yes", "partial", "no", "not_applicable"}:
+        parameter_match_status = "partial"
+    target = float(case["target_sigma_xy_nm"])
+    proxy_tuning_target_sigma_xy_nm = target if not source_has_localization_scale else None
+    blockers = _strict_validation_blockers(
+        modality=modality,
+        case=case,
+        params=params,
+        response=response,
+        classification=classification,
+        parameter_match_status=parameter_match_status,
+        source_has_localization_scale=source_has_localization_scale,
+        source_has_nonlocalization_scale=source_has_nonlocalization_scale,
+        is_principle_citation=is_principle_citation,
+        proxy_tuning_target_sigma_xy_nm=proxy_tuning_target_sigma_xy_nm,
+    )
+    validation_tier = _validation_tier_for_claim(
+        source_has_localization_scale=source_has_localization_scale,
+        source_has_nonlocalization_scale=source_has_nonlocalization_scale,
+        is_principle_citation=is_principle_citation,
+        strict_validation_blockers=blockers,
+    )
+    return {
+        "classification": classification,
+        "parameter_match_status": parameter_match_status,
+        "source_has_localization_scale": bool(source_has_localization_scale),
+        "source_has_nonlocalization_scale": bool(source_has_nonlocalization_scale),
+        "is_principle_citation": bool(is_principle_citation),
+        "proxy_tuning_target_sigma_xy_nm": proxy_tuning_target_sigma_xy_nm,
+        "validation_tier": validation_tier,
+        "validation_tier_label": VALIDATION_TIER_LABELS[validation_tier],
+        "strict_validation_blockers": blockers,
+    }
 
 
 def _particle(diameter_nm: float, material: str = "polystyrene") -> dict[str, Any]:
@@ -94,7 +344,7 @@ def native_params(case: dict[str, Any]) -> dict[str, Any]:
     pupil_samples = int(case.get("pupil_samples", DEFAULT_PUPIL_SAMPLES))
     vectorial_pupil_samples = int(case.get("vectorial_pupil_samples", pupil_samples))
 
-    params = deepcopy(PARAMS)
+    params = default_params()
     params.update(
         {
             "imaging_model": modality,
@@ -140,8 +390,75 @@ def native_params(case: dict[str, Any]) -> dict[str, Any]:
     center_nm = 0.5 * (image_size - 1) * pixel_size_nm
     p = _particle(diameter_nm, material=material)
     p["motion"]["initial_position_nm"] = [center_nm, center_nm, z_nm]
-    params["particles"] = [p]
+    configured_assign(params, 'particles', [p])
     return params
+
+
+def _calibration_analysis_payload(params: dict[str, Any], canonical_modality: str) -> dict[str, Any]:
+    views = generate_single_frame_views(params)
+    analysis_params = dict(views.get("params_resolved", params) or params)
+    render_metadata = dict(views.get("render_metadata", {}) or {})
+    # Calibration uses the same analysis likelihood sidecar as reports and
+    # matched packets.  For QPI, the renderer owns per-frame detected quanta
+    # after reference patterns/roughness, so a plain params+exposure merge is
+    # not a scientifically valid phase-noise basis.
+    noise_params = dict(
+        views.get("analysis_noise_params")
+        or analysis_noise_params_for_frame(analysis_params, render_metadata, frame_index=0)
+    )
+    contrast = views.get("contrast_frame")
+    signal_counts = views.get("detector_input_signal_frame")
+    if signal_counts is None:
+        signal_counts = views.get("ideal_signal_frame")
+    if signal_counts is None:
+        signal_counts = views.get("raw_signal_frame")
+    reference_counts = views.get("detector_input_reference_frame")
+    if reference_counts is None:
+        reference_counts = views.get("ideal_reference_frame")
+    if reference_counts is None:
+        reference_counts = views.get("raw_reference_frame")
+    object_field = views.get("detector_object_field_frame")
+    if contrast is None or signal_counts is None:
+        raise RuntimeError(f"{canonical_modality} did not produce calibration contrast/count frames.")
+    signal_arr = np.asarray(signal_counts, dtype=float)
+    reference_arr = None if reference_counts is None else np.asarray(reference_counts, dtype=float)
+    model = get_imaging_model(analysis_params)
+    if getattr(model, "output_type", "intensity") == "phase":
+        contrast_arr = np.asarray(contrast, dtype=float)
+    else:
+        contrast_signal, contrast_reference = detector_contrast_frames_for_analysis(
+            signal_arr,
+            reference_arr,
+            noise_params,
+            relative_reference=modality_uses_relative_reference_contrast(canonical_modality),
+        )
+        contrast_arr = np.asarray(
+            compute_single_frame_contrast(contrast_signal, contrast_reference, analysis_params),
+            dtype=float,
+        )
+    noise_model = analysis_contrast_noise_model(
+        signal_arr,
+        reference_arr,
+        noise_params,
+        relative_reference=modality_uses_relative_reference_contrast(canonical_modality),
+    )
+    noise_summary = summarize_analysis_noise_model(
+        noise_model,
+        expected_shape=contrast_arr.shape,
+        context=f"calibration contrast frame shape for modality {canonical_modality!r}",
+    )
+    return {
+        "views": views,
+        "analysis_params": analysis_params,
+        "render_metadata": render_metadata,
+        "signal_arr": signal_arr,
+        "reference_arr": reference_arr,
+        "object_field": object_field,
+        "contrast_arr": contrast_arr,
+        "noise_model": noise_model,
+        "noise_summary": noise_summary,
+        "model": model,
+    }
 
 
 def run_calibration_profile(modality: str) -> dict[str, Any]:
@@ -149,52 +466,83 @@ def run_calibration_profile(modality: str) -> dict[str, Any]:
     canonical_modality = canonical_modality_name(requested_modality)
     case = CALIBRATION_PROFILES[canonical_modality]
     params = native_params(case)
-    views = generate_single_frame_views(params)
-    contrast = views.get("contrast_frame")
-    signal_counts = views.get("ideal_signal_frame")
-    if signal_counts is None:
-        signal_counts = views.get("raw_signal_frame")
-    reference_counts = views.get("ideal_reference_frame")
-    if reference_counts is None:
-        reference_counts = views.get("raw_reference_frame")
-    if contrast is None or signal_counts is None:
-        raise RuntimeError(f"{modality} did not produce calibration contrast/count frames.")
-    contrast_arr = np.asarray(contrast, dtype=float)
-    signal_arr = np.asarray(signal_counts, dtype=float)
-    reference_arr = None if reference_counts is None else np.asarray(reference_counts, dtype=float)
-    noise_var = analysis_contrast_noise_variance(
-        signal_arr,
-        reference_arr,
-        params,
-        relative_reference=modality_uses_relative_reference_contrast(canonical_modality),
+    payload = _calibration_analysis_payload(params, canonical_modality)
+    analysis_params = payload["analysis_params"]
+    signal_arr = payload["signal_arr"]
+    reference_arr = payload["reference_arr"]
+    object_field = payload.get("object_field")
+    contrast_arr = payload["contrast_arr"]
+    noise_model = payload["noise_model"]
+    noise_summary = payload["noise_summary"]
+    model = payload["model"]
+    sampling = SamplingGeometry.from_params(analysis_params)
+    response = model.compute_response_function(signal_arr.shape, analysis_params)
+    if is_off_axis_holography_modality(canonical_modality):
+        crlb, _observation = compute_off_axis_demodulated_localization_crlb(
+            signal_arr,
+            reference_arr,
+            analysis_params,
+            sampling.detector_pixel_size_nm,
+            response_function=response,
+            object_field_detector=object_field,
+        )
+    else:
+        require_array_only_spectral_lateral_derivative_ready(
+            modality=canonical_modality,
+            params=analysis_params,
+            model=model,
+            response_function=response,
+            num_particles=1,
+            structured_environment_active=False,
+            context=f"run_calibration_profile[{canonical_modality!r}]",
+        )
+        crlb = compute_localization_crlb(
+            contrast_arr,
+            noise_model,
+            sampling.detector_pixel_size_nm,
+        )
+    crlb.update(lateral_derivative_plan_metadata())
+    fisher = (
+        np.asarray(crlb["fisher_matrix"], dtype=float)
+        if is_off_axis_holography_modality(canonical_modality)
+        else compute_fisher_information(
+            contrast_arr,
+            noise_model,
+            sampling.detector_pixel_size_nm,
+        )
     )
-    crlb = compute_localization_crlb(contrast_arr, noise_var, float(params["pixel_size_nm"]))
-    fisher = compute_fisher_information(contrast_arr, noise_var, float(params["pixel_size_nm"]))
     computed = float(crlb["sigma_xy_nm"])
     target = float(case["target_sigma_xy_nm"])
-    classification = str(case.get("classification", "LITERATURE_LOCALIZATION_SCALE")).upper()
-    source_has_localization_scale = classification in LOCALIZATION_SCALE_CLASSIFICATIONS
-    source_has_nonlocalization_scale = classification in NONLOCALIZATION_NUMERIC_SCALE_CLASSIFICATIONS
-    parameter_match_status = str(case.get("parameter_match_status", "partial")).lower()
-    if parameter_match_status not in {"yes", "partial", "no", "not_applicable"}:
-        parameter_match_status = "partial"
-    is_parameter_matched_localization = bool(
-        source_has_localization_scale and parameter_match_status == "yes"
-    )
+    claim = _profile_claim_metadata(canonical_modality, case, analysis_params, response)
+    classification = str(claim["classification"])
+    source_has_localization_scale = bool(claim["source_has_localization_scale"])
+    source_has_nonlocalization_scale = bool(claim["source_has_nonlocalization_scale"])
+    parameter_match_status = str(claim["parameter_match_status"])
+    validation_tier = str(claim["validation_tier"])
+    is_strict_validation = validation_tier == STRICT_VALIDATION
+    backend_fidelity = _backend_fidelity_record(response)
     source_localization_sigma_xy_nm = target if source_has_localization_scale else None
     source_nonlocalization_scale_nm = target if source_has_nonlocalization_scale else None
-    proxy_tuning_target_sigma_xy_nm = target if not source_has_localization_scale else None
+    proxy_tuning_target_sigma_xy_nm = claim["proxy_tuning_target_sigma_xy_nm"]
     comparison_target_sigma_xy_nm = (
         source_localization_sigma_xy_nm
-        if is_parameter_matched_localization
+        if is_strict_validation
         else None
     )
-    ratio = (
+    strict_ratio = (
         computed / comparison_target_sigma_xy_nm
-        if is_parameter_matched_localization
+        if is_strict_validation
         and comparison_target_sigma_xy_nm is not None
         and np.isfinite(computed)
         and comparison_target_sigma_xy_nm > 0
+        else None
+    )
+    scale_ratio_not_validation = (
+        computed / target
+        if not is_strict_validation
+        and np.isfinite(computed)
+        and np.isfinite(target)
+        and target > 0.0
         else None
     )
     if source_has_localization_scale:
@@ -203,22 +551,19 @@ def run_calibration_profile(modality: str) -> dict[str, Any]:
         target_kind = "source_nonlocalization_scale"
     else:
         target_kind = "proxy_comparison_target"
-    agreement_ratio = ratio if source_has_localization_scale else None
+    agreement_ratio = strict_ratio
     within_order = (
         bool(0.1 <= agreement_ratio <= 10.0)
         if agreement_ratio is not None and np.isfinite(agreement_ratio)
         else None
     )
-    comparison_row_role = (
-        "computed_localization_comparison"
-        if is_parameter_matched_localization
-        else (
-            "source_localization_scale_provenance"
-            if source_has_localization_scale
-            else "citation_provenance"
-        )
-    )
-    model = get_imaging_model(params)
+    comparison_row_role = {
+        STRICT_VALIDATION: "computed_localization_comparison",
+        REFERENCE_SCALE_CHECK: "reference_scale_check",
+        PROXY_CALIBRATION_CHECK: "proxy_calibration_check",
+        NONLOCALIZATION_REFERENCE: "nonlocalization_reference",
+        PRINCIPLE_CITATION: "principle_citation",
+    }[validation_tier]
     phase_domain_output = str(getattr(model, "output_type", "intensity")) == "phase"
     signal_sum = float(np.nansum(signal_arr))
     total_detected_quanta = None if phase_domain_output else signal_sum
@@ -238,19 +583,24 @@ def run_calibration_profile(modality: str) -> dict[str, Any]:
         "classification_reason": case.get("classification_reason", ""),
         "parameter_match_status": parameter_match_status,
         "parameter_match_note": case.get("parameter_match_note", ""),
+        "comparison_kind": str(case.get("comparison_kind", "")),
+        "validation_tier": validation_tier,
+        "validation_tier_label": claim["validation_tier_label"],
+        "strict_validation_blockers": list(claim["strict_validation_blockers"]),
+        "strict_validation_blocker_count": len(claim["strict_validation_blockers"]),
         "row_role": comparison_row_role,
         "source_has_localization_scale": bool(source_has_localization_scale),
         "source_has_nonlocalization_scale": bool(source_has_nonlocalization_scale),
-        "is_parameter_matched_localization_comparison": bool(is_parameter_matched_localization),
-        "is_validation_comparison": bool(is_parameter_matched_localization),
+        "is_parameter_matched_localization_comparison": bool(is_strict_validation),
+        "is_validation_comparison": bool(is_strict_validation),
         "particle_material": case.get("particle_material", ""),
         "diameter_nm": float(case.get("diameter_nm", 100.0)),
-        "pixel_size_nm": float(params["pixel_size_nm"]),
-        "image_size_pixels": int(params["image_size_pixels"]),
+        "pixel_size_nm": SamplingGeometry.from_params(params).detector_pixel_size_nm,
+        "image_size_pixels": SamplingGeometry.from_params(params).image_size_pixels,
         "computed_sigma_xy_nm": computed,
         "comparison_target_sigma_xy_nm": comparison_target_sigma_xy_nm,
         "comparison_target_kind": target_kind,
-        "computed_localization_comparison_eligible": bool(is_parameter_matched_localization),
+        "computed_localization_comparison_eligible": bool(is_strict_validation),
         "source_reported_quantity": case.get("source_reported_quantity", ""),
         "source_scale_applies_to_localization": bool(source_has_localization_scale),
         "source_localization_sigma_xy_nm": source_localization_sigma_xy_nm,
@@ -261,25 +611,43 @@ def run_calibration_profile(modality: str) -> dict[str, Any]:
         "reference_target_kind": target_kind,
         "agreement_ratio": agreement_ratio,
         "computed_to_comparison_ratio": agreement_ratio,
+        "scale_ratio_not_validation": scale_ratio_not_validation,
         "within_order_of_magnitude": within_order,
+        "backend_name": backend_fidelity["backend_name"],
+        "backend_fidelity_level": backend_fidelity["backend_fidelity_level"],
+        "backend_validation_status": backend_fidelity["backend_validation_status"],
+        "backend_implemented_approximation_level": backend_fidelity["implemented_approximation_level"],
         "citation": case["citation"],
         "citation_url": case["citation_url"],
         "total_detected_quanta": total_detected_quanta,
         "phase_display_counts_sum": phase_display_counts_sum,
         "detector_count_sum_semantics": detector_count_sum_semantics,
-        "mean_noise_variance": float(np.nanmean(noise_var)),
+        "mean_noise_variance": noise_summary.mean_diagonal_variance,
+        "mean_noise_variance_units": noise_summary.noise_variance_units,
+        "noise_measurement_domain": noise_summary.measurement_domain,
+        "noise_signal_units": noise_summary.signal_units,
+        "analysis_noise_covariance_kind": noise_summary.covariance_kind,
+        "analysis_noise_status_reason": noise_summary.status_reason,
         "fisher_trace": float(np.trace(fisher)),
         "fisher_det": float(np.linalg.det(fisher)),
         "finite_crlb": bool(np.isfinite(computed)),
+        "fisher_lateral_derivative_basis": "spectral_band_limited",
+        "fisher_lateral_derivative_basis_resolution": "single_center_render_fft_spectral_gradient",
         "notes": case.get("notes", ""),
     }
 
 
 def assert_calibration_within_order_of_magnitude(modality: str) -> dict[str, Any]:
     row = run_calibration_profile(modality)
+    if row.get("validation_tier") != STRICT_VALIDATION:
+        blockers = row.get("strict_validation_blockers", [])
+        raise AssertionError(
+            f"{modality} calibration profile is not eligible for strict validation "
+            f"(validation_tier={row.get('validation_tier')!r}, blockers={blockers!r})."
+        )
     assert row["finite_crlb"], f"{modality} calibration returned non-finite CRLB: {row}"
     assert row["agreement_ratio"] is not None, (
-        f"{modality} calibration has no source-localization scale to compare: {row}"
+        f"{modality} strict calibration has no source-localization scale to compare: {row}"
     )
     assert row["within_order_of_magnitude"], (
         f"{modality} calibration ratio {row['agreement_ratio']:.3g} outside "
@@ -295,12 +663,18 @@ def run_all_calibration_profiles(modalities: list[str] | None = None) -> list[di
 
 def write_rows_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    if not rows:
-        path.write_text("", encoding="utf-8")
-        return
-    keys = list(rows[0].keys())
+    keys = list(rows[0].keys()) if rows else []
     with path.open("w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=keys)
+        writer.writeheader()
+        if rows:
+            writer.writerows(rows)
+
+
+def _write_rows_csv_with_fields(path: Path, rows: list[dict[str, Any]], fieldnames: list[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as fh:
+        writer = csv.DictWriter(fh, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 
@@ -315,6 +689,7 @@ def write_profile_docs(output_dir: Path) -> list[Path]:
             (int(params_preview["image_size_pixels"]), int(params_preview["image_size_pixels"])),
             params_preview,
         )
+        claim = _profile_claim_metadata(modality, case, params_preview, response)
         probe_wavelength = response.get("probe_wavelength_nm", params_preview.get("probe_wavelength_nm"))
         path = output_dir / f"{modality}.md"
         classification = str(case.get("classification", "")).upper()
@@ -334,6 +709,14 @@ def write_profile_docs(output_dir: Path) -> list[Path]:
         lines = [
             f"# {modality_display_name(modality)} calibration profile",
             "",
+            f"- Claim tier: {claim['validation_tier_label']}",
+            f"- Direct validation comparison: {'yes' if claim['validation_tier'] == STRICT_VALIDATION else 'no'}",
+            *(
+                []
+                if claim["validation_tier"] == STRICT_VALIDATION
+                else ["- This profile is not a direct validation comparison."]
+            ),
+            f"- Strict-validation blockers: {', '.join(claim['strict_validation_blockers']) or 'none'}",
             f"- Profile id: `{case['profile_id']}`",
             f"- Registry modality: `{modality}`",
             scale_line,
@@ -383,6 +766,14 @@ def write_calibration_outputs(output_dir: str | Path) -> list[dict[str, Any]]:
     rows = run_all_calibration_profiles()
     rows_csv = output_dir / "calibration_reference_check_table.csv"
     write_rows_csv(rows_csv, rows)
+    fieldnames = list(rows[0].keys()) if rows else []
+    validation_tier_counts = {tier: 0 for tier in VALIDATION_TIER_OUTPUT_FILES}
+    grouped_rows_csv = {}
+    for tier, filename in VALIDATION_TIER_OUTPUT_FILES.items():
+        tier_rows = [row for row in rows if row.get("validation_tier") == tier]
+        validation_tier_counts[tier] = len(tier_rows)
+        grouped_rows_csv[tier] = filename
+        _write_rows_csv_with_fields(output_dir / filename, tier_rows, fieldnames)
     write_profile_docs(output_dir / "calibration_profiles")
     (output_dir / "calibration_reference_check_manifest.json").write_text(
         json.dumps(
@@ -390,6 +781,9 @@ def write_calibration_outputs(output_dir: str | Path) -> list[dict[str, Any]]:
                 "schema_version": "syniscopy-calibration-reference-check-v1",
                 "modalities": list(CALIBRATION_PROFILES),
                 "rows_csv": rows_csv.name,
+                "grouped_rows_csv": grouped_rows_csv,
+                "validation_tier_counts": validation_tier_counts,
+                "validation_tiers": sorted(VALIDATION_TIERS),
             }),
             indent=2,
             allow_nan=False,
@@ -472,10 +866,11 @@ CALIBRATION_PROFILES: dict[str, dict[str, Any]] = {
         "overrides": {
             "dark_field_illumination_count": 1.0e5,
             "dark_field_background_count": 10.0,
-            "dark_field_field_gain": 30.0,
+            "dark_field_field_gain": 1.0,
             "annular_dark_field_inner_sigma": 1.02,
             "annular_dark_field_outer_sigma": 1.08,
         },
+        "comparison_kind": "scale_context_only",
     },
     "coherent_dark_field": {
         "profile_id": "coherent_darkfield_dong_2021_native",
@@ -493,7 +888,8 @@ CALIBRATION_PROFILES: dict[str, dict[str, Any]] = {
         "diameter_nm": 40.0,
         "pixel_size_nm": 20.0,
         "background_intensity": 1.0e5,
-        "overrides": {"dark_field_field_gain": 110.0},
+        "overrides": {"dark_field_field_gain": 1.0},
+        "comparison_kind": "scale_context_only",
     },
     "zernike_phase_contrast": {
         "profile_id": "zernike_kurata_2024_native",
@@ -512,12 +908,13 @@ CALIBRATION_PROFILES: dict[str, dict[str, Any]] = {
         "pixel_size_nm": 20.0,
         "background_intensity": 1.0e6,
         "overrides": {"zernike_phase_ring_gain": 0.35},
+        "comparison_kind": "scale_context_only",
         "notes": "Proxy tuning: Kurata et al. report ZPM optics and phase-retrieval residuals, but not a particle-localization photon budget or 10 nm lateral CRLB. The 1.0e6 background count is therefore a proxy budget chosen to match the reference scale, not an independently derived detector budget.",
     },
     "differential_phase_contrast": {
         "profile_id": "dpc_tian_waller_2015_native",
         "modality": "differential_phase_contrast",
-        "profile_summary": "DPC with propagated detector shot noise and conservative phase-gradient gain.",
+        "profile_summary": "Illumination-side asymmetric DPC with propagated detector shot noise.",
         "classification": "NO_QUOTED_LOCALIZATION_BOUND",
         "classification_reason": "Tian and Waller validate quantitative DPC phase reconstruction, but do not report a particle-localization precision target matching this row.",
         "parameter_match_status": "not_applicable",
@@ -531,7 +928,15 @@ CALIBRATION_PROFILES: dict[str, dict[str, Any]] = {
         "pixel_size_nm": 65.0,
         "background_intensity": 1000.0,
         "read_noise_counts": 2.0,
-        "overrides": {"dpc_phase_gradient_gain": 500.0},
+        "overrides": {
+            "dpc_channel_model": "vectorial_debye_asymmetric_illumination",
+            "dpc_transfer_model": "asymmetric_illumination",
+            "dpc_output_channel": "x",
+            "dpc_illumination_sigma": 0.7,
+            "dpc_source_samples": 19,
+            "vectorial_detection_mode": "full_vector",
+            "dpc_intensity_gain": 1.0,
+        },
     },
     "quantitative_phase": {
         "profile_id": "qpi_bon_2015_native",
@@ -594,6 +999,7 @@ CALIBRATION_PROFILES: dict[str, dict[str, Any]] = {
             "ricm_particle_medium_material": "water",
             "ricm_particle_material": "polystyrene",
         },
+        "comparison_kind": "scale_context_only",
         "notes": "Scale tuning: Clack and Groves report 16 nm lateral precision for 6.8 um silica microspheres near borosilicate, but the accessible paper metadata/abstract do not provide the photon/count budget needed to derive 2.5e6 background counts. The current 100 nm polystyrene profile is a scale-matched proxy, not an independently parameter-matched reconstruction.",
     },
     "interferometric": {
@@ -618,9 +1024,10 @@ CALIBRATION_PROFILES: dict[str, dict[str, Any]] = {
             "iscat_reference_model": "fresnel",
             "iscat_reference_medium_material": "water",
             "iscat_reference_substrate_material": "glass",
-            "iscat_collection_model": "dipole_high_na",
+            "iscat_collection_model": "scalar",
             "read_noise_counts": 0.5,
         },
+        "comparison_kind": "scale_context_only",
         "notes": "Scale tuning: Dong et al. give CRBs normalized per collected scattered photon and list wavelength/NA/material parameters, but do not provide a detector background_intensity or reference-count budget. The 7.5e3 background count was selected by an illumination sweep to match the 2 nm CRLB scale and should not be described as an independently derived experimental photon budget.",
     },
     "fluorescence_widefield": {
@@ -640,8 +1047,8 @@ CALIBRATION_PROFILES: dict[str, dict[str, Any]] = {
         "pixel_size_nm": 100.0,
         "background_intensity": 1000.0,
         "overrides": {
-            "fluorescence_emission_psf_sigma_px": 1.3,
-            "fluorescence_photon_count_scale": 2.0e4,
+            "fluorescence_emission_psf_sigma_nm": 130.0,
+            "fluorescence_absorbed_excitation_photons_per_fluorophore_per_frame": 4.0e4,
             "fluorescence_background": 0.001,
             "fluorescence_excitation_wavelength_nm": 488.0,
             "fluorescence_emission_wavelength_nm": 520.0,
@@ -665,8 +1072,10 @@ CALIBRATION_PROFILES: dict[str, dict[str, Any]] = {
         "pixel_size_nm": 100.0,
         "background_intensity": 1000.0,
         "overrides": {
-            "fluorescence_emission_psf_sigma_px": 1.3,
-            "fluorescence_photon_count_scale": 2.0e4,
+            "tirf_fluorescence_backend": "parametric_psf",
+            "tirf_source_representation": "projected_2d",
+            "fluorescence_emission_psf_sigma_nm": 130.0,
+            "fluorescence_absorbed_excitation_photons_per_fluorophore_per_frame": 4.0e4,
             "fluorescence_background": 0.0002,
             "fluorescence_excitation_wavelength_nm": 488.0,
             "fluorescence_emission_wavelength_nm": 520.0,
@@ -716,7 +1125,12 @@ CALIBRATION_PROFILES: dict[str, dict[str, Any]] = {
         "pixel_size_nm": 5.0,
         "image_size_pixels": 160,
         "background_intensity": 100.0,
-        "overrides": {"sem_probe_sigma_pixels": 1.0, "sem_electrons_per_pixel": 100.0},
+        "overrides": {
+            "sem_model": "physical_electron_transport",
+            "sem_backend": "monte_carlo_physical",
+            "sem_probe_sigma_nm": 5.0,
+            "sem_electrons_per_pixel": 100.0,
+        },
     },
 }
 

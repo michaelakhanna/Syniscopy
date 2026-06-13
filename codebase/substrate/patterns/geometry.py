@@ -1,7 +1,7 @@
 """geometry substrate-pattern helpers."""
 
 from __future__ import annotations
-from config import param_value
+from config import SampleEnvironmentSettings, SamplingGeometry
 from param_schema.sample_environment import PATTERN_DEFAULT_PRESETS
 
 from ._shared import (
@@ -34,13 +34,9 @@ def _map_position_nm_to_pattern_unit_cell(
     Returns:
         dx_um, dy_um, r_um, x_um, y_um, center_nm
     """
-    img_size_pixels = int(params["image_size_pixels"])
-    pixel_size_nm = float(params["pixel_size_nm"])
-    if img_size_pixels <= 0 or pixel_size_nm <= 0.0:
-        raise ValueError(
-            "PARAMS['image_size_pixels'] and PARAMS['pixel_size_nm'] must be "
-            "positive when substrate exclusion is active."
-        )
+    sampling = SamplingGeometry.from_params(params)
+    img_size_pixels = sampling.image_size_pixels
+    pixel_size_nm = sampling.detector_pixel_size_nm
 
     # Renderer coordinates use integer pixel centers: world x=0 maps to the
     # center of pixel 0, world x=pixel_size maps to pixel 1, and so on. The
@@ -88,11 +84,10 @@ def is_position_in_substrate_solid(
     substrate_enabled = _substrate_pattern_is_enabled(params)
     clearance_um = max(float(clearance_nm), 0.0) * 1e-3
 
-    pattern_model_raw = param_value(params, 'sample_environment_pattern')
-    substrate_preset_raw = param_value(params, "sample_environment_pattern_preset"
-    )
+    sample_environment = SampleEnvironmentSettings.from_params(params)
     pattern_model, substrate_preset = canonical_sample_environment_pattern_and_preset(
-        pattern_model_raw, substrate_preset_raw
+        sample_environment.pattern,
+        sample_environment.pattern_preset,
     )
 
     if (
@@ -202,11 +197,10 @@ def project_position_to_fluid_region(
         return float(x_nm), float(y_nm)
 
     substrate_enabled = _substrate_pattern_is_enabled(params)
-    pattern_model_raw = param_value(params, 'sample_environment_pattern')
-    substrate_preset_raw = param_value(params, "sample_environment_pattern_preset"
-    )
+    sample_environment = SampleEnvironmentSettings.from_params(params)
     pattern_model, substrate_preset = canonical_sample_environment_pattern_and_preset(
-        pattern_model_raw, substrate_preset_raw
+        sample_environment.pattern,
+        sample_environment.pattern_preset,
     )
 
     if not substrate_enabled:
@@ -552,13 +546,10 @@ def reflect_position_across_substrate_boundary(
 
     # Wall normal at B. Look up the nearest feature in the unit-cell frame and
     # compute the radial direction from feature center to B.
-    pattern_model = str(param_value(params, 'sample_environment_pattern')).strip().lower()
-    substrate_preset = str(
-        param_value(params, "sample_environment_pattern_preset")
-    ).strip().lower()
+    sample_environment = SampleEnvironmentSettings.from_params(params)
     pattern_model, substrate_preset = canonical_sample_environment_pattern_and_preset(
-        pattern_model,
-        substrate_preset,
+        sample_environment.pattern,
+        sample_environment.pattern_preset,
     )
 
     n_x_world = 0.0

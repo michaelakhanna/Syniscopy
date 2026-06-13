@@ -45,7 +45,7 @@ def _generate_nanopillar_pattern(
     Generate a dimensionless intensity pattern map for a nanopillar array.
 
     Behavior:
-        - When a PARAMS dictionary is provided, the same shared feature layout
+        - When a parameters dictionary is provided, the same shared feature layout
           used for Brownian dynamics defines the optical pattern, so the pattern
           (including the global lattice offset) matches the exclusion geometry.
         - When params is None, returns an ideal periodic circular-pillar pattern

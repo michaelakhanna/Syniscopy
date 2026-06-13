@@ -6,12 +6,62 @@ from ._spec import ParamSpec
 
 
 PARTICLE_SCHEMA: dict[str, ParamSpec] = {
+"particles": ParamSpec(
+    key="particles",
+    default=[
+        {
+            "name": "gold_100nm_0",
+            "motion": {
+                "hydrodynamic_diameter_nm": 100.0,
+                "initial_position_nm": None,
+            },
+            "signal_multiplier": 0.5,
+            "source_multiplier": 1.0,
+            "components": [
+                {
+                    "shape": "sphere",
+                    "offset_nm": [0.0, 0.0, 0.0],
+                    "diameter_nm": 100.0,
+                    "material": "Gold",
+                    "refractive_index": None,
+                    "signal_multiplier": 1.0,
+                    "source_multiplier": 1.0,
+                    "material_properties": None,
+                }
+            ],
+        },
+        {
+            "name": "gold_100nm_1",
+            "motion": {
+                "hydrodynamic_diameter_nm": 100.0,
+                "initial_position_nm": None,
+            },
+            "signal_multiplier": 0.5,
+            "source_multiplier": 1.0,
+            "components": [
+                {
+                    "shape": "sphere",
+                    "offset_nm": [0.0, 0.0, 0.0],
+                    "diameter_nm": 100.0,
+                    "material": "Gold",
+                    "refractive_index": None,
+                    "signal_multiplier": 1.0,
+                    "source_multiplier": 1.0,
+                    "material_properties": None,
+                }
+            ],
+        },
+    ],
+    type="json",
+    ui_label="Particles",
+    group="Particle",
+    description="Canonical particle scene: motion plus material-resolved geometry components.",
+),
 "particle_diameter_nm": ParamSpec(
     key="particle_diameter_nm",
     container_key="particles",
     target_path="particles[0].components[0].diameter_nm",
     type="float",
-    default=100.0,
     min=5.0,
     max=500.0,
     ui_label="Particle diameter (nm)",
@@ -23,7 +73,6 @@ PARTICLE_SCHEMA: dict[str, ParamSpec] = {
     container_key="particles",
     target_path="particles[0].components[0].material",
     type="enum",
-    default="Gold",
     choices=["Gold", "Silver", "Polystyrene"],
     ui_label="Particle material",
     group="Particle",
@@ -31,8 +80,8 @@ PARTICLE_SCHEMA: dict[str, ParamSpec] = {
 ),
 "z_motion_constraint_model": ParamSpec(
     key="z_motion_constraint_model",
+    default='unconstrained',
     type="enum",
-    default="unconstrained",
     choices=["unconstrained", "reflecting_floor_z0", "reflecting_ceiling_z0"],
     ui_label="Z-motion constraint model",
     group="Dynamics",
@@ -40,8 +89,8 @@ PARTICLE_SCHEMA: dict[str, ParamSpec] = {
 ),
 "vibration_jitter_std_nm": ParamSpec(
     key="vibration_jitter_std_nm",
-    type="float",
     default=0.0,
+    type="float",
     min=0.0,
     max=1e6,
     ui_label="Vibration jitter (nm)",
@@ -50,32 +99,32 @@ PARTICLE_SCHEMA: dict[str, ParamSpec] = {
 ),
 "vibration_include_axial": ParamSpec(
     key="vibration_include_axial",
-    type="bool",
     default=False,
+    type="bool",
     ui_label="Include axial vibration",
     group="Dynamics",
     description="Whether vibration perturbation includes the z-axis.",
 ),
 "dynamic_bayesian_enabled": ParamSpec(
     key="dynamic_bayesian_enabled",
-    type="bool",
     default=False,
+    type="bool",
     ui_label="Dynamic Bayesian CRLB",
     group="Dynamics",
     description="Enable dynamic CRLB estimation for frame sequences when num_frames>1.",
 ),
 "sequence_fisher_enabled": ParamSpec(
     key="sequence_fisher_enabled",
-    type="bool",
     default=False,
+    type="bool",
     ui_label="Sequence Fisher summary",
     group="Dynamics",
-    description="Attach static cumulative sequence-Fisher summaries to matched modality packets when num_frames>1.",
+    description="Attach static cumulative sequence-Fisher summaries to matched microscope packets when num_frames>1.",
 ),
 "dynamic_process_noise_scale": ParamSpec(
     key="dynamic_process_noise_scale",
-    type="float",
     default=1.0,
+    type="float",
     min=0.0,
     max=1e6,
     ui_label="Dynamic prior scale",
@@ -84,8 +133,8 @@ PARTICLE_SCHEMA: dict[str, ParamSpec] = {
 ),
 "dynamic_initial_variance_nm2": ParamSpec(
     key="dynamic_initial_variance_nm2",
+    default=1e+30,
     type="float",
-    default=1.0e30,
     min=1e-12,
     max=1e90,
     ui_label="Dynamic initial variance",
@@ -94,16 +143,16 @@ PARTICLE_SCHEMA: dict[str, ParamSpec] = {
 ),
 "dynamic_include_smoothing": ParamSpec(
     key="dynamic_include_smoothing",
-    type="bool",
     default=False,
+    type="bool",
     ui_label="Dynamic RTS smoothing",
     group="Dynamics",
     description="Enable RTS-style backward smoothing when computing dynamic Bayesian CRLB diagnostics.",
 ),
 "initial_z_span_nm": ParamSpec(
     key="initial_z_span_nm",
-    type="float",
     default=3000.0,
+    type="float",
     min=0.0,
     max=1e9,
     ui_label="Initial z span (nm)",
@@ -112,16 +161,16 @@ PARTICLE_SCHEMA: dict[str, ParamSpec] = {
 ),
 "rotational_diffusion_enabled": ParamSpec(
     key="rotational_diffusion_enabled",
-    type="bool",
     default=True,
+    type="bool",
     ui_label="Rotational diffusion enabled",
     group="Dynamics",
     description="Enable rotational diffusion in particle pose dynamics.",
 ),
 "rotational_diffusion_mode": ParamSpec(
     key="rotational_diffusion_mode",
+    default='empirical',
     type="enum",
-    default="empirical",
     choices=["empirical", "stokes_einstein"],
     ui_label="Rotational diffusion mode",
     group="Dynamics",
@@ -129,8 +178,8 @@ PARTICLE_SCHEMA: dict[str, ParamSpec] = {
 ),
 "rotational_step_std_deg": ParamSpec(
     key="rotational_step_std_deg",
-    type="float",
     default=10.0,
+    type="float",
     min=0.0,
     max=360.0,
     ui_label="Rotational step std (deg)",
@@ -139,8 +188,8 @@ PARTICLE_SCHEMA: dict[str, ParamSpec] = {
 ),
 "temperature_K": ParamSpec(
     key="temperature_K",
-    type="float",
     default=298.15,
+    type="float",
     min=0.0,
     max=10000.0,
     ui_label="Temperature (K)",
@@ -149,8 +198,8 @@ PARTICLE_SCHEMA: dict[str, ParamSpec] = {
 ),
 "viscosity_Pa_s": ParamSpec(
     key="viscosity_Pa_s",
-    type="float",
     default=0.00089,
+    type="float",
     min=1e-12,
     max=1e6,
     ui_label="Viscosity (Pa·s)",

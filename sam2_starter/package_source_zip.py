@@ -23,7 +23,6 @@ INCLUDE_PATHS = [
     "docs",
     "examples",
     "recipes",
-    "scripts",
     "sam2_starter/package_source_zip.py",
     "sam2_starter/package_source_zip.sh",
     "sam2_starter/README.md",
@@ -50,6 +49,7 @@ def should_skip(path: Path) -> bool:
         bool(parts & EXCLUDE_DIR_NAMES)
         or name in EXCLUDE_FILE_NAMES
         or name.startswith(EXCLUDE_FILE_PREFIXES)
+        or (name.startswith("test_") and path.suffix.lower() == ".py")
         or name.endswith(EXCLUDE_FILE_SUFFIXES)
     )
 

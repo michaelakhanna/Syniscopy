@@ -5,8 +5,7 @@ from __future__ import annotations
 import numpy as np
 from scipy.special import j1
 
-from config import param_value
-from optical_params import resolve_probe_wavelength_nm
+from config import OpticalInstrumentSettings, OpticalPsfSupportSettings, SamplingGeometry
 
 _AIRY_SUPPORT_RHO_MIN = 1e-4
 _AIRY_SUPPORT_RHO_MAX = 200.0
@@ -26,17 +25,19 @@ def _airy_support_radius_pixels(
     model; it determines how much scene context to include before cropping so
     finite FFTs do not wrap boundary content into the detector FOV.
     """
-    img_size = int(params["image_size_pixels"])
-    pixel_size_nm = float(params["pixel_size_nm"])
-    os_factor = int(params["psf_oversampling_factor"])
-    NA = float(params["numerical_aperture"])
-    n_medium = float(params["refractive_index_medium"])
-    wavelength_nm = resolve_probe_wavelength_nm(params)
+    sampling = SamplingGeometry.from_params(params)
+    img_size = sampling.image_size_pixels
+    pixel_size_nm = sampling.detector_pixel_size_nm
+    os_factor = sampling.psf_oversampling_factor
+    instrument = OpticalInstrumentSettings.from_params(params)
+    NA = instrument.numerical_aperture
+    n_medium = instrument.refractive_index_medium
+    wavelength_nm = instrument.probe_wavelength_nm
 
     if img_size <= 0 or pixel_size_nm <= 0 or os_factor <= 0:
         raise ValueError(
-            "PARAMS['image_size_pixels'], PARAMS['pixel_size_nm'], and "
-            "PARAMS['psf_oversampling_factor'] must all be positive."
+            "parameters['image_size_pixels'], parameters['pixel_size_nm'], and "
+            "parameters['psf_oversampling_factor'] must all be positive."
         )
 
     if NA <= 0.0 or wavelength_nm <= 0.0 or n_medium <= 0.0:
@@ -45,14 +46,12 @@ def _airy_support_radius_pixels(
     threshold = (
         float(default_threshold)
         if threshold_key is None
-        else float(param_value(params, threshold_key))
+        else OpticalPsfSupportSettings.from_params(params).intensity_fraction_threshold
     )
     if not (0.0 < threshold < 1.0):
         if threshold_key is None:
             raise ValueError("Airy support threshold must be in the open interval (0, 1).")
-        raise ValueError(f"PARAMS['{threshold_key}'] must be in the open interval (0, 1).")
-
-    wavelength_medium_nm = wavelength_nm / n_medium
+        raise ValueError(f"parameters['{threshold_key}'] must be in the open interval (0, 1).")
 
     # Scan Airy intensity over a large normalized-radius interval; rho=200
     # covers far sidelobes for the supported threshold range, and 80k samples
@@ -72,7 +71,7 @@ def _airy_support_radius_pixels(
     else:
         rho_crit = float(rho[indices_above[-1]])
 
-    radius_nm = rho_crit * wavelength_medium_nm / NA
+    radius_nm = rho_crit * wavelength_nm / NA
 
     psf_size_nm = img_size * pixel_size_nm
     max_radius_nm = float(max_radius_fraction_of_fov) * psf_size_nm
@@ -98,7 +97,10 @@ def estimate_psf_padding_radius_pixels(params):
 
         I_rel(r) = I(r) / I(0) ~= [2 J1(pi * rho) / (pi * rho)]^2,
 
-    where rho = (NA * r) / lambda_medium is a dimensionless radial coordinate.
+    where rho = (NA * r) / lambda_vacuum is a dimensionless radial
+    coordinate.  ``numerical_aperture`` is the physical NA = n sin(theta);
+    dividing the wavelength by the immersion-medium index here would apply the
+    medium factor twice and underestimate the guard band.
 
     We then find the largest radius r such that I_rel(r) is still above a
     user-controllable fraction:
@@ -110,7 +112,7 @@ def estimate_psf_padding_radius_pixels(params):
     imaging geometry.
 
     Args:
-        params (dict): Global simulation parameter dictionary (PARAMS).
+        params (dict): Global simulation parameter dictionary (parameters).
 
     Returns:
         int: Padding radius in oversampled pixels (>= 0).

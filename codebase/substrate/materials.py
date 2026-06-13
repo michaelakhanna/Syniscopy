@@ -1,5 +1,6 @@
 """Substrate material properties and optical helper formulas."""
 from __future__ import annotations
+from configured_parameters import configured_value
 
 from dataclasses import replace
 
@@ -40,15 +41,7 @@ AIR = _catalog_material("air")
 VACUUM = MaterialProperties("vacuum", 1.00 + 0.0j)
 WATER = _catalog_material("water")
 SIO2 = replace(_catalog_material("silica", display_name="SiO2"), autofluorescence_per_nm=0.02)
-SI = MaterialProperties(
-    "Si",
-    3.88 + 0.02j,
-    mean_inner_potential_V=11.7,
-    density_g_cm3=2.33,
-    se_yield_coefficient=0.13,
-    atomic_number=14.0,
-    atomic_weight_g_mol=28.085,
-)
+SI = _catalog_material("silicon", display_name="Si")
 CARBON = _catalog_material("carbon")
 GOLD = _catalog_material("gold")
 SILVER = _catalog_material("silver")
@@ -66,29 +59,17 @@ _MATERIALS = {
     "air": AIR,
     "vacuum": VACUUM,
     "water": WATER,
-    "buffer": WATER,
-    "sio2": SIO2,
     "silica": SIO2,
-    "silicon_dioxide": SIO2,
-    "si": SI,
     "silicon": SI,
     "carbon": CARBON,
-    "holey_carbon": CARBON,
     "gold": GOLD,
-    "au": GOLD,
     "silver": SILVER,
-    "ag": SILVER,
     "glass": GLASS,
-    "bk7": GLASS,
-    "borosilicate_glass": GLASS,
     "pet": PET,
-    "polyethylene_terephthalate": PET,
     "polyethylene": POLYETHYLENE,
     "polypropylene": POLYPROPYLENE,
     "polystyrene": POLYSTYRENE,
-    "ps": POLYSTYRENE,
     "fluorescent_polystyrene": FLUORESCENT_POLYSTYRENE,
-    "fluorescent_polystyrene_bead": FLUORESCENT_POLYSTYRENE,
     "protein": PROTEIN,
     "lipid": LIPID,
 }
@@ -109,7 +90,7 @@ def material_from_name(
         known = ", ".join(sorted(_MATERIALS))
         raise ValueError(
             f"Unknown sample-environment material {name!r}. "
-            f"Known materials/aliases are: {known}."
+            f"Known materials are: {known}."
         )
     return _MATERIALS[key]
 
@@ -147,7 +128,7 @@ def _material_with_param_overrides(material: MaterialProperties, params: dict, p
     ):
         key = f"{prefix}_{field_name}"
         if key in params:
-            value = params[key]
+            value = configured_value(params, key)
             if value is None:
                 updates[field_name] = None
             else:

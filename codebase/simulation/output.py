@@ -5,38 +5,52 @@ import os
 
 import numpy as np
 
+from camera_noise import CameraNoiseConfig
 from imaging_models import get_imaging_model
 from json_utils import json_safe
 from rendering import resolve_render_canvas_geometry
-from shared_constants import KNOWN_INTERNAL_PARAM_KEYS
-from config.runtime import SamplingGeometry, internal_param_value, param_value, resolved_modality
+from simulation_runtime_state import runtime_state
+from stochastic_runtime import unseeded_entropy_uint32, unseeded_token
+from config.runtime import (
+    AcquisitionProfile,
+    ModalitySettings,
+    OpticalInstrumentSettings,
+    SampleEnvironmentSettings,
+    SamplingGeometry,
+    SimulationOutputSettings,
+)
 from trajectory import resolve_public_num_frames as _resolve_public_num_frames
 
 logger = logging.getLogger(__name__)
 
-_RUNTIME_PARAM_KEYS = set(KNOWN_INTERNAL_PARAM_KEYS)
+def _ensure_run_scope_detector_static_seed(params: dict) -> None:
+    state = runtime_state(params)
+    if state.detector_static_seed is not None:
+        return
+    if AcquisitionProfile.from_params(params).random_seed is not None:
+        return
+    if not CameraNoiseConfig.from_params(params).generated_static_detector_maps_requested:
+        return
+    state.detector_static_seed = unseeded_entropy_uint32(
+        stream="run_scope_detector_static_maps"
+    )
+
 
 def _setup_output_dirs(params: dict) -> None:
-    if params["mask_generation_enabled"]:
-        base_mask_dir = params["mask_output_directory"]
+    output_settings = SimulationOutputSettings.from_params(params)
+    if output_settings.mask_generation_enabled:
+        base_mask_dir = output_settings.mask_output_directory
         logger.info("Checking for mask output directories at %s...", base_mask_dir)
         os.makedirs(base_mask_dir, exist_ok=True)
 
-    output_dir = os.path.dirname(params["output_filename"])
+    output_dir = os.path.dirname(output_settings.output_filename)
     if output_dir:
         os.makedirs(output_dir, exist_ok=True)
 
 
-def _sibling_output_filename(filename: str, suffix: str) -> str:
-    root, ext = os.path.splitext(str(filename))
-    if not ext:
-        raise ValueError(f"output filename must include an extension; got {filename!r}.")
-    return f"{root}{suffix}{ext}"
-
-
 def _raw_signal_video_filename(params: dict) -> str:
     """Return the raw-camera signal AVI path paired with output_filename."""
-    return _sibling_output_filename(str(params["output_filename"]), "_raw_signal")
+    return SimulationOutputSettings.from_params(params).raw_signal_video_filename
 
 
 def _frames_to_channel_first(frames, *, channel_count: int) -> np.ndarray:
@@ -97,8 +111,11 @@ def _jsonable_crlb_summary(crlb: dict) -> dict:
         "derivative_units_by_axis",
         "sigma_units_by_axis",
         "pixel_size_nm",
-        "lateral_derivative_mode",
-        "lateral_step_nm",
+        "derivative_basis",
+        "step_size_free",
+        "boundary_energy_fraction",
+        "nyquist_band_fraction",
+        "lateral_derivative_step_size_free",
         "lateral_step_note",
         "axial_derivative_mode",
         "orientation_derivative_mode",
@@ -132,31 +149,9 @@ def _jsonable_crlb_summary(crlb: dict) -> dict:
 
 def _packet_sample_environment_metadata(params: dict) -> dict:
     """Return public scene-environment fields relevant to a matched packet."""
-    keys = (
-        "sample_environment_enabled",
-        "sample_environment",
-        "sample_environment_pattern_enabled",
-        "sample_environment_pattern",
-        "sample_environment_pattern_preset",
-        "sample_environment_pattern_dimensions",
-        "sample_environment_pattern_pitch_um",
-        "sample_environment_pattern_hole_diameter_um",
-        "sample_environment_pattern_bar_width_um",
-        "sample_environment_pattern_material",
-        "sample_environment_pattern_height_nm",
-        "sample_environment_pattern_roughness_model",
-        "sample_environment_pattern_roughness_source_coupling",
-        "sample_environment_pattern_roughness_amplitude",
-        "sample_environment_pattern_roughness_phase_std",
-        "medium_material",
-        "mounting_interface_material",
-        "bulk_substrate_material",
-        "mounting_interface_thickness_nm",
-        "mounting_interface",
-        "refractive_index_medium",
-        "refractive_index_immersion",
-    )
-    return {key: json_safe(params[key]) for key in keys if key in params}
+    sample_environment = SampleEnvironmentSettings.from_params(params)
+    instrument = OpticalInstrumentSettings.from_params(params)
+    return json_safe(sample_environment.packet_metadata(optical_instrument=instrument))
 
 
 def _source_map_provenance(params: dict, render_metadata: dict | None = None) -> dict:
@@ -172,7 +167,7 @@ def _source_map_provenance(params: dict, render_metadata: dict | None = None) ->
     render_geometry = dict(render_metadata.get("render_geometry", {}) or {})
     source_diagnostics = list(render_metadata.get("source_map_diagnostics", []) or [])
     return {
-        "imaging_model": resolved_modality(params),
+        "imaging_model": ModalitySettings.from_params(params).modality,
         "uses_particle_material_sources": bool(
             getattr(model, "uses_particle_material_sources", False)
         ),
@@ -206,39 +201,34 @@ def _ensure_run_scope_layout_token(params: dict) -> None:
     within one run without reusing the first unseeded layout across later runs
     in the same Python process.
     """
-    if not bool(param_value(params, 'sample_environment_pattern_enabled')):
+    if not SampleEnvironmentSettings.from_params(params).pattern_active:
         return
-    if not bool(param_value(params, 'sample_environment_enabled')):
+    state = runtime_state(params)
+    if state.substrate_pattern_layout_cache_token is not None:
         return
-    if internal_param_value(params, "_substrate_pattern_layout_cache_token") is not None:
+    if AcquisitionProfile.from_params(params).random_seed is not None:
         return
-    if param_value(params, 'random_seed') is not None:
-        return
-    params["_substrate_pattern_layout_cache_token"] = (
-        f"run:{int(np.random.SeedSequence().entropy)}"
+    state.substrate_pattern_layout_cache_token = unseeded_token(
+        prefix="run",
+        stream="run_scope_substrate_layout",
     )
 
 
 def _ensure_run_scope_layout_extent(params: dict) -> None:
     """Use one substrate layout extent for trajectory and optical consumers."""
-    if not bool(param_value(params, 'sample_environment_pattern_enabled')):
-        return
-    if not bool(param_value(params, 'sample_environment_enabled')):
+    if not SampleEnvironmentSettings.from_params(params).pattern_active:
         return
 
-    img_size = int(params["image_size_pixels"])
-    pixel_size_nm = float(params["pixel_size_nm"])
-    os_factor = float(params["psf_oversampling_factor"])
-    if img_size <= 0 or pixel_size_nm <= 0.0 or os_factor <= 0.0:
-        return
+    SamplingGeometry.from_params(params)
 
     imaging_model = get_imaging_model(params)
     geometry = resolve_render_canvas_geometry(params, particle_instances=None, imaging_model=imaging_model)
     layout_extent_nm = float(geometry["layout_extent_nm"])
-    current_extent = internal_param_value(params, "_substrate_pattern_layout_extent_nm")
+    state = runtime_state(params)
+    current_extent = state.substrate_pattern_layout_extent_nm
     if current_extent is not None:
         layout_extent_nm = max(float(layout_extent_nm), float(current_extent))
-    params["_substrate_pattern_layout_extent_nm"] = float(layout_extent_nm)
+    state.substrate_pattern_layout_extent_nm = float(layout_extent_nm)
 
 
 def _multichannel_output_mode(params: dict) -> str:
@@ -250,18 +240,7 @@ def _multichannel_output_mode(params: dict) -> str:
     RGB visualization, per-channel grayscale sidecars, both, or returned arrays
     only.
     """
-    raw = str(param_value(params, 'multichannel_output_mode')).strip().lower()
-    raw = raw.replace("-", "_").replace(" ", "_")
-
-    allowed = {"rgb", "channels", "both", "none"}
-    if raw not in allowed:
-        raise ValueError(
-            "PARAMS['multichannel_output_mode'] must be one of "
-            "{'rgb', 'channels', 'both', 'none'}; got "
-            f"{param_value(params, 'multichannel_output_mode')!r}."
-        )
-
-    return raw
+    return SimulationOutputSettings.from_params(params).multichannel_output_mode
 
 
 def _safe_channel_filename(name: str) -> str:
@@ -271,7 +250,6 @@ def _safe_channel_filename(name: str) -> str:
 
 
 __all__ = [
-    "_RUNTIME_PARAM_KEYS",
     "_ensure_run_scope_layout_extent",
     "_ensure_run_scope_layout_token",
     "_frames_to_channel_first",

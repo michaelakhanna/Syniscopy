@@ -10,7 +10,30 @@ except ImportError:
     def tqdm(iterable=None, *args, **kwargs):
         return iterable if iterable is not None else ()
 
-from config.runtime import param_value, resolved_modality, resolved_qpi_phase_to_count_scale
+
+class _MissingCV2:
+    """Sentinel returned when ``cv2`` is unavailable."""
+
+    def __init__(self, context: str):
+        self._context = context
+
+    def __getattr__(self, name: str):
+        raise ImportError(
+            f"OpenCV (cv2) is required for {self._context} operation {name!r}."
+        )
+
+
+try:
+    import cv2
+except ImportError:  # pragma: no cover - exercised via runtime dependency checks
+    cv2 = _MissingCV2("postprocessing")
+
+from config.runtime import (
+    BackgroundSubtractionSettings,
+    DetectorReadoutSettings,
+    ModalitySettings,
+    QpiReadoutSettings,
+)
 from shared_constants import (
     RAW_BACKGROUND_SUBTRACTION_METHODS,
     REFERENCE_BACKGROUND_SUBTRACTION_METHODS,
@@ -20,16 +43,6 @@ from shared_constants import (
 logger = logging.getLogger(__name__)
 _RELATIVE_REFERENCE_FLOOR = 1e-9
 CONTRAST_SIGN_CONVENTION = "signal_minus_reference"
-
-try:
-    import cv2 as cv2
-except ImportError:
-    class _MissingCV2:
-        def __getattr__(self, name: str):
-            raise ImportError(f"OpenCV (cv2) is required for postprocessing operation {name!r}.")
-
-    cv2 = _MissingCV2()
-
 
 @contextmanager
 def _suppress_opencv_videoio_warnings():
@@ -48,13 +61,13 @@ def _suppress_opencv_videoio_warnings():
 def _background_subtraction_method(params) -> str:
     if params is None:
         params = {}
-    return str(param_value(params, "background_subtraction_method")).strip().lower()
+    return BackgroundSubtractionSettings.from_params(params).method
 
 
 def _uses_relative_reference_contrast(params) -> bool:
     if params is None:
         params = {}
-    imaging_model_name = resolved_modality(params)
+    imaging_model_name = ModalitySettings.from_params(params).modality
     from imaging_models import modality_uses_relative_reference_contrast
 
     return modality_uses_relative_reference_contrast(imaging_model_name)
@@ -63,7 +76,7 @@ def _uses_relative_reference_contrast(params) -> bool:
 def _uses_phase_contrast_units(params) -> bool:
     if params is None:
         params = {}
-    imaging_model_name = resolved_modality(params)
+    imaging_model_name = ModalitySettings.from_params(params).modality
     from imaging_models import get_imaging_model_class
 
     return getattr(get_imaging_model_class(imaging_model_name), "output_type", "intensity") == "phase"
@@ -72,13 +85,7 @@ def _uses_phase_contrast_units(params) -> bool:
 def _phase_display_count_scale(params) -> float:
     if params is None:
         params = {}
-    scale = resolved_qpi_phase_to_count_scale(params)
-    if not np.isfinite(scale) or scale <= 0.0:
-        raise ValueError(
-            "qpi_phase_to_count_scale must be positive and finite when converting "
-            "QPI detector-count frames back to phase contrast."
-        )
-    return scale
+    return QpiReadoutSettings.from_params(params).phase_to_count_scale
 
 
 def _frame_as_float(frame, *, name: str, index: int | None = None) -> np.ndarray:
@@ -419,20 +426,7 @@ def normalize_raw_camera_frames(signal_frames, params):
             for arr in arrays
         ]
 
-    bit_depth = int(param_value(params, "bit_depth"))
-    if bit_depth < 1 or bit_depth > 16:
-        raise ValueError(f"bit_depth must be in [1, 16] for raw camera preview; got {bit_depth}.")
-
-    saturation_level = param_value(params, "saturation_level")
-    if saturation_level is None:
-        max_count = float((1 << bit_depth) - 1)
-    else:
-        max_count = float(saturation_level)
-        if not np.isfinite(max_count) or max_count <= 0.0:
-            raise ValueError(
-                "saturation_level must be finite and positive when used for "
-                f"raw camera preview scaling; got {saturation_level!r}."
-            )
+    max_count = DetectorReadoutSettings.from_params(params).max_camera_count
 
     preview_frames = []
     for arr in arrays:
@@ -472,7 +466,7 @@ def apply_background_subtraction(signal_frames, reference_frames, params):
             (typically uint16).
         reference_frames (list of np.ndarray): List of raw reference frames
             (typically uint16). Required for 'reference_frame' method.
-        params (dict): Global simulation parameter dictionary (PARAMS). Must
+        params (dict): Global simulation parameter dictionary (parameters). Must
             contain "background_subtraction_method".
 
     Returns:

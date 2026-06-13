@@ -5,11 +5,17 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any, Dict, Mapping, Optional
 
-from config import PARAMS, normalize_params
+from config import (
+    BackgroundSubtractionSettings,
+    MicroscopeRuntimeSettings,
+    MotionDynamicsSettings,
+    RenderRuntimeConfig,
+    SampleEnvironmentSettings,
+    SupervisionSettings,
+)
+from param_schema import PUBLIC_PARAM_KEYS
 from trajectory import resolve_public_num_frames
 from particle_specs import normalize_particle_specs
-
-_PARTICLE_OVERRIDE_KEYS = {"particles"}
 _DATASET_MANAGED_OVERRIDE_KEYS = {
     "mask_output_directory",
     "multichannel_sidecar_directory",
@@ -21,9 +27,9 @@ def _normalize_num_frames_override(params, override_keys):
     """
     Make dataset-level num_frames overrides honor the renderer timebase.
 
-    The renderer computes actual frame count as int(fps * duration_seconds).
-    Explicit num_frames overrides therefore update duration_seconds so the
-    renderer produces the requested count exactly.
+    AcquisitionProfile owns the effective frame-count rule. Explicit
+    num_frames overrides therefore update duration_seconds so the renderer
+    produces the requested count exactly.
     """
     if "num_frames" not in override_keys:
         return params
@@ -50,7 +56,15 @@ def _reject_dataset_managed_overrides(
         raise ValueError(
             f"{override_name} contains dataset-managed key(s) {managed}. "
             "Pass dataset output and seed settings to generate_dataset() instead."
-        )
+    )
+
+def _validate_dataset_runtime_owners(params: Mapping[str, Any]) -> None:
+    MicroscopeRuntimeSettings.from_params(params)
+    MotionDynamicsSettings.from_params(params)
+    SampleEnvironmentSettings.from_params(params)
+    BackgroundSubtractionSettings.from_params(params)
+    SupervisionSettings.from_params(params)
+    RenderRuntimeConfig.from_params(dict(params))
 
 def apply_parameter_overrides(
     params: Dict[str, Any],
@@ -72,18 +86,17 @@ def apply_parameter_overrides(
     if not param_overrides:
         if out.get("num_frames") is not None:
             _normalize_num_frames_override(out, {"num_frames"})
-        out = normalize_params(out, allowed_internal_keys=set(out))
         normalize_particle_specs(out, mutate=True)
+        _validate_dataset_runtime_owners(out)
         return out
 
     normalized_overrides: Dict[str, Any] = {}
     for raw_key, value in param_overrides.items():
         canonical_key = str(raw_key)
-        allowed_extra_keys = {"num_frames", *_PARTICLE_OVERRIDE_KEYS}
-        if canonical_key not in PARAMS and canonical_key not in allowed_extra_keys:
+        if canonical_key not in PUBLIC_PARAM_KEYS:
             raise ValueError(
-                f"Unknown parameter override {canonical_key!r}. Use only keys from "
-                "config.PARAMS plus the canonical particles object."
+                f"Unknown parameter override {canonical_key!r}. Use only direct "
+                "public parameter-schema keys plus the canonical particles object."
             )
         if canonical_key in _DATASET_MANAGED_OVERRIDE_KEYS:
             raise ValueError(
@@ -104,12 +117,8 @@ def apply_parameter_overrides(
         out[key] = deepcopy(value)
 
     _normalize_num_frames_override(out, override_keys)
-    out = normalize_params(
-        out,
-        allowed_extra_keys=_PARTICLE_OVERRIDE_KEYS,
-        allowed_internal_keys=set(out),
-    )
     normalize_particle_specs(out, mutate=True)
+    _validate_dataset_runtime_owners(out)
     return out
 
 def _coerce_positive_int(value: Any, field_name: str, *, allow_zero: bool = False) -> int:

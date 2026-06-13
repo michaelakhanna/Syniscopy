@@ -1,14 +1,21 @@
 from __future__ import annotations
+from configured_parameters import configured_assign
 import numpy as np
-from config import BOLTZMANN_CONSTANT, param_value
-from shared_constants import NUM_FRAME_DURATION_SEARCH_STEPS
+from config import (
+    AcquisitionProfile,
+    BOLTZMANN_CONSTANT,
+    MotionDynamicsSettings,
+    SampleEnvironmentSettings,
+    SamplingGeometry,
+)
+from stochastic_runtime import rng_from_seed, spawn_child_rng
 from particle_specs import (
+    excluded_volume_radii_nm,
     get_particle_specs,
     hydrodynamic_diameters_nm,
     initial_positions_from_specs_nm,
 )
 from substrate.patterns import (
-    canonical_sample_environment_pattern_and_preset,
     is_position_in_substrate_solid,
     project_position_to_fluid_region,
     reflect_position_across_substrate_boundary,
@@ -18,44 +25,16 @@ _INITIAL_POSITION_MAX_ATTEMPTS = 1000
 
 
 def _rng_from_params(params: dict, stream: int) -> np.random.Generator:
-    seed = param_value(params, 'random_seed')
-    if seed is None:
-        return np.random.default_rng()
-    return np.random.default_rng(np.random.SeedSequence([int(seed) % (2**32), int(stream)]))
-
-
-def _positive_finite_param(params: dict, key: str) -> float:
-    value = float(params[key])
-    if not np.isfinite(value) or value <= 0.0:
-        raise ValueError(f"PARAMS['{key}'] must be finite and positive; got {value}.")
-    return value
+    seed = AcquisitionProfile.from_params(params).random_seed
+    return rng_from_seed(
+        None if seed is None else int(seed),
+        stream=f"trajectory:{int(stream)}",
+    )
 
 
 def resolve_num_frames(params: dict) -> int:
     """Resolve the positive frame count from ``num_frames`` or ``fps * duration_seconds``."""
-    fps = _positive_finite_param(params, "fps")
-    raw_num_frames = param_value(params, 'num_frames')
-    if raw_num_frames is not None:
-        if isinstance(raw_num_frames, bool):
-            raise ValueError("PARAMS['num_frames'] must be a positive integer, not bool.")
-        if isinstance(raw_num_frames, (float, np.floating)) and not float(raw_num_frames).is_integer():
-            raise ValueError("PARAMS['num_frames'] must be an integer frame count.")
-        try:
-            num_frames = int(raw_num_frames)
-        except (TypeError, ValueError) as exc:
-            raise ValueError("PARAMS['num_frames'] must be a positive integer.") from exc
-        if num_frames <= 0:
-            raise ValueError("PARAMS['num_frames'] must be positive.")
-        return num_frames
-
-    duration_seconds = _positive_finite_param(params, "duration_seconds")
-    num_frames = int(fps * duration_seconds)
-    if num_frames <= 0:
-        raise ValueError(
-            "The product PARAMS['fps'] * PARAMS['duration_seconds'] must be "
-            "positive to generate at least one frame."
-        )
-    return num_frames
+    return AcquisitionProfile.from_params(params).num_frames
 
 
 def resolve_public_num_frames(
@@ -74,51 +53,31 @@ def resolve_public_num_frames(
         If true and ``duration_seconds`` is present, require the provided value to
         remain numerically consistent with the requested frame count.
     """
-    raw_num_frames = param_value(params, 'num_frames')
-    if raw_num_frames is None:
+    requested_num_frames = AcquisitionProfile.requested_num_frames_from_params(params)
+    if requested_num_frames is None:
         return
-    if isinstance(raw_num_frames, bool):
-        raise ValueError("PARAMS['num_frames'] must be a positive integer, not bool.")
-    if isinstance(raw_num_frames, (float, np.floating)) and not float(raw_num_frames).is_integer():
-        raise ValueError("PARAMS['num_frames'] must be an integer frame count.")
-    try:
-        requested_num_frames = int(raw_num_frames)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("PARAMS['num_frames'] must be a positive integer.") from exc
-    if requested_num_frames <= 0:
-        raise ValueError("PARAMS['num_frames'] must be positive.")
+    fps = AcquisitionProfile.from_params(params).fps
 
-    fps = float(param_value(params, "fps"))
-    if fps <= 0.0:
-        raise ValueError("PARAMS['fps'] must be positive when num_frames is set.")
-
-    if enforce_existing_duration and "duration_seconds" in params:
-        supplied_duration = float(params["duration_seconds"])
+    supplied_duration = AcquisitionProfile.declared_duration_seconds_from_params(params)
+    if enforce_existing_duration and supplied_duration is not None:
         implied_num_frames = int(fps * supplied_duration)
         if implied_num_frames != requested_num_frames:
             raise ValueError(
                 "Conflicting dataset timing overrides: "
                 f"num_frames={requested_num_frames} but "
                 f"duration_seconds={supplied_duration} and fps={fps} imply "
-                f"{implied_num_frames} frame(s) under the int(fps * duration_seconds) rule."
+                f"{implied_num_frames} frame(s) under the acquisition frame-count rule."
             )
         if drop_num_frames:
             params.pop("num_frames", None)
         return
 
-    duration_seconds = requested_num_frames / fps
-    for _ in range(NUM_FRAME_DURATION_SEARCH_STEPS):
-        if int(fps * duration_seconds) == requested_num_frames:
-            params["duration_seconds"] = float(duration_seconds)
-            if drop_num_frames:
-                params.pop("num_frames", None)
-            return
-        duration_seconds = float(np.nextafter(duration_seconds, np.inf))
-
-    raise RuntimeError(
-        "Could not choose duration_seconds that reproduces "
-        f"num_frames={requested_num_frames} at fps={fps}."
-    )
+    configured_assign(params, 'duration_seconds', AcquisitionProfile.duration_seconds_for_frame_count(
+        fps,
+        requested_num_frames,
+    ))
+    if drop_num_frames:
+        params.pop("num_frames", None)
 
 
 def stokes_einstein_diffusion_coefficient(diameter_nm, temp_K, viscosity_Pa_s):
@@ -158,7 +117,7 @@ def resolve_translational_diameters_nm(params) -> np.ndarray:
     diameter from the particle object, not from renderable component size.
 
     Args:
-        params (dict): Global simulation parameter dictionary (PARAMS). Must
+        params (dict): Global simulation parameter dictionary (parameters). Must
             contain:
                 - "particles"
 
@@ -178,7 +137,12 @@ def resolve_translational_diameters_nm(params) -> np.ndarray:
     return diameters_nm.astype(float)
 
 
-def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
+def simulate_trajectories_at_times(
+    params,
+    times_s,
+    *,
+    rng: np.random.Generator | None = None,
+):
     """
     Simulate 3D Brownian motion trajectories for a set of particles.
 
@@ -196,7 +160,7 @@ def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
     ----------------------------------
     When the substrate pattern configuration indicates a solid pattern, lateral
     positions whose projection lies in the solid region are not allowed.  The
-    canonical PARAMS keys are ``sample_environment_pattern_enabled``,
+    canonical parameters keys are ``sample_environment_pattern_enabled``,
     ``sample_environment_pattern`` and ``sample_environment_pattern_preset``.  The behavior is:
 
         - When ``sample_environment_pattern_enabled`` is False, or
@@ -212,7 +176,7 @@ def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
 
     Z-axis motion constraint model
     ------------------------------
-    The Z-axis behavior is controlled by PARAMS["z_motion_constraint_model"].
+    The Z-axis behavior is controlled by parameters["z_motion_constraint_model"].
 
     Supported values and their semantics:
 
@@ -221,29 +185,24 @@ def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
             standard random walk with no boundaries and no surface interaction.
 
         - "reflecting_floor_z0":
-            Brownian motion in the half-space z >= 0 nm with a perfectly
-            reflecting planar boundary at z = 0 nm. The interpretation is that
-            z = 0 represents the sample-interface surface, and the particle
-            center cannot cross into z < 0 (i.e., it cannot occupy the same
-            space as the solid substrate in the axial direction). Any Brownian
-            step that would place the particle at z < 0 is reflected across
-            the plane.
+            Brownian motion above a perfectly reflecting planar boundary at
+            z = 0 nm. The boundary is applied to the particle's excluded-volume
+            envelope, so the center is constrained to z >= r_excluded rather
+            than z >= 0.
 
             Initial z-positions for this model are sampled uniformly from the
             positive half of the configured initial z span when explicit
             positions are not provided, and user-specified initial positions
-            must satisfy z >= 0 nm.
+            must satisfy z >= r_excluded.
 
         - "reflecting_ceiling_z0":
-            Brownian motion in the half-space z <= 0 nm with a perfectly
-            reflecting planar boundary at z = 0 nm. The particle center lives
-            below the plane and cannot cross into z > 0. Any Brownian step that
-            would place the particle at z > 0 is reflected across the plane.
+            Brownian motion below a perfectly reflecting planar boundary at
+            z = 0 nm. The center is constrained to z <= -r_excluded.
 
             Initial z-positions for this model are sampled uniformly from the
             negative half of the configured initial z span when explicit
             positions are not provided, and user-specified initial positions
-            must satisfy z <= 0 nm.
+            must satisfy z <= -r_excluded.
 
     Translational equivalent diameter (separation from optical size)
     ----------------------------------------------------------------
@@ -259,7 +218,11 @@ def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
     and hydrodynamic motion size without coupling diffusion to rendered optics.
 
     Args:
-        params (dict): Simulation parameter dictionary (PARAMS).
+        params (dict): Simulation parameter dictionary (parameters).
+        times_s: Strictly increasing physical sample times, in seconds, at
+            which latent particle states are required.  The first time owns the
+            initial latent state; Brownian increments use the subsequent
+            interval lengths.
 
     Returns:
         numpy.ndarray: A 3D array of shape (num_particles, num_frames, 3)
@@ -268,57 +231,33 @@ def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
     """
     rng = _rng_from_params(params, 0x5452414A) if rng is None else rng
 
-    # --- Basic simulation timing and counts ---
-    fps = _positive_finite_param(params, "fps")
-    num_frames = resolve_num_frames(params)
+    times = np.asarray(times_s, dtype=float)
+    if times.ndim != 1 or times.size <= 0:
+        raise ValueError("times_s must be a non-empty 1D array of physical sample times.")
+    if not np.all(np.isfinite(times)):
+        raise ValueError("times_s must contain only finite physical sample times.")
+    if times.size > 1 and np.any(np.diff(times) <= 0.0):
+        raise ValueError("times_s must be strictly increasing.")
+    num_frames = int(times.size)
 
-    dt = 1.0 / fps
+    # --- Basic simulation counts ---
     particle_specs = get_particle_specs(params)
     num_particles = len(particle_specs)
+    dynamics = MotionDynamicsSettings.from_params(params)
 
     # --- Z-motion constraint model selection and validation ---
-    z_model_raw = param_value(params, 'z_motion_constraint_model')
-    z_model_key = str(z_model_raw).strip().lower()
-
-    if z_model_key == "unconstrained":
-        z_model = "unconstrained"
-    elif z_model_key == "reflecting_floor_z0":
-        z_model = "reflecting_floor_z0"
-    elif z_model_key == "reflecting_ceiling_z0":
-        z_model = "reflecting_ceiling_z0"
-    else:
-        raise ValueError(
-            f"Unsupported z_motion_constraint_model '{z_model_raw}'. "
-            "Supported values are 'unconstrained', "
-            "'reflecting_floor_z0', and 'reflecting_ceiling_z0'."
-        )
+    z_model = dynamics.z_motion_constraint_model
 
     # Determine once per simulation whether to enforce lateral excluded volume
     # against solid regions of the configured substrate pattern.
-    sample_environment_enabled = bool(param_value(params, 'sample_environment_enabled'))
-    substrate_enabled = bool(param_value(params, 'sample_environment_pattern_enabled'))
-    pattern_model, substrate_preset = canonical_sample_environment_pattern_and_preset(
-        param_value(params, 'sample_environment_pattern'),
-        param_value(params, "sample_environment_pattern_preset"),
-    )
-    apply_substrate_exclusion = (
-        sample_environment_enabled
-        and substrate_enabled
-        and substrate_preset != "empty_background"
-        and pattern_model != "none"
-    )
-    exclusion_method = str(
-        param_value(params, 'sample_environment_exclusion_method')
-    ).strip().lower()
+    sample_environment = SampleEnvironmentSettings.from_params(params)
+    apply_substrate_exclusion = sample_environment.pattern_active
+    exclusion_method = sample_environment.exclusion_method
 
     # Field-of-view extents used for sampling initial positions. These are
     # needed regardless of whether substrate exclusion is active.
-    img_size_nm = float(params["image_size_pixels"]) * float(params["pixel_size_nm"])
-    initial_z_span_nm = float(params["initial_z_span_nm"])
-    if initial_z_span_nm <= 0.0:
-        raise ValueError(
-            "PARAMS['initial_z_span_nm'] must be positive."
-        )
+    img_size_nm = SamplingGeometry.from_params(params).detector_fov_size_nm
+    initial_z_span_nm = dynamics.initial_z_span_nm
 
     # --- Initialize particle positions ---
     # Each particle object may provide its own initial position. Missing
@@ -326,12 +265,14 @@ def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
     explicit_initial_positions = initial_positions_from_specs_nm(params)
     initial_positions = np.empty((num_particles, 3), dtype=float)
 
-    # --- Resolve translational equivalent diameters for diffusion and lateral
-    # substrate clearance ---
+    # --- Resolve translational equivalent diameters for diffusion and
+    # excluded-volume radii for hard-wall/substrate clearance. Hydrodynamic
+    # size is not a reliable contact radius for composite optical geometry.
     translational_diameters_nm = resolve_translational_diameters_nm(params)
+    clearance_radii_nm = excluded_volume_radii_nm(params)
 
     def _particle_clearance_nm(i: int) -> float:
-        return 0.5 * float(translational_diameters_nm[i])
+        return float(clearance_radii_nm[i])
 
     def _validate_initial_position(i: int, x_nm: float, y_nm: float, z_nm: float) -> None:
         if apply_substrate_exclusion and is_position_in_substrate_solid(
@@ -345,15 +286,20 @@ def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
                 "region or within one particle radius of it according to the "
                 "current pattern configuration."
             )
-        if z_model == "reflecting_floor_z0" and z_nm < 0.0:
+        clearance_nm = _particle_clearance_nm(i)
+        if z_model == "reflecting_floor_z0" and z_nm < clearance_nm:
             raise ValueError(
-                f"Particle {i} initial z = {z_nm} nm is below the z = 0 surface "
-                "for z_motion_constraint_model='reflecting_floor_z0'."
+                f"Particle {i} initial z = {z_nm} nm places its excluded-volume "
+                f"envelope below the z = 0 surface for "
+                "z_motion_constraint_model='reflecting_floor_z0'; center z must "
+                f"be >= {clearance_nm} nm."
             )
-        if z_model == "reflecting_ceiling_z0" and z_nm > 0.0:
+        if z_model == "reflecting_ceiling_z0" and z_nm > -clearance_nm:
             raise ValueError(
-                f"Particle {i} initial z = {z_nm} nm is above the z = 0 surface "
-                "for z_motion_constraint_model='reflecting_ceiling_z0'."
+                f"Particle {i} initial z = {z_nm} nm places its excluded-volume "
+                f"envelope above the z = 0 surface for "
+                "z_motion_constraint_model='reflecting_ceiling_z0'; center z must "
+                f"be <= {-clearance_nm} nm."
             )
 
     for i in range(num_particles):
@@ -400,26 +346,24 @@ def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
             # sampling span, not a Brownian-motion confinement boundary.
             initial_positions[i, 2] = (float(rng.random()) - 0.5) * initial_z_span_nm
         elif z_model == "reflecting_floor_z0":
-            # Start in the half-space z >= 0. For simplicity and consistency
-            # with the PSF stack, sample z uniformly from the positive
-            # half of the initial z span.
-            initial_positions[i, 2] = float(rng.random()) * (initial_z_span_nm / 2.0)
+            clearance_nm = _particle_clearance_nm(i)
+            initial_positions[i, 2] = clearance_nm + float(rng.random()) * (
+                initial_z_span_nm / 2.0
+            )
         elif z_model == "reflecting_ceiling_z0":
-            # Start in the half-space z <= 0 and sample z uniformly from the
-            # negative half of the initial z span.
-            initial_positions[i, 2] = -float(rng.random()) * (initial_z_span_nm / 2.0)
+            clearance_nm = _particle_clearance_nm(i)
+            initial_positions[i, 2] = -clearance_nm - float(rng.random()) * (
+                initial_z_span_nm / 2.0
+            )
         else:
             # This should not be reachable due to earlier validation.
             raise RuntimeError(
-                f"Unexpected z_motion_constraint_model '{z_model_raw}' encountered during initialization."
+                f"Unexpected z_motion_constraint_model '{z_model}' encountered during initialization."
             )
 
     # --- Allocate trajectory array and set initial positions ---
     trajectories = np.zeros((num_particles, num_frames, 3), dtype=float)
     trajectories[:, 0, :] = initial_positions
-
-    temp_K = _positive_finite_param(params, "temperature_K")
-    viscosity_Pa_s = _positive_finite_param(params, "viscosity_Pa_s")
 
     # Loop over particles and generate their trajectories one time step at a time.
     for i in range(num_particles):
@@ -427,16 +371,20 @@ def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
 
         # Diffusion coefficient for this particle (m^2/s).
         D_m2_s = stokes_einstein_diffusion_coefficient(
-            diameter_nm, temp_K, viscosity_Pa_s
+            diameter_nm,
+            dynamics.temperature_K,
+            dynamics.viscosity_Pa_s,
         )
-
-        # Standard deviation of displacement in each Cartesian dimension for
-        # one time step, converted to nanometers.
-        sigma_m = np.sqrt(2.0 * D_m2_s * dt)
-        sigma_nm = float(sigma_m * 1e9)  # m -> nm
 
         # Generate the random walk over time.
         for frame_idx in range(1, num_frames):
+            dt = float(times[frame_idx] - times[frame_idx - 1])
+
+            # Standard deviation of displacement in each Cartesian dimension for
+            # this physical time interval, converted to nanometers.
+            sigma_m = np.sqrt(2.0 * D_m2_s * dt)
+            sigma_nm = float(sigma_m * 1e9)  # m -> nm
+
             # Draw a 3D Brownian step [dx, dy, dz] in nanometers.
             step_nm = rng.normal(loc=0.0, scale=sigma_nm, size=3)
 
@@ -470,7 +418,7 @@ def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
                     )
                 else:
                     raise ValueError(
-                        "PARAMS['sample_environment_exclusion_method'] must be either "
+                        "parameters['sample_environment_exclusion_method'] must be either "
                         "'reflection' or 'projection'; got "
                         f"{exclusion_method!r}."
                     )
@@ -484,27 +432,23 @@ def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
             if z_model == "unconstrained":
                 z_nm_new = prev_z_nm + dz_nm
             elif z_model == "reflecting_floor_z0":
-                # Reflective boundary at z = 0 nm. If the proposed step would
-                # cross into z < 0, reflect it across the plane so the particle
-                # remains in the half-space z >= 0.
+                center_min_nm = _particle_clearance_nm(i)
                 z_candidate = prev_z_nm + dz_nm
-                if z_candidate >= 0.0:
+                if z_candidate >= center_min_nm:
                     z_nm_new = z_candidate
                 else:
-                    z_nm_new = -z_candidate
+                    z_nm_new = 2.0 * center_min_nm - z_candidate
             elif z_model == "reflecting_ceiling_z0":
-                # Reflective boundary at z = 0 nm. If the proposed step would
-                # cross into z > 0, reflect it across the plane so the particle
-                # remains in the half-space z <= 0.
+                center_max_nm = -_particle_clearance_nm(i)
                 z_candidate = prev_z_nm + dz_nm
-                if z_candidate <= 0.0:
+                if z_candidate <= center_max_nm:
                     z_nm_new = z_candidate
                 else:
-                    z_nm_new = -z_candidate
+                    z_nm_new = 2.0 * center_max_nm - z_candidate
             else:
                 # This should not be reachable due to the earlier validation.
                 raise RuntimeError(
-                    f"Unexpected z_motion_constraint_model '{z_model_raw}' encountered during simulation."
+                    f"Unexpected z_motion_constraint_model '{z_model}' encountered during simulation."
                 )
 
             trajectories[i, frame_idx, 0] = x_nm_new
@@ -512,6 +456,20 @@ def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
             trajectories[i, frame_idx, 2] = z_nm_new
 
     return trajectories
+
+
+def simulate_trajectories(params, *, rng: np.random.Generator | None = None):
+    """
+    Simulate 3D Brownian motion trajectories on the acquisition frame grid.
+
+    This is the public single-run convenience wrapper.  Report-level comparison
+    code that owns a shared physical time grid should call
+    :func:`simulate_trajectories_at_times` instead.
+    """
+
+    acquisition = AcquisitionProfile.from_params(params)
+    times = np.arange(acquisition.num_frames, dtype=float) * acquisition.frame_interval_s
+    return simulate_trajectories_at_times(params, times, rng=rng)
 
 
 def _random_small_rotation_matrix(rng: np.random.Generator, std_angle_rad: float) -> np.ndarray:
@@ -557,6 +515,59 @@ def _random_small_rotation_matrix(rng: np.random.Generator, std_angle_rad: float
     return R
 
 
+def _rotational_step_std_rad_for_dt(
+    params: dict,
+    num_particles: int,
+    dt_seconds: float,
+) -> np.ndarray:
+    """Resolve per-particle rotational step scale for one physical interval."""
+
+    dynamics = MotionDynamicsSettings.from_params(params)
+    rotational_enabled = dynamics.rotational_diffusion_enabled
+
+    num_particles = int(num_particles)
+    if num_particles <= 0:
+        raise ValueError(
+            "resolve_rotational_step_std_rad requires num_particles > 0, "
+            f"got num_particles={num_particles}."
+        )
+    dt = float(dt_seconds)
+    if not np.isfinite(dt) or dt < 0.0:
+        raise ValueError(f"dt_seconds must be finite and non-negative; got {dt_seconds!r}.")
+
+    step_std_rad_scalar = float(np.deg2rad(dynamics.rotational_step_std_deg))
+
+    if not rotational_enabled:
+        return np.zeros(num_particles, dtype=float)
+
+    mode = dynamics.rotational_diffusion_mode
+    if mode == "stokes_einstein":
+        diameters_nm = resolve_translational_diameters_nm(params)
+        if diameters_nm.size != num_particles:
+            if diameters_nm.size == 1:
+                diameters_nm = np.full(num_particles, float(diameters_nm[0]))
+            else:
+                raise ValueError(
+                    "Could not resolve a per-particle diameter list of length "
+                    f"{num_particles} for rotational_diffusion_mode='stokes_einstein' "
+                    f"(got {diameters_nm.size})."
+                )
+
+        diameters_m = np.asarray(diameters_nm, dtype=float) * 1.0e-9
+        radius_m = 0.5 * diameters_m
+        D_rot = (BOLTZMANN_CONSTANT * dynamics.temperature_K) / (
+            8.0 * np.pi * dynamics.viscosity_Pa_s * radius_m ** 3
+        )
+        return np.sqrt(2.0 * D_rot * dt)
+    if mode != "empirical":
+        raise ValueError(
+            f"Unknown parameters['rotational_diffusion_mode']={mode!r}; "
+            "expected 'empirical' or 'stokes_einstein'."
+        )
+
+    return np.full(num_particles, step_std_rad_scalar / np.sqrt(3.0), dtype=float)
+
+
 def resolve_rotational_step_std_rad(params: dict, num_particles: int) -> np.ndarray:
     """
     Resolve the per-particle rotational step standard deviation in radians.
@@ -564,7 +575,7 @@ def resolve_rotational_step_std_rad(params: dict, num_particles: int) -> np.ndar
     Structural purpose
     ------------------
     This helper is the rotational analogue of resolve_translational_diameters_nm:
-    it centralizes how the user-facing rotational configuration in PARAMS is
+    it centralizes how the user-facing rotational configuration in parameters is
     turned into the per-axis rotation-vector step scale used by
     simulate_orientations.
 
@@ -583,7 +594,7 @@ def resolve_rotational_step_std_rad(params: dict, num_particles: int) -> np.ndar
       skipped and this resolver returns zeros.
 
     Args:
-        params (dict): Global simulation parameter dictionary (PARAMS). May
+        params (dict): Global simulation parameter dictionary (parameters). May
             contain:
                 - "rotational_diffusion_enabled"
                 - "rotational_step_std_deg"
@@ -594,86 +605,14 @@ def resolve_rotational_step_std_rad(params: dict, num_particles: int) -> np.ndar
         np.ndarray: 1D float64 array of shape (num_particles,) with the per-
         particle standard deviation of the per-frame rotation angle in radians.
     """
-    rotational_enabled = bool(param_value(params, "rotational_diffusion_enabled"))
-
-    num_particles = int(num_particles)
-    if num_particles <= 0:
-        raise ValueError(
-            "resolve_rotational_step_std_rad requires num_particles > 0, "
-            f"got num_particles={num_particles}."
-        )
-
-    # Empirical scalar step standard deviation in degrees.
-    step_std_deg = float(param_value(params, 'rotational_step_std_deg'))
-    if not np.isfinite(step_std_deg) or step_std_deg < 0.0:
-        raise ValueError(
-            "PARAMS['rotational_step_std_deg'] must be finite and non-negative if provided."
-        )
-
-    # Convert to radians for the empirical mode.
-    step_std_rad_scalar = float(np.deg2rad(step_std_deg))
-
-    if not rotational_enabled:
-        return np.zeros(num_particles, dtype=float)
-
-    # --- Physics-derived mode (Stokes-Einstein-Debye) ----------------------
-    #
-    # PARAMS["rotational_diffusion_mode"] = "stokes_einstein" derives a
-    # per-particle angular step standard deviation from the rotational diffusion
-    # coefficient
-    #
-    #     D_rot = k_B T / (8 pi eta r^3),
-    #
-    # the per-frame time step dt = 1 / fps, and the Brownian relation
-    #
-    #     sigma_theta = sqrt(2 * D_rot * dt).
-    #
-    # Per-particle hydrodynamic diameters are resolved through
-    # resolve_translational_diameters_nm so rotational and translational
-    # diffusion use the same motion diameter.
-    # "empirical" mode uses the configured scalar angular step.
-    mode = str(param_value(params, 'rotational_diffusion_mode')).lower()
-    if mode == "stokes_einstein":
-        temp_K = _positive_finite_param(params, "temperature_K")
-        viscosity_Pa_s = _positive_finite_param(params, "viscosity_Pa_s")
-        fps = _positive_finite_param(params, "fps")
-        dt = 1.0 / fps
-
-        diameters_nm = resolve_translational_diameters_nm(params)
-        if diameters_nm.size != num_particles:
-            if diameters_nm.size == 1:
-                diameters_nm = np.full(num_particles, float(diameters_nm[0]))
-            else:
-                raise ValueError(
-                    "Could not resolve a per-particle diameter list of length "
-                    f"{num_particles} for rotational_diffusion_mode='stokes_einstein' "
-                    f"(got {diameters_nm.size})."
-                )
-
-        # Vectorized closed-form: compute D_rot(d) for the full per-particle
-        # diameter array in a single numpy expression, then sigma = sqrt(2*D*dt).
-        # This is O(N) scalar work with zero Python-level iteration, which keeps
-        # the cost negligible relative to a single frame's PSF render and avoids
-        # paying a per-particle Python call in the hot setup path.
-        diameters_m = np.asarray(diameters_nm, dtype=float) * 1.0e-9
-        radius_m = 0.5 * diameters_m
-        D_rot = (BOLTZMANN_CONSTANT * temp_K) / (
-            8.0 * np.pi * viscosity_Pa_s * radius_m ** 3
-        )
-        return np.sqrt(2.0 * D_rot * dt)
-    elif mode != "empirical":
-        raise ValueError(
-            f"Unknown PARAMS['rotational_diffusion_mode']={mode!r}; "
-            "expected 'empirical' or 'stokes_einstein'."
-        )
-
-    return np.full(num_particles, step_std_rad_scalar / np.sqrt(3.0), dtype=float)
+    dt = AcquisitionProfile.from_params(params).frame_interval_s
+    return _rotational_step_std_rad_for_dt(params, num_particles, dt)
 
 
-def simulate_orientations(
+def simulate_orientations_at_times(
     params: dict,
     num_particles: int,
-    num_frames: int,
+    times_s,
     *,
     rng: np.random.Generator | None = None,
 ) -> np.ndarray | None:
@@ -697,7 +636,7 @@ def simulate_orientations(
           component offsets before PSF placement.
 
     Configuration:
-        - The model is controlled by the following optional PARAMS entries:
+        - The model is controlled by the following optional parameters entries:
 
             "rotational_diffusion_enabled": bool
                 Master switch. If False or absent, this function returns None
@@ -716,14 +655,13 @@ def simulate_orientations(
           per-frame angle and converts it to per-axis vector variance.
 
     RNG and reproducibility:
-        - Rotational steps are driven by per-particle NumPy Generators whose
-          seeds are drawn from the global np.random RNG. Since the dataset
-          generator seeds np.random once per video, translational and
-          rotational Brownian motion remain tied to the same per-video seed
-          and are fully reproducible under that seeding scheme.
+        - Rotational steps are driven by child streams derived from the active
+          run stochastic context.  Translational and rotational Brownian motion
+          remain tied to the same per-video seed without depending on global
+          NumPy RNG state.
 
     Args:
-        params (dict): Simulation parameter dictionary (PARAMS). Must contain
+        params (dict): Simulation parameter dictionary (parameters). Must contain
             "fps" when rotational_diffusion_enabled is True.
         num_particles (int): Number of particles being simulated.
         num_frames (int): Number of frames in the video.
@@ -736,38 +674,24 @@ def simulate_orientations(
               (num_particles, num_frames, 3, 3) with dtype float, where each
               [i, t] entry is an SO(3) rotation matrix.
     """
-    rotational_enabled = bool(param_value(params, "rotational_diffusion_enabled"))
-    if not rotational_enabled:
+    if not MotionDynamicsSettings.from_params(params).rotational_diffusion_enabled:
         return None
     rng = _rng_from_params(params, 0x4F524945) if rng is None else rng
 
     num_particles = int(num_particles)
-    num_frames = int(num_frames)
+    times = np.asarray(times_s, dtype=float)
+    if times.ndim != 1 or times.size <= 0:
+        raise ValueError("times_s must be a non-empty 1D array of physical sample times.")
+    if not np.all(np.isfinite(times)):
+        raise ValueError("times_s must contain only finite physical sample times.")
+    if times.size > 1 and np.any(np.diff(times) <= 0.0):
+        raise ValueError("times_s must be strictly increasing.")
+    num_frames = int(times.size)
     if num_particles <= 0 or num_frames <= 0:
         raise ValueError(
             "simulate_orientations requires positive num_particles and num_frames "
             f"(got num_particles={num_particles}, num_frames={num_frames})."
         )
-
-    fps = float(params["fps"])
-    if fps <= 0.0:
-        raise ValueError("PARAMS['fps'] must be positive when simulating orientations.")
-
-    # Resolve per-particle step standard deviations in radians.
-    step_std_rad_per_particle = resolve_rotational_step_std_rad(params, num_particles)
-
-    # Derive a deterministic set of per-particle seeds from the global
-    # np.random RNG. The dataset generator seeds np.random once per video,
-    # so drawing seeds here keeps rotational trajectories reproducible under
-    # the same per-video seed used for translational trajectories and noise.
-    #
-    # We restrict seeds to a safe 32-bit range valid for default_rng.
-    particle_seeds_int = rng.integers(
-        0,
-        2**31,
-        size=num_particles,
-        dtype=np.int64,
-    )
 
     # Allocate orientation array and initialize all particles to identity
     # orientation at frame 0.
@@ -781,11 +705,32 @@ def simulate_orientations(
     # lab_vec = R_t @ body_vec. Body-frame Brownian increments compose by
     # right-multiplication, R_t = R_{t-1} @ R_step.
     for i in range(num_particles):
-        rng_i = np.random.default_rng(int(particle_seeds_int[i]))
-        std_rad_i = float(step_std_rad_per_particle[i])
+        rng_i = spawn_child_rng(rng, stream="orientation_particle", index=i)
         for t in range(1, num_frames):
+            dt = float(times[t] - times[t - 1])
+            std_rad_i = float(_rotational_step_std_rad_for_dt(params, num_particles, dt)[i])
             R_prev = orientations[i, t - 1]
             R_step = _random_small_rotation_matrix(rng_i, std_rad_i)
             orientations[i, t] = R_prev @ R_step
 
     return orientations
+
+
+def simulate_orientations(
+    params: dict,
+    num_particles: int,
+    num_frames: int,
+    *,
+    rng: np.random.Generator | None = None,
+) -> np.ndarray | None:
+    """
+    Simulate rotational Brownian motion on the acquisition frame grid.
+
+    Report-level comparison code that owns an explicit shared physical time
+    grid should call :func:`simulate_orientations_at_times` instead.
+    """
+
+    acquisition = AcquisitionProfile.from_params(params)
+    frame_count = int(num_frames)
+    times = np.arange(frame_count, dtype=float) * acquisition.frame_interval_s
+    return simulate_orientations_at_times(params, num_particles, times, rng=rng)

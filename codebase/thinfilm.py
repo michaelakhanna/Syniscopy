@@ -67,10 +67,13 @@ def normal_incidence_thinfilm_reflection(
         eta = n_j
         if abs(eta) <= 1e-12:
             raise ValueError(f"Layer refractive index is near zero: {n_j!r}.")
+        # Material indices in Syniscopy use the common extinction convention
+        # n_complex = n + i k.  With that convention the propagation matrix
+        # carries the opposite sign from the n - i k characteristic-matrix form.
         M_j = np.array(
             [
-                [cos_d, 1j * sin_d / eta],
-                [1j * eta * sin_d, cos_d],
+                [cos_d, -1j * sin_d / eta],
+                [-1j * eta * sin_d, cos_d],
             ],
             dtype=complex,
         )

@@ -1,12 +1,12 @@
 from __future__ import annotations
+from configured_parameters import configured_assign
 
-from copy import deepcopy
 import json
 from typing import Any, Dict
 import math
 
-from config import PARAMS, param_value
-from param_schema import PARAM_SCHEMA, ParamSpec
+from param_schema import PARAM_SCHEMA, ParamSpec, default_param_value, default_params
+from particle_specs import mutable_particle_scene_from_params
 
 
 def _coerce_bool(value: Any) -> bool:
@@ -60,7 +60,7 @@ def _coerce_contract_truthy_flag(value: Any) -> bool:
     raise ValueError(f"Contract truth flag must be bool, 0/1, or true/false string; got {value!r}.")
 
 
-def _validate_and_normalize_value(spec: ParamSpec, raw_value: Any) -> Any:
+def _validate_and_normalize_value(schema_key: str, spec: ParamSpec, raw_value: Any) -> Any:
     """
     Validate and normalize a raw control value according to the parameter
     specification.
@@ -71,34 +71,35 @@ def _validate_and_normalize_value(spec: ParamSpec, raw_value: Any) -> Any:
       - choices restriction for enums
     """
     ptype = spec["type"]
+    param_key = str(spec.get("key") or schema_key)
     if raw_value is None:
-        if spec.get("default") is None:
+        if _canonical_control_default(schema_key, spec) is None:
             return None
-        raise ValueError(f"{spec['key']} cannot be None.")
+        raise ValueError(f"{param_key} cannot be None.")
 
     if ptype == "float":
         value = float(raw_value)
         if not math.isfinite(value):
-            raise ValueError(f"{spec['key']} must be finite; got {raw_value!r}.")
+            raise ValueError(f"{param_key} must be finite; got {raw_value!r}.")
         if "min" in spec and value < spec["min"]:
-            raise ValueError(f"{spec['key']} must be >= {spec['min']}; got {raw_value!r}.")
+            raise ValueError(f"{param_key} must be >= {spec['min']}; got {raw_value!r}.")
         if "max" in spec and value > spec["max"]:
-            raise ValueError(f"{spec['key']} must be <= {spec['max']}; got {raw_value!r}.")
+            raise ValueError(f"{param_key} must be <= {spec['max']}; got {raw_value!r}.")
         return value
 
     if ptype == "int":
         if isinstance(raw_value, bool):
-            raise ValueError(f"{spec['key']} must be an integer, not a boolean; got {raw_value!r}.")
+            raise ValueError(f"{param_key} must be an integer, not a boolean; got {raw_value!r}.")
         numeric_value = float(raw_value)
         if not math.isfinite(numeric_value):
-            raise ValueError(f"{spec['key']} must be finite; got {raw_value!r}.")
+            raise ValueError(f"{param_key} must be finite; got {raw_value!r}.")
         if not numeric_value.is_integer():
-            raise ValueError(f"{spec['key']} must be an integer-valued input; got {raw_value!r}.")
+            raise ValueError(f"{param_key} must be an integer-valued input; got {raw_value!r}.")
         value = int(numeric_value)
         if "min" in spec and value < spec["min"]:
-            raise ValueError(f"{spec['key']} must be >= {spec['min']}; got {raw_value!r}.")
+            raise ValueError(f"{param_key} must be >= {spec['min']}; got {raw_value!r}.")
         if "max" in spec and value > spec["max"]:
-            raise ValueError(f"{spec['key']} must be <= {spec['max']}; got {raw_value!r}.")
+            raise ValueError(f"{param_key} must be <= {spec['max']}; got {raw_value!r}.")
         return value
 
     if ptype == "bool":
@@ -108,7 +109,7 @@ def _validate_and_normalize_value(spec: ParamSpec, raw_value: Any) -> Any:
         if raw_value is None:
             return None
         if isinstance(raw_value, bool):
-            raise ValueError(f"{spec['key']} must be a string path or scalar value; got {raw_value!r}.")
+            raise ValueError(f"{param_key} must be a string path or scalar value; got {raw_value!r}.")
         return str(raw_value)
 
     if ptype == "json":
@@ -119,9 +120,9 @@ def _validate_and_normalize_value(spec: ParamSpec, raw_value: Any) -> Any:
                 try:
                     return json.loads(raw_value)
                 except json.JSONDecodeError as exc:
-                    raise ValueError(f"{spec['key']} must be valid JSON for structured input; got {raw_value!r}.") from exc
+                    raise ValueError(f"{param_key} must be valid JSON for structured input; got {raw_value!r}.") from exc
             return raw_value
-        raise ValueError(f"{spec['key']} must be structured JSON-compatible data; got {raw_value!r}.")
+        raise ValueError(f"{param_key} must be structured JSON-compatible data; got {raw_value!r}.")
 
     if ptype == "enum":
         choices = spec.get("choices", [])
@@ -134,37 +135,30 @@ def _validate_and_normalize_value(spec: ParamSpec, raw_value: Any) -> Any:
                 if isinstance(c, str) and c.strip().lower() == lowered:
                     return c
         raise ValueError(
-            f"{spec['key']} must be one of {choices}; got {raw_value!r}."
+            f"{param_key} must be one of {choices}; got {raw_value!r}."
         )
 
-    raise ValueError(f"Unsupported PARAM_SCHEMA type {ptype!r} for {spec['key']!r}.")
+    raise ValueError(f"Unsupported PARAM_SCHEMA type {ptype!r} for {param_key!r}.")
 
 
 def get_default_control_values() -> Dict[str, Any]:
     """
     Return a dict of schema_key -> default control value.
 
-    The default for each control is taken from the canonical PARAMS object.
+    The default for each control is taken from the owning parameter schema.
     Particle controls read from the first particle object's first component.
     """
     defaults: Dict[str, Any] = {}
     for schema_key, spec in PARAM_SCHEMA.items():
-        base_key = spec["key"]
-
-        if schema_key in ("particle_diameter_nm", "particle_material"):
-            raw = _first_particle_control_value(schema_key)
-        elif base_key in PARAMS:
-            raw = PARAMS[base_key]
-        else:
-            raise KeyError(f"PARAM_SCHEMA[{schema_key!r}] points to non-PARAMS key {base_key!r}.")
-
-        defaults[schema_key] = _validate_and_normalize_value(spec, raw)
+        raw = _canonical_control_default(schema_key, spec)
+        defaults[schema_key] = _validate_and_normalize_value(schema_key, spec, raw)
     return defaults
 
 
 def build_params_from_controls(control_values: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Build a PARAMS-like dict from config.PARAMS and a set of control values.
+    Build a simulation parameter mapping from concept-owned defaults and a set
+    of control values.
 
     Parameters
     ----------
@@ -174,23 +168,24 @@ def build_params_from_controls(control_values: Dict[str, Any]) -> Dict[str, Any]
 
     Behavior
     --------
-    - Start from a deepcopy of PARAMS so the original config is untouched.
+    - Start from a fresh concept-default parameter mapping.
     - For each entry in PARAM_SCHEMA:
         * Determine a value to use:
             - If control_values contains the schema key, use that.
-            - Else, use the value from canonical PARAMS.
+            - Else, use the schema-owned default or the particle object
+              projection default for particle controls.
         * Validate and normalize the value according to the spec["type"].
         * Write particle controls into the first particle object's first
-          component; write other controls into the PARAMS dictionary under
+          component; write other controls into the parameter dictionary under
           spec["key"].
 
     Returns
     -------
     dict:
-        A full PARAMS-like dictionary ready to be passed into
+        A full parameter dictionary ready to be passed into
         generate_single_frame_views or the main simulation pipeline.
     """
-    params = deepcopy(PARAMS)
+    params = default_params()
     unknown_controls = sorted(set(control_values) - set(PARAM_SCHEMA))
     if unknown_controls:
         raise ValueError(f"Unknown control key(s): {unknown_controls!r}.")
@@ -199,22 +194,18 @@ def build_params_from_controls(control_values: Dict[str, Any]) -> Dict[str, Any]
         base_key = spec["key"]
 
         # Resolve the user value, normalize it, then write it to the correct
-        # PARAMS location.
+        # configured parameter location.
         if schema_key in control_values:
             raw_value = control_values[schema_key]
-        elif schema_key in ("particle_diameter_nm", "particle_material"):
-            raw_value = _first_particle_control_value(schema_key)
-        elif base_key in params:
-            raw_value = params[base_key]
         else:
-            raise KeyError(f"PARAM_SCHEMA[{schema_key!r}] points to non-PARAMS key {base_key!r}.")
+            raw_value = _canonical_control_default(schema_key, spec)
 
-        value = _validate_and_normalize_value(spec, raw_value)
+        value = _validate_and_normalize_value(schema_key, spec, raw_value)
 
         if schema_key == "particle_diameter_nm":
             component = _first_particle_component(params)
             component["diameter_nm"] = value
-            params["particles"][0]["motion"]["hydrodynamic_diameter_nm"] = value
+            mutable_particle_scene_from_params(params)[0]["motion"]["hydrodynamic_diameter_nm"] = value
         elif schema_key == "particle_material":
             component = _first_particle_component(params)
             if component.get("material") != value:
@@ -222,28 +213,35 @@ def build_params_from_controls(control_values: Dict[str, Any]) -> Dict[str, Any]
             component["material"] = value
             component["refractive_index"] = None
         else:
-            params[base_key] = value
+            configured_assign(params, base_key, value)
 
     return params
+
+
+def _canonical_control_default(schema_key: str, spec: ParamSpec) -> Any:
+    """Return the single owned default for one schema control."""
+
+    base_key = str(spec.get("key") or schema_key)
+    if base_key in ("particle_diameter_nm", "particle_material"):
+        return _first_particle_control_value(base_key)
+    return default_param_value(base_key)
+
+
 def _first_particle_component(params: Dict[str, Any]) -> Dict[str, Any]:
-    particles = param_value(params, "particles")
-    if not isinstance(particles, list):
-        raise ValueError("PARAMS['particles'] must be a list of particle objects.")
-    if not particles:
-        raise ValueError("PARAMS['particles'] must contain at least one particle.")
+    particles = mutable_particle_scene_from_params(params)
     particle = particles[0]
     if not isinstance(particle, dict) or "motion" not in particle:
-        raise ValueError("PARAMS['particles'][0] must include a motion object.")
+        raise ValueError("parameters['particles'][0] must include a motion object.")
     components = particle.get("components")
     if not isinstance(components, list):
-        raise ValueError("PARAMS['particles'][0]['components'] must be a list.")
+        raise ValueError("parameters['particles'][0]['components'] must be a list.")
     if not components:
-        raise ValueError("PARAMS['particles'][0]['components'] must contain at least one component.")
+        raise ValueError("parameters['particles'][0]['components'] must contain at least one component.")
     return components[0]
 
 
 def _first_particle_control_value(schema_key: str) -> Any:
-    component = _first_particle_component(deepcopy(PARAMS))
+    component = _first_particle_component(default_params())
     if schema_key == "particle_diameter_nm":
         return component["diameter_nm"]
     if schema_key == "particle_material":

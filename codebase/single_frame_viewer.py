@@ -1,4 +1,5 @@
 from __future__ import annotations
+from configured_parameters import configured_assign
 import argparse
 import copy
 import json
@@ -7,10 +8,17 @@ import os
 import cv2
 import numpy as np
 
-from config import PARAMS, param_value
-from config.runtime import resolved_particles
+from config import (
+    AcquisitionProfile,
+    MaskGenerationSettings,
+    OpticalPsfGridSettings,
+    SamplingGeometry,
+    SimulationOutputSettings,
+    default_params,
+)
 from json_utils import json_safe, load_typed_json
 from simulation import generate_single_frame_views
+from particle_specs import get_particle_specs
 from param_utils import build_params_from_controls
 from postprocessing import compute_single_frame_contrast
 
@@ -38,8 +46,9 @@ def _compute_center_position_nm(params_viewer: dict) -> tuple[float, float]:
     Compute the (x, y) center position in nanometers for the given parameter
     dictionary based on image_size_pixels and pixel_size_nm.
     """
-    image_size_pixels = float(params_viewer["image_size_pixels"])
-    pixel_size_nm = float(params_viewer["pixel_size_nm"])
+    sampling = SamplingGeometry.from_params(params_viewer)
+    image_size_pixels = float(sampling.image_size_pixels)
+    pixel_size_nm = sampling.detector_pixel_size_nm
     center_nm = 0.5 * (image_size_pixels - 1.0) * pixel_size_nm
     x_center_nm = center_nm
     y_center_nm = center_nm
@@ -69,48 +78,44 @@ def _tailor_params_for_single_centered_particle(params_base: dict, output_dir: s
     params = copy.deepcopy(schema_base)
     params.update(copy.deepcopy(params_base))
 
-    fps = float(param_value(params, 'fps'))
-    if fps <= 0.0:
-        fps = 24.0
-        params["fps"] = fps
+    fps = AcquisitionProfile.from_params(params).fps
 
     duration_seconds = 1.0 / fps
-    params["duration_seconds"] = duration_seconds
+    configured_assign(params, 'duration_seconds', duration_seconds)
 
-    base_particles = resolved_particles(params)
+    base_particles = get_particle_specs(params)
     if not base_particles:
-        raise ValueError("PARAMS['particles'] must contain at least one particle for the preview.")
+        raise ValueError("parameters['particles'] must contain at least one particle for the preview.")
     first_particle = base_particles[0]
-    first_components = first_particle["components"]
+    first_components = first_particle.components
     if not first_components:
-        raise ValueError("PARAMS['particles'][0]['components'] must contain at least one component.")
+        raise ValueError("parameters['particles'][0]['components'] must contain at least one component.")
     first_component = first_components[0]
-    default_diameter = float(first_component["diameter_nm"])
-    default_material = first_component["material"]
-    default_multiplier = float(first_particle["signal_multiplier"])
-    default_source_multiplier = float(first_particle["source_multiplier"])
-    default_component_multiplier = float(first_component["signal_multiplier"])
-    default_component_source_multiplier = float(first_component["source_multiplier"])
+    default_diameter = float(first_component.diameter_nm)
+    default_material = first_component.material
+    default_multiplier = float(first_particle.signal_multiplier)
+    default_source_multiplier = float(first_particle.source_multiplier)
+    default_component_multiplier = float(first_component.signal_multiplier)
+    default_component_source_multiplier = float(first_component.source_multiplier)
 
     # The default viewer renders an empty-background single particle, so disable
     # substrate-pattern rendering and lateral substrate exclusion.
-    params["sample_environment_pattern_enabled"] = False
-    params["sample_environment_pattern"] = "none"
-    params["sample_environment_pattern_preset"] = "empty_background"
+    configured_assign(params, 'sample_environment_pattern_enabled', False)
+    configured_assign(params, 'sample_environment_pattern', "none")
+    configured_assign(params, 'sample_environment_pattern_preset', "empty_background")
 
     x_init_nm, y_init_nm = _compute_center_position_nm(params)
 
-    # Use the configured z_stack_range_nm to choose a z that is safely within
+    # Use the configured optical PSF z-stack range to choose a z that is safely within
     # the PSF stack but below focus. For the viewer, we adopt the convention
     # that negative z is "below focus" and use one quarter of the range.
-    z_stack_range_nm = float(param_value(params, 'z_stack_range_nm'))
-    z_initial_nm = -0.25 * z_stack_range_nm
+    z_initial_nm = -0.25 * OpticalPsfGridSettings.from_params(params).z_stack_range_nm
 
     # Use unconstrained z-motion so the preview can place the particle below
     # focus without reflecting it at z = 0.
-    params["z_motion_constraint_model"] = "unconstrained"
+    configured_assign(params, 'z_motion_constraint_model', "unconstrained")
 
-    params["particles"] = [
+    configured_assign(params, 'particles', [
         {
             "name": "preview_particle",
             "motion": {
@@ -132,32 +137,33 @@ def _tailor_params_for_single_centered_particle(params_base: dict, output_dir: s
                 }
             ],
         }
-    ]
+    ])
 
-    params["mask_generation_enabled"] = False
-    params["supervision_temporal_support_enabled"] = False
-    params["motion_blur_enabled"] = False
-    params["motion_blur_subsamples"] = 1
+    configured_assign(params, 'mask_generation_enabled', False)
+    configured_assign(params, 'supervision_temporal_support_enabled', False)
+    configured_assign(params, 'motion_blur_enabled', False)
+    configured_assign(params, 'motion_blur_subsamples', 1)
 
-    params["background_subtraction_method"] = "reference_frame"
+    configured_assign(params, 'background_subtraction_method', "reference_frame")
 
     # Leave detector-noise controls as configured in the schema-controlled base.
 
     video_path = os.path.join(output_dir, "single_frame.avi")
-    params["output_filename"] = video_path
+    configured_assign(params, 'output_filename', video_path)
 
     # Masks are disabled, but the main pipeline still expects this path.
-    params["mask_output_directory"] = os.path.join(output_dir, "masks")
+    configured_assign(params, 'mask_output_directory', os.path.join(output_dir, "masks"))
 
-    os.makedirs(os.path.dirname(params["output_filename"]), exist_ok=True)
-    os.makedirs(params["mask_output_directory"], exist_ok=True)
+    output_settings = SimulationOutputSettings.from_params(params)
+    os.makedirs(os.path.dirname(output_settings.output_filename), exist_ok=True)
+    os.makedirs(MaskGenerationSettings.from_params(params).output_directory, exist_ok=True)
 
     return params
 
 
 def _tailor_existing_params_for_preview(params_base: dict, output_dir: str) -> dict:
     """
-    Adapt an already-resolved PARAMS dictionary for a one-frame preview.
+    Adapt an already-resolved parameters dictionary for a one-frame preview.
 
     Unlike ``_tailor_params_for_single_centered_particle``, this preserves the
     caller's optical, noise, substrate, and particle settings. It only forces a
@@ -165,24 +171,22 @@ def _tailor_existing_params_for_preview(params_base: dict, output_dir: str) -> d
     """
     params = copy.deepcopy(params_base)
 
-    fps = float(param_value(params, 'fps'))
-    if fps <= 0.0:
-        fps = 24.0
-        params["fps"] = fps
-    params["duration_seconds"] = 1.0 / fps
-    params["num_frames"] = 1
+    fps = AcquisitionProfile.from_params(params).fps
+    configured_assign(params, 'duration_seconds', 1.0 / fps)
+    configured_assign(params, 'num_frames', 1)
 
-    params["mask_generation_enabled"] = False
-    params["supervision_temporal_support_enabled"] = False
-    params["motion_blur_enabled"] = False
-    params["motion_blur_subsamples"] = 1
-    params["background_subtraction_method"] = "reference_frame"
+    configured_assign(params, 'mask_generation_enabled', False)
+    configured_assign(params, 'supervision_temporal_support_enabled', False)
+    configured_assign(params, 'motion_blur_enabled', False)
+    configured_assign(params, 'motion_blur_subsamples', 1)
+    configured_assign(params, 'background_subtraction_method', "reference_frame")
 
-    params["output_filename"] = os.path.join(output_dir, "single_frame.avi")
-    params["mask_output_directory"] = os.path.join(output_dir, "masks")
+    configured_assign(params, 'output_filename', os.path.join(output_dir, "single_frame.avi"))
+    configured_assign(params, 'mask_output_directory', os.path.join(output_dir, "masks"))
 
-    os.makedirs(os.path.dirname(params["output_filename"]), exist_ok=True)
-    os.makedirs(params["mask_output_directory"], exist_ok=True)
+    output_settings = SimulationOutputSettings.from_params(params)
+    os.makedirs(os.path.dirname(output_settings.output_filename), exist_ok=True)
+    os.makedirs(MaskGenerationSettings.from_params(params).output_directory, exist_ok=True)
 
     return params
 
@@ -228,7 +232,7 @@ def save_single_frame_preview(
     seed: int | None = None,
 ) -> dict[str, str]:
     """
-    Render and save a one-frame preview from an existing PARAMS dictionary.
+    Render and save a one-frame preview from an existing parameters dictionary.
 
     The supplied parameter dictionary is preserved except for preview-only
     single-frame settings. The function saves PNG views and returns their
@@ -289,8 +293,8 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default=None,
         help=(
-            "Optional JSON file containing a PARAMS dictionary to preview. "
-            "This is the same PARAMS dictionary accepted by dataset_generator.py."
+            "Optional JSON file containing a parameters dictionary to preview. "
+            "This is the same parameters dictionary accepted by dataset_generator.py."
         ),
     )
     parser.add_argument(
@@ -323,9 +327,11 @@ def main() -> None:
         )
         params_viewer = _tailor_existing_params_for_preview(params_loaded, output_dir)
     else:
-        # Tailor params for a single near-centered particle and a single frame,
-        # starting from the schema-controlled PARAMS base.
-        params_viewer = _tailor_params_for_single_centered_particle(PARAMS, output_dir)
+        # Tailor params for a single near-centered particle and a single frame.
+        params_viewer = _tailor_params_for_single_centered_particle(
+            default_params(),
+            output_dir,
+        )
 
     if args.seed is not None:
         params_viewer["random_seed"] = int(args.seed)

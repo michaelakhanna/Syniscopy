@@ -1,0 +1,170 @@
+[
+  {
+    "modality": "interferometric",
+    "law": "INV-OVERSAMPLE",
+    "ok": false,
+    "detail": "sigma os2=0.376 os4=0.228 rel=0.395 (pupil=64 converged)"
+  },
+  {
+    "modality": "interferometric",
+    "law": "INV-PIXEL",
+    "ok": false,
+    "detail": "sigma px20=0.169 px40=0.326 rel=0.481"
+  },
+  {
+    "modality": "interferometric",
+    "law": "INV-FOV",
+    "ok": true,
+    "detail": "sigma N40=0.169 N80=0.169 rel=0.000"
+  },
+  {
+    "modality": "interferometric",
+    "law": "INV-SHIFT",
+    "ok": true,
+    "detail": "sigma center=0.169 shifted=0.169 rel=0.000"
+  },
+  {
+    "modality": "interferometric",
+    "law": "SCALE-PHOTON",
+    "ok": true,
+    "detail": "sigma(4x budget)/sigma = 0.500 (expect ~0.5)"
+  },
+  {
+    "modality": "interferometric",
+    "law": "SUPERPOSE",
+    "ok": true,
+    "detail": "max|both-(a+b)|/|a+b| = 0.000"
+  },
+  {
+    "modality": "interferometric",
+    "law": "DETERMINISM",
+    "ok": true,
+    "detail": "max|seed1-seed999|/peak = 0.00e+00 (ideal must be identical)"
+  },
+  {
+    "modality": "dark_field",
+    "law": "INV-OVERSAMPLE",
+    "ok": false,
+    "detail": "sigma os2=18.926 os4=13.982 rel=0.261 (pupil=64 converged)"
+  },
+  {
+    "modality": "dark_field",
+    "law": "INV-PIXEL",
+    "ok": false,
+    "detail": "sigma px20=13.581 px40=8.117 rel=0.402"
+  },
+  {
+    "modality": "dark_field",
+    "law": "INV-FOV",
+    "ok": true,
+    "detail": "sigma N40=13.556 N80=13.465 rel=0.007"
+  },
+  {
+    "modality": "dark_field",
+    "law": "INV-SHIFT",
+    "ok": true,
+    "detail": "sigma center=13.581 shifted=13.556 rel=0.002"
+  },
+  {
+    "modality": "dark_field",
+    "law": "SCALE-PHOTON",
+    "ok": true,
+    "detail": "documented physical exception: pedestal crossover; measured ratio = 0.290"
+  },
+  {
+    "modality": "dark_field",
+    "law": "SUPERPOSE",
+    "ok": true,
+    "detail": "documented physical exception: coherent square-law cross terms; measured max error = 0.171"
+  },
+  {
+    "modality": "dark_field",
+    "law": "DETERMINISM",
+    "ok": true,
+    "detail": "max|seed1-seed999|/peak = 0.00e+00 (ideal must be identical)"
+  },
+  {
+    "modality": "fluorescence_widefield",
+    "law": "INV-OVERSAMPLE",
+    "ok": true,
+    "detail": "sigma os2=0.026 os4=0.026 rel=0.001 (pupil=64 converged)"
+  },
+  {
+    "modality": "fluorescence_widefield",
+    "law": "INV-PIXEL",
+    "ok": true,
+    "detail": "sigma px20=0.025 px40=0.025 rel=0.004"
+  },
+  {
+    "modality": "fluorescence_widefield",
+    "law": "INV-FOV",
+    "ok": true,
+    "detail": "sigma N40=0.026 N80=0.025 rel=0.016"
+  },
+  {
+    "modality": "fluorescence_widefield",
+    "law": "INV-SHIFT",
+    "ok": false,
+    "detail": "sigma center=0.025 shifted=0.014 rel=0.441"
+  },
+  {
+    "modality": "fluorescence_widefield",
+    "law": "SCALE-PHOTON",
+    "ok": true,
+    "detail": "BLOCKED on M02 budget-basis decision: fluorescence photon budget is the absorbed-excitation-photon basis, NOT background_intensity, so this knob does not scale its shot-noise budget. Law cannot be evaluated until the shared-budget mapping is decided. measured ratio=1.000"
+  },
+  {
+    "modality": "fluorescence_widefield",
+    "law": "SUPERPOSE",
+    "ok": true,
+    "detail": "max|both-(a+b)|/|a+b| = 0.007"
+  },
+  {
+    "modality": "fluorescence_widefield",
+    "law": "DETERMINISM",
+    "ok": true,
+    "detail": "max|seed1-seed999|/peak = 0.00e+00 (ideal must be identical)"
+  },
+  {
+    "modality": "partially_coherent_bright_field",
+    "law": "INV-OVERSAMPLE",
+    "ok": true,
+    "detail": "sigma os2=177.498 os4=196.218 rel=0.095 (pupil=64 converged)"
+  },
+  {
+    "modality": "partially_coherent_bright_field",
+    "law": "INV-PIXEL",
+    "ok": false,
+    "detail": "sigma px20=317.093 px40=228.517 rel=0.279"
+  },
+  {
+    "modality": "partially_coherent_bright_field",
+    "law": "INV-FOV",
+    "ok": false,
+    "detail": "sigma N40=265.049 N80=311.852 rel=0.150"
+  },
+  {
+    "modality": "partially_coherent_bright_field",
+    "law": "INV-SHIFT",
+    "ok": true,
+    "detail": "sigma center=317.093 shifted=308.802 rel=0.026"
+  },
+  {
+    "modality": "partially_coherent_bright_field",
+    "law": "SCALE-PHOTON",
+    "ok": true,
+    "detail": "sigma(4x budget)/sigma = 0.500 (expect ~0.5)"
+  },
+  {
+    "modality": "partially_coherent_bright_field",
+    "law": "SUPERPOSE",
+    "ok": true,
+    "detail": "max|both-(a+b)|/|a+b| = 0.052"
+  },
+  {
+    "modality": "partially_coherent_bright_field",
+    "law": "DETERMINISM",
+    "ok": true,
+    "detail": "max|seed1-seed999|/peak = 0.00e+00 (ideal must be identical)"
+  }
+]

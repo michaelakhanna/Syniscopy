@@ -1,22 +1,23 @@
 # Parameter Exposure Summary
 
-Generated (UTC): `2026-06-04T20:51:36Z`
+Generated (UTC): `2026-06-06T20:17:00Z`
 
 ## Totals
 
-- Params: 333
-- Schema controls: 334
-- Internal/runtime keys: 14
+- Params: 344
+- Schema controls: 345
+- Internal/runtime keys: 15
 
-- Decision (core+advanced): 300
+- Decision (core+advanced): 311
 - Workflow: 33
-- Hidden: 14
+- Hidden: 15
 
 ## Tiered parameter lists
 
-### Hidden (14)
+### Hidden (15)
 
 - `_camera_noise_static_seed` (internal) — Derived/runtime key intentionally excluded from user surfaces.
+- `_exposure_signal_scale` (internal) — Derived/runtime key intentionally excluded from user surfaces.
 - `_generated_spectral_channels` (internal) — Derived/runtime key intentionally excluded from user surfaces.
 - `_particle_specs` (internal) — Derived/runtime key intentionally excluded from user surfaces.
 - `_particle_specs_fingerprint` (internal) — Derived/runtime key intentionally excluded from user surfaces.
@@ -67,7 +68,7 @@ Generated (UTC): `2026-06-04T20:51:36Z`
 - `volumetric_z_range_nm` (schema-control) — User-settable through schema-defined control surface.
 - `volumetric_z_step_nm` (schema-control) — User-settable through schema-defined control surface.
 
-### Core (137)
+### Core (139)
 
 - `adc_quantization` (schema-control) — User-settable through schema-defined control surface.
 - `adc_quantization_counts` (schema-control) — User-settable through schema-defined control surface.
@@ -93,6 +94,7 @@ Generated (UTC): `2026-06-04T20:51:36Z`
 - `detector_noise_input_domain` (schema-control) — User-settable through schema-defined control surface.
 - `detector_qe` (schema-control) — User-settable through schema-defined control surface.
 - `dpc_channel_model` (schema-control) — User-settable through schema-defined control surface.
+- `dpc_illumination_sigma` (schema-control) — User-settable through schema-defined control surface.
 - `dpc_intensity_gain` (schema-control) — User-settable through schema-defined control surface.
 - `dpc_intensity_gain_x` (schema-control) — User-settable through schema-defined control surface.
 - `dpc_intensity_gain_y` (schema-control) — User-settable through schema-defined control surface.
@@ -100,6 +102,7 @@ Generated (UTC): `2026-06-04T20:51:36Z`
 - `dpc_phase_gradient_gain` (schema-control) — User-settable through schema-defined control surface.
 - `dpc_phase_gradient_gain_x` (schema-control) — User-settable through schema-defined control surface.
 - `dpc_phase_gradient_gain_y` (schema-control) — User-settable through schema-defined control surface.
+- `dpc_source_samples` (schema-control) — User-settable through schema-defined control surface.
 - `dpc_transfer_model` (schema-control) — User-settable through schema-defined control surface.
 - `drift_velocity_nm_per_s` (schema-control) — User-settable through schema-defined control surface.
 - `dynamic_bayesian_enabled` (schema-control) — User-settable through schema-defined control surface.
@@ -133,7 +136,7 @@ Generated (UTC): `2026-06-04T20:51:36Z`
 - `light_sheet_sigma_nm` (schema-control) — User-settable through schema-defined control surface.
 - `magnification` (schema-control) — User-settable through schema-defined control surface.
 - `mask_outer_ring_count` (schema-control) — User-settable through schema-defined control surface.
-- `matched_modalities` (schema-control) — User-settable through schema-defined control surface.
+- `matched_microscopes` (schema-control) — User-settable through schema-defined control surface.
 - `max_psf_z_slices` (schema-control) — User-settable through schema-defined control surface.
 - `medium_material` (schema-control) — User-settable through schema-defined control surface.
 - `modality_noise` (schema-control) — User-settable through schema-defined control surface.
@@ -207,7 +210,7 @@ Generated (UTC): `2026-06-04T20:51:36Z`
 - `z_stack_range_nm` (schema-control) — User-settable through schema-defined control surface.
 - `z_stack_step_nm` (schema-control) — User-settable through schema-defined control surface.
 
-### Advanced (163)
+### Advanced (172)
 
 - `annular_dark_field_inner_sigma` (schema-control) — User-settable through schema-defined control surface.
 - `annular_dark_field_outer_sigma` (schema-control) — User-settable through schema-defined control surface.
@@ -229,7 +232,6 @@ Generated (UTC): `2026-06-04T20:51:36Z`
 - `fluorescence_backend` (schema-control) — User-settable through schema-defined control surface.
 - `fluorescence_background` (schema-control) — User-settable through schema-defined control surface.
 - `fluorescence_bleaching_rate_per_frame` (schema-control) — User-settable through schema-defined control surface.
-- `fluorescence_blinking_rate_per_frame` (schema-control) — User-settable through schema-defined control surface.
 - `fluorescence_collection_efficiency` (schema-control) — User-settable through schema-defined control surface.
 - `fluorescence_detector_qe` (schema-control) — User-settable through schema-defined control surface.
 - `fluorescence_emission_psf_sigma_nm` (schema-control) — User-settable through schema-defined control surface.
@@ -241,13 +243,15 @@ Generated (UTC): `2026-06-04T20:51:36Z`
 - `fluorescence_photon_count_scale` (schema-control) — User-settable through schema-defined control surface.
 - `fluorescence_photons_per_fluorophore_per_frame` (schema-control) — User-settable through schema-defined control surface.
 - `fluorescence_quantum_yield` (schema-control) — User-settable through schema-defined control surface.
-- `fluorescence_recovery_rate_per_frame` (schema-control) — User-settable through schema-defined control surface.
 - `fluorescence_reference_status` (schema-control) — User-settable through schema-defined control surface.
 - `fluorescence_reference_validation_hash` (schema-control) — User-settable through schema-defined control surface.
 - `fluorescence_require_physical_photon_budget` (schema-control) — User-settable through schema-defined control surface.
 - `fluorescence_sample_environment_autofluorescence_gain` (schema-control) — User-settable through schema-defined control surface.
 - `fluorescence_sample_environment_excitation_modulation_gain` (schema-control) — User-settable through schema-defined control surface.
+- `fluorescence_source_representation` (schema-control) — User-settable through schema-defined control surface.
 - `fluorescence_spectral_bandwidth_nm` (schema-control) — User-settable through schema-defined control surface.
+- `fluorescence_volume_slice_thickness_nm` (schema-control) — User-settable through schema-defined control surface.
+- `fluorescence_volume_slices` (schema-control) — User-settable through schema-defined control surface.
 - `iscat_collection_model` (schema-control) — User-settable through schema-defined control surface.
 - `iscat_collection_reference_fraction` (schema-control) — User-settable through schema-defined control surface.
 - `iscat_reference_amplitude_scale` (schema-control) — User-settable through schema-defined control surface.
@@ -262,12 +266,15 @@ Generated (UTC): `2026-06-04T20:51:36Z`
 - `off_axis_fringe_angle_rad` (schema-control) — User-settable through schema-defined control surface.
 - `off_axis_fringe_period_px` (schema-control) — User-settable through schema-defined control surface.
 - `off_axis_reference_amplitude_scale` (schema-control) — User-settable through schema-defined control surface.
+- `optical_filter_guard_pixels` (schema-control) — User-settable through schema-defined control surface.
 - `particles` (params-json / recipe override) — Tunable by PARAMS override; not currently in schema controls.
 - `profile_fidelity_label` (schema-control) — User-settable through schema-defined control surface.
+- `psf_z_grid_min_half_span_steps` (schema-control) — User-settable through schema-defined control surface.
 - `qpi_detected_quanta_per_pixel` (schema-control) — User-settable through schema-defined control surface.
 - `qpi_phase_noise_std_rad` (schema-control) — User-settable through schema-defined control surface.
 - `qpi_phase_to_count_scale` (schema-control) — User-settable through schema-defined control surface.
 - `qpi_visibility` (schema-control) — User-settable through schema-defined control surface.
+- `ricm_gap_nm` (schema-control) — User-settable through schema-defined control surface.
 - `ricm_interface_medium_material` (schema-control) — User-settable through schema-defined control surface.
 - `ricm_interface_phase_shift_rad` (schema-control) — User-settable through schema-defined control surface.
 - `ricm_interface_reflection_coefficient` (schema-control) — User-settable through schema-defined control surface.
@@ -278,6 +285,7 @@ Generated (UTC): `2026-06-04T20:51:36Z`
 - `ricm_particle_reflection_coefficient` (schema-control) — User-settable through schema-defined control surface.
 - `ricm_particle_reflection_model` (schema-control) — User-settable through schema-defined control surface.
 - `ricm_thinfilm_layers` (schema-control) — User-settable through schema-defined control surface.
+- `ricm_use_particle_z_as_gap` (schema-control) — User-settable through schema-defined control surface.
 - `ricm_wavelength_nm` (schema-control) — User-settable through schema-defined control surface.
 - `sem_acceleration_kV` (schema-control) — User-settable through schema-defined control surface.
 - `sem_backend` (schema-control) — User-settable through schema-defined control surface.
@@ -358,12 +366,14 @@ Generated (UTC): `2026-06-04T20:51:36Z`
 - `tem_sample_environment_potential_scale` (schema-control) — User-settable through schema-defined control surface.
 - `tem_slice_thickness_nm` (schema-control) — User-settable through schema-defined control surface.
 - `tirf_effective_numerical_aperture` (schema-control) — User-settable through schema-defined control surface.
+- `tirf_fluorescence_backend` (schema-control) — User-settable through schema-defined control surface.
 - `tirf_height_offset_nm` (schema-control) — User-settable through schema-defined control surface.
 - `tirf_incident_angle_deg` (schema-control) — User-settable through schema-defined control surface.
 - `tirf_particle_height_nm` (schema-control) — User-settable through schema-defined control surface.
 - `tirf_penetration_depth_nm` (schema-control) — User-settable through schema-defined control surface.
 - `tirf_prism_refractive_index` (schema-control) — User-settable through schema-defined control surface.
 - `tirf_sample_refractive_index` (schema-control) — User-settable through schema-defined control surface.
+- `tirf_source_representation` (schema-control) — User-settable through schema-defined control surface.
 - `tirf_use_angle_derived_penetration_depth` (schema-control) — User-settable through schema-defined control surface.
 - `zernike_model` (schema-control) — User-settable through schema-defined control surface.
 - `zernike_phase_bias` (schema-control) — User-settable through schema-defined control surface.

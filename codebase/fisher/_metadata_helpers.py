@@ -29,20 +29,11 @@ def _localization_derivative_metadata(
     signal_units: str = "contrast",
     measurement_domain: str = "contrast",
     noise_variance_units: str | None = None,
-    lateral_derivative_mode: str = "stationary_shift",
-    lateral_step_nm: float | None = None,
 ) -> dict[str, Any]:
-    """Metadata for the lateral stationary-shift derivative convention."""
-    if lateral_derivative_mode == "rerendered_xy":
-        lateral_mode = "symmetric_rerendered_xy_pair"
-        step_note = "symmetric scene rerenders at +/- lateral_step_nm"
-    else:
-        lateral_mode = "detector_grid_central_difference_stationary_shift"
-        step_note = "detector grid central difference; step is detector pixel pitch"
-    resolved_step_nm = (
-        float(lateral_step_nm)
-        if lateral_step_nm is not None
-        else float(pixel_size_nm)
+    """Metadata for the lateral spectral band-limited derivative convention."""
+    step_note = (
+        "FFT spectral derivative of the sampled band-limited observable; "
+        "no finite-difference step"
     )
     return {
         "state_axes": ["x", "y"],
@@ -52,8 +43,9 @@ def _localization_derivative_metadata(
             _derivative_unit(signal_units, "nm"),
             _derivative_unit(signal_units, "nm"),
         ],
-        "lateral_derivative_mode": lateral_mode,
-        "lateral_step_nm": resolved_step_nm,
+        "derivative_basis": "spectral_band_limited",
+        "step_size_free": True,
+        "lateral_derivative_step_size_free": True,
         "lateral_step_note": step_note,
         "pixel_size_nm": float(pixel_size_nm),
         "noise_variance_units": (
@@ -131,8 +123,10 @@ def _diagnostic_metadata_aliases(
             if idx < len(sigma_units_list)
         },
         "pixel_size_nm": derivative_metadata.get("pixel_size_nm"),
-        "lateral_derivative_mode": derivative_metadata.get("lateral_derivative_mode"),
-        "lateral_step_nm": derivative_metadata.get("lateral_step_nm"),
+        "derivative_basis": derivative_metadata.get("derivative_basis"),
+        "step_size_free": derivative_metadata.get("step_size_free"),
+        "boundary_energy_fraction": derivative_metadata.get("boundary_energy_fraction"),
+        "nyquist_band_fraction": derivative_metadata.get("nyquist_band_fraction"),
         "lateral_step_note": derivative_metadata.get("lateral_step_note"),
         "axial_derivative_mode": derivative_metadata.get("axial_derivative_mode"),
         "orientation_derivative_mode": derivative_metadata.get("orientation_derivative_mode"),

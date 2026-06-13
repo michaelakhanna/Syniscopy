@@ -7,7 +7,7 @@ from typing import Any
 
 import numpy as np
 from backend_fidelity import attach_backend_fidelity_metadata
-from config import param_value
+from config.runtime import TemSettings
 
 
 class HighFidelityTEMBackendError(RuntimeError):
@@ -46,22 +46,6 @@ class TEMBackendMetadata:
         }
 
 
-def _require_validation_for_reference_status(params: dict, *, key_prefix: str) -> tuple[str, str | None]:
-    status = str(param_value(params, f"{key_prefix}_reference_status")).strip().lower()
-    if status not in {"physics_based_unvalidated", "reference_validated"}:
-        raise ValueError(
-            f"PARAMS['{key_prefix}_reference_status'] must be 'physics_based_unvalidated' "
-            f"or 'reference_validated'; got {status!r}."
-        )
-    validation_hash = param_value(params, f"{key_prefix}_reference_validation_hash")
-    if status == "reference_validated" and not validation_hash:
-        raise ValueError(
-            f"PARAMS['{key_prefix}_reference_status']='reference_validated' requires "
-            f"PARAMS['{key_prefix}_reference_validation_hash']."
-        )
-    return status, None if validation_hash is None else str(validation_hash)
-
-
 class SyniscopyMultisliceTEMBackend:
     """Syniscopy-owned split-step multislice TEM backend.
 
@@ -77,8 +61,8 @@ class SyniscopyMultisliceTEMBackend:
 
     def __init__(
         self,
-        params: dict,
         *,
+        tem_settings: TemSettings,
         pixel_size_m: float,
         electron_wavelength_m: float,
         Cs_mm: float,
@@ -86,8 +70,6 @@ class SyniscopyMultisliceTEMBackend:
         partial_coherence_alpha_mrad: float,
         dose_per_pixel: float,
         default_slice_count: int,
-        default_slice_thickness_nm: float | None,
-        default_objective_aperture_mrad: float | None = None,
     ) -> None:
         self.pixel_size_m = float(pixel_size_m)
         self.lambda_m = float(electron_wavelength_m)
@@ -95,26 +77,26 @@ class SyniscopyMultisliceTEMBackend:
         self.defocus_m = float(defocus_m)
         self.alpha_rad = 1.0e-3 * float(partial_coherence_alpha_mrad)
         self.dose_per_pixel = float(dose_per_pixel)
+        self.voltage_kV = tem_settings.acceleration_kV
         self.n_slices = int(default_slice_count)
         if self.n_slices <= 0:
             raise ValueError("Effective multislice slice count must be positive for syniscopy_multislice.")
-        raw_slice = param_value(params, "tem_slice_thickness_nm")
-        self.slice_thickness_nm = None if raw_slice is None else float(raw_slice)
+        self.slice_thickness_nm = tem_settings.slice_thickness_nm
         if self.slice_thickness_nm is not None and self.slice_thickness_nm <= 0.0:
-            raise ValueError("PARAMS['tem_slice_thickness_nm'] must be positive for syniscopy_multislice.")
-        raw_aperture_mrad = param_value(params, "tem_objective_aperture_mrad")
-        self.objective_aperture_mrad = None if raw_aperture_mrad is None else float(raw_aperture_mrad)
+            raise ValueError("parameters['tem_slice_thickness_nm'] must be positive for syniscopy_multislice.")
+        self.objective_aperture_mrad = tem_settings.objective_aperture_mrad
         if self.objective_aperture_mrad is not None:
             if not np.isfinite(self.objective_aperture_mrad) or self.objective_aperture_mrad <= 0.0:
-                raise ValueError("PARAMS['tem_objective_aperture_mrad'] must be positive when set.")
+                raise ValueError("parameters['tem_objective_aperture_mrad'] must be positive when set.")
         if not np.isfinite(self.pixel_size_m) or self.pixel_size_m <= 0.0:
             raise ValueError("pixel_size_m must be positive and finite for syniscopy_multislice.")
         if not np.isfinite(self.lambda_m) or self.lambda_m <= 0.0:
             raise ValueError("electron wavelength must be positive and finite for syniscopy_multislice.")
         if not np.isfinite(self.dose_per_pixel) or self.dose_per_pixel < 0.0:
             raise ValueError("tem_dose_per_pixel must be finite and non-negative for syniscopy_multislice.")
-        self.potential_source = str(param_value(params, 'tem_potential_source'))
-        self.reference_status, self.reference_validation_hash = _require_validation_for_reference_status(params, key_prefix="tem")
+        self.potential_source = tem_settings.potential_source
+        self.reference_status = tem_settings.reference_status
+        self.reference_validation_hash = tem_settings.reference_validation_hash
         self.validation_status = (
             "external_artifact_required"
             if self.reference_status == "reference_validated"
@@ -167,7 +149,7 @@ class SyniscopyMultisliceTEMBackend:
         # 3D potential stack: each slice holds integrated projected potential (sigma * V * dz).
         if self.slice_thickness_nm is None:
             raise ValueError(
-                "PARAMS['tem_slice_thickness_nm'] must be set when syniscopy_multislice "
+                "parameters['tem_slice_thickness_nm'] must be set when syniscopy_multislice "
                 "receives a 3D potential stack."
             )
         if source.shape[0] <= 0:
@@ -216,9 +198,12 @@ class SyniscopyMultisliceTEMBackend:
         if len(shape) != 2:
             raise ValueError("TEM potential stack must expose 2D transverse shape.")
         psi = np.ones(shape, dtype=np.complex128)
-        for slice_phase in source_stack:
+        if dz_nm != 0.0:
+            psi = self._fresnel_propagate(psi, 0.5 * dz_nm)
+        for idx, slice_phase in enumerate(source_stack):
             psi *= np.exp(1j * np.asarray(slice_phase, dtype=float))
-            psi = self._fresnel_propagate(psi, dz_nm)
+            step_nm = 0.5 * dz_nm if idx == source_stack.shape[0] - 1 else dz_nm
+            psi = self._fresnel_propagate(psi, step_nm)
         return psi
 
     def intensity_from_projected_phase(self, projected_phase: np.ndarray) -> np.ndarray:
@@ -233,9 +218,6 @@ class SyniscopyMultisliceTEMBackend:
         return self.intensity_from_projected_phase(projected_phase) - 1.0
 
     def metadata(self, params: dict | None = None) -> dict[str, Any]:
-        voltage = float((params or {}).get("tem_acceleration_kV", np.nan))
-        if not np.isfinite(voltage):
-            voltage = float("nan")
         shape_pixels = self._shape_from_params(params)
         fidelity = (
             "reference_validated"
@@ -247,7 +229,7 @@ class SyniscopyMultisliceTEMBackend:
             backend_mode=self.backend_mode,
             backend_fidelity_level=fidelity,
             algorithm="syniscopy_split_step_multislice_with_coherent_objective_transfer",
-            voltage_kV=voltage,
+            voltage_kV=self.voltage_kV,
             dose_per_pixel=self.dose_per_pixel,
             slice_thickness_nm=self.slice_thickness_nm,
             objective_aperture_mrad=self.objective_aperture_mrad,

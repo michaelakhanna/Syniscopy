@@ -6,7 +6,11 @@ from typing import Any
 
 import numpy as np
 
+from noise_contracts import AnalysisNoiseModel, IndependentPixelNoiseModel
+
 from ._metadata_helpers import _derivative_unit, _variance_units
+from .precision import apply_analysis_noise_precision, compute_fisher_density_maps_from_gradients
+from .spectral_fisher import lateral_information_density_continuous
 
 def _stack_named_maps(
     maps: dict[str, np.ndarray],
@@ -39,7 +43,7 @@ def _stack_named_maps(
 def compute_nuisance_adjusted_fisher(
     parameter_derivative_maps: dict[str, np.ndarray],
     nuisance_basis_maps: dict[str, np.ndarray],
-    noise_variance_map: np.ndarray | float,
+    noise_variance_map: IndependentPixelNoiseModel | AnalysisNoiseModel,
     *,
     rcond: float = 1e-12,
     signal_units: str = "model_signal",
@@ -90,19 +94,47 @@ def compute_nuisance_adjusted_fisher(
         nuisance_basis_names = []
         B = np.zeros((G.shape[0], 0), dtype=float)
 
-    var = _positive_variance_map(noise_variance_map, shape).reshape(-1)
-    weights = 1.0 / var
+    if not isinstance(noise_variance_map, (IndependentPixelNoiseModel, AnalysisNoiseModel)):
+        raise TypeError(
+            "compute_nuisance_adjusted_fisher requires a typed Fisher noise "
+            "likelihood. Use IndependentPixelNoiseModel for the current diagonal "
+            "nuisance projection; structured AnalysisNoiseModel covariance needs a "
+            "future covariance-aware nuisance projector."
+        )
+    noise_variance_map.require_safe_for_fisher(context="compute_nuisance_adjusted_fisher")
 
-    WG = G * weights[:, None]
+    parameter_arrays = tuple(
+        np.asarray(parameter_derivative_maps[name], dtype=float)
+        for name in parameter_names
+    )
+    weighted_parameter_arrays, _parameter_precision_metadata = apply_analysis_noise_precision(
+        parameter_arrays,
+        noise_variance_map,
+        context="compute_nuisance_adjusted_fisher(parameter)",
+    )
+    WG = np.stack([arr.reshape(-1) for arr in weighted_parameter_arrays], axis=1)
     raw_fisher = G.T @ WG
 
+    # Nuisance projection is also a Fisher quadratic form. Using a local
+    # 1/variance vector here would reintroduce the same floor-support bug fixed
+    # for localization and orientation CRLBs, and would silently diagonalize any
+    # covariance model that fisher.precision already knows how to apply.
     if B.shape[1] == 0:
         nuisance_fisher = np.zeros((0, 0), dtype=float)
         cross_fisher = np.zeros((G.shape[1], 0), dtype=float)
         information_loss = np.zeros_like(raw_fisher)
         nuisance_rank = 0
     else:
-        WB = B * weights[:, None]
+        nuisance_arrays = tuple(
+            np.asarray(nuisance_basis_maps[name], dtype=float)
+            for name in nuisance_basis_names
+        )
+        weighted_nuisance_arrays, _nuisance_precision_metadata = apply_analysis_noise_precision(
+            nuisance_arrays,
+            noise_variance_map,
+            context="compute_nuisance_adjusted_fisher(nuisance)",
+        )
+        WB = np.stack([arr.reshape(-1) for arr in weighted_nuisance_arrays], axis=1)
         nuisance_fisher = B.T @ WB
         cross_fisher = G.T @ WB
         singular_values = np.linalg.svd(nuisance_fisher, compute_uv=False)
@@ -226,7 +258,7 @@ def _positive_variance_map(
 
 def compute_information_density_maps(
     per_particle_contrast: np.ndarray,
-    noise_variance_map: np.ndarray | float,
+    noise_variance_map: np.ndarray | float | AnalysisNoiseModel,
     pixel_size_nm: float,
     *,
     mask_support: np.ndarray | None = None,
@@ -234,6 +266,7 @@ def compute_information_density_maps(
     z_step_nm: float | None = None,
     rotation_renders: dict[str, np.ndarray] | None = None,
     rotation_step_rad: float | None = None,
+    row_correlated_line_variance: float = 0.0,
 ) -> dict[str, np.ndarray]:
     """
     Expose the per-pixel Fisher-information summands used by the CRLB code.
@@ -251,8 +284,6 @@ def compute_information_density_maps(
     normalized to [0, 1] so downstream dataset audits can write observability
     maps without reimplementing the Fisher internals.
     """
-    from .lateral import _lateral_coordinate_derivatives
-
     c = np.asarray(per_particle_contrast, dtype=float)
     if z_step_nm is None:
         if c.ndim != 2:
@@ -271,15 +302,23 @@ def compute_information_density_maps(
         centre = c[1]
         dC_dz = (c[2] - c[0]) / (2.0 * z_step_nm)
 
-    var = _positive_variance_map(noise_variance_map, centre.shape)
-    inv_var = 1.0 / var
-    dI_dx0, dI_dy0 = _lateral_coordinate_derivatives(centre, pixel_size_nm)
+    if not isinstance(noise_variance_map, (AnalysisNoiseModel, IndependentPixelNoiseModel)):
+        raise TypeError(
+            "compute_information_density_maps requires a typed Fisher noise "
+            "likelihood. Raw diagonal arrays are ambiguous: they may be complete "
+            "independent-pixel covariance or only the diagonal summary of a "
+            "structured likelihood."
+        )
+    var = _positive_variance_map(noise_variance_map.diagonal_variance, centre.shape)
 
+    # Fisher density is defined in the same likelihood basis as the CRLB:
+    # g * (Sigma^-1 g). The independent-pixel case reduces to the historical
+    # g^2 / variance maps, while row-correlated scan-line noise keeps the
+    # off-diagonal covariance instead of silently diagonalizing it.
     maps: dict[str, np.ndarray] = {
-        "Ix_info_map": (dI_dx0 * dI_dx0 * inv_var).astype(float),
-        "Iy_info_map": (dI_dy0 * dI_dy0 * inv_var).astype(float),
         "noise_variance_map": var.astype(float),
     }
+    density_grads: dict[str, np.ndarray] = {}
 
     abs_c = np.abs(centre)
     peak = float(abs_c.max()) if abs_c.size else 0.0
@@ -308,7 +347,7 @@ def compute_information_density_maps(
         maps["substrate_background_contribution"] = substrate
 
     if dC_dz is not None:
-        maps["Iz_info_map"] = (dC_dz * dC_dz * inv_var).astype(float)
+        density_grads["Iz_info_map"] = dC_dz
 
     if rotation_renders is not None:
         if (
@@ -341,8 +380,34 @@ def compute_information_density_maps(
                     "rotation render shapes must match the central contrast shape."
                 )
             grad = (plus - minus) / (2.0 * rotation_step_rad)
-            maps[f"Iomega_{axis}_info_map"] = (grad * grad * inv_var).astype(float)
+            density_grads[f"Iomega_{axis}_info_map"] = grad
 
+    if noise_variance_map.covariance_kind == "independent_pixels" and not density_grads:
+        density_maps = lateral_information_density_continuous(
+            centre,
+            noise_variance_map.diagonal_variance,
+            pixel_size_nm,
+        )
+    else:
+        from .lateral import _lateral_coordinate_derivatives
+
+        dI_dx0, dI_dy0 = _lateral_coordinate_derivatives(centre, pixel_size_nm)
+        density_grads = {
+            "Ix_info_map": dI_dx0,
+            "Iy_info_map": dI_dy0,
+            **density_grads,
+        }
+        # Route covariance-bearing density channels through the shared Fisher
+        # precision operator. This keeps saved density maps algebraically
+        # consistent with scalar CRLBs on covariance structure and on numerical
+        # variance-floor support.
+        density_maps, _density_metadata = compute_fisher_density_maps_from_gradients(
+            density_grads,
+            noise_variance_map,
+            row_correlated_line_variance=0.0,
+            context="compute_information_density_maps",
+        )
+    maps.update(density_maps)
     return maps
 
 __all__ = ['compute_nuisance_adjusted_fisher', 'compute_information_density_maps']

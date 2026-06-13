@@ -10,8 +10,15 @@ from ._shared import (
     np,
     reference_vector_for_scattered,
 )
-from config.runtime import IscatSettings, param_value
-from optical_params import resolve_probe_wavelength_nm
+from config.runtime import IscatSettings, OpticalInstrumentSettings
+from detector_frame_conversion import (
+    DETECTOR_OUTPUT_DOMAIN_CAMERA_COUNTS,
+    MODEL_OUTPUT_DOMAIN_RELATIVE_INTENSITY,
+    REFERENCE_BASIS_RELATIVE_REFERENCE_INTENSITY,
+    VALUE_FORM_ABSOLUTE,
+    DetectorFrameConversion,
+    convert_model_output_to_detector_frame,
+)
 
 class InterferometricImagingModel(ImagingModel):
     """
@@ -34,13 +41,14 @@ class InterferometricImagingModel(ImagingModel):
     """
 
     uses_sample_environment_pattern = True  # Reference-arm modality; patterned E_ref is physical.
+    sample_environment_reference_field_only = True
     supports_spectral_channels = True
 
     def __init__(self, params: dict) -> None:
         E_ref_amplitude = IscatSettings.from_params(params).reference_field_amplitude
         if E_ref_amplitude <= 0.0:
             raise ValueError(
-                "PARAMS['reference_field_amplitude'] must be positive for "
+                "parameters['reference_field_amplitude'] must be positive for "
                 "InterferometricImagingModel (imaging_model='interferometric'). "
                 "A nonzero reference field is required for interferometric contrast."
             )
@@ -48,7 +56,7 @@ class InterferometricImagingModel(ImagingModel):
     @staticmethod
     def _fresnel_reference_coefficient(params: dict) -> complex:
         """Normal-incidence Fresnel amplitude for optional iSCAT calibration profiles."""
-        wavelength_nm = resolve_probe_wavelength_nm(params)
+        wavelength_nm = OpticalInstrumentSettings.from_params(params).probe_wavelength_nm
         settings = IscatSettings.from_params(params)
         top_name = settings.reference_medium_material
         bottom_name = settings.reference_substrate_material
@@ -80,22 +88,41 @@ class InterferometricImagingModel(ImagingModel):
             )
             return amplitude_scale * phase_scale * coeff
         raise ValueError(
-            "Unsupported PARAMS['iscat_reference_model'] "
-            f"{param_value(params, 'iscat_reference_model')!r}. Supported values are "
+            "Unsupported parameters['iscat_reference_model'] "
+            f"{model!r}. Supported values are "
             "'renderer', 'fresnel', and 'explicit'."
         )
 
     @staticmethod
     def _dipole_collection_fraction(params: dict) -> float:
         """Collected fraction for a transverse electric dipole over a cone."""
-        NA = float(param_value(params, "numerical_aperture"))
-        n_medium = float(param_value(params, "refractive_index_medium"))
+        instrument = OpticalInstrumentSettings.from_params(params)
+        NA = instrument.numerical_aperture
+        n_medium = instrument.refractive_index_medium
         if n_medium <= 0.0:
-            raise ValueError("PARAMS['refractive_index_medium'] must be positive.")
+            raise ValueError("parameters['refractive_index_medium'] must be positive.")
         sin_theta = float(np.clip(NA / n_medium, 0.0, 1.0))
         cos_theta = float(np.sqrt(max(0.0, 1.0 - sin_theta * sin_theta)))
         fraction = (4.0 - 3.0 * cos_theta - cos_theta ** 3) / 8.0
         return float(np.clip(fraction, 0.0, 1.0))
+
+    @classmethod
+    def _collection_fraction_contract(cls, params: dict, settings: IscatSettings) -> tuple[float, float]:
+        """Return renderer and reference collection fractions, rejecting mismatches."""
+        renderer_fraction = cls._dipole_collection_fraction(params)
+        reference_fraction = settings.collection_reference_fraction
+        if reference_fraction is None:
+            reference_fraction = renderer_fraction
+        if not np.isfinite(reference_fraction) or reference_fraction <= 0.0:
+            raise ValueError("parameters['iscat_collection_reference_fraction'] must be positive when set.")
+        if not np.isclose(float(reference_fraction), float(renderer_fraction), rtol=1e-9, atol=1e-12):
+            raise ValueError(
+                "parameters['iscat_collection_reference_fraction'] must match the renderer-computed "
+                "dipole collection fraction for the active optical parameters; got "
+                f"{float(reference_fraction)!r}, expected {float(renderer_fraction)!r}. "
+                "Leave it unset/None to use the renderer value."
+            )
+        return float(renderer_fraction), float(reference_fraction)
 
     @classmethod
     def _scattered_field_scale(cls, params: dict) -> float:
@@ -105,17 +132,12 @@ class InterferometricImagingModel(ImagingModel):
         if model in {"scalar", "renderer", "none"}:
             return 1.0
         if model in {"dipole", "dipole_high_na", "rayleigh_dipole"}:
-            fraction = cls._dipole_collection_fraction(params)
-            reference_fraction = settings.collection_reference_fraction
-            if not np.isfinite(reference_fraction) or reference_fraction <= 0.0:
-                raise ValueError(
-                    "PARAMS['iscat_collection_reference_fraction'] must be positive."
-                )
+            fraction, reference_fraction = cls._collection_fraction_contract(params, settings)
             return float(np.sqrt(max(fraction, 1e-30) / reference_fraction))
         raise ValueError(
-            "Unsupported PARAMS['iscat_collection_model'] "
-            f"{param_value(params, 'iscat_collection_model')!r}. Supported values are "
-            "'scalar' and 'dipole_high_na'."
+            "Unsupported parameters['iscat_collection_model'] "
+            f"{model!r}. Supported values are "
+            "'scalar', 'dipole', 'dipole_high_na', and 'rayleigh_dipole'."
         )
 
     @classmethod
@@ -179,20 +201,29 @@ class InterferometricImagingModel(ImagingModel):
         contrast = field_intensity(E_ref + E_sca_eff) - E_ref_intensity
         return contrast
 
-    def scale_intensity_to_counts(
+    def convert_model_output_to_detector_frame(
         self,
-        intensity: np.ndarray,
+        model_output: np.ndarray,
         background_final: np.ndarray,
         E_ref_intensity_final: np.ndarray,
         params: dict,
     ) -> np.ndarray:
         ref_scale_intensity = abs(self._reference_field_scale(params)) ** 2
         ref_scale_intensity = max(float(ref_scale_intensity), 1e-30)
-        E_ref_intensity_safe = np.maximum(
-            E_ref_intensity_final * ref_scale_intensity,
-            1e-12,
+        return convert_model_output_to_detector_frame(
+            model_output=model_output,
+            background_frame=background_final,
+            reference_intensity_frame=E_ref_intensity_final,
+            conversion=DetectorFrameConversion(
+                model_output_domain=MODEL_OUTPUT_DOMAIN_RELATIVE_INTENSITY,
+                detector_output_domain=DETECTOR_OUTPUT_DOMAIN_CAMERA_COUNTS,
+                value_form=VALUE_FORM_ABSOLUTE,
+                reference_basis=REFERENCE_BASIS_RELATIVE_REFERENCE_INTENSITY,
+                reference_scale=ref_scale_intensity,
+            ),
+            params=params,
+            context="InterferometricImagingModel.convert_model_output_to_detector_frame",
         )
-        return background_final * (intensity / E_ref_intensity_safe)
 
     def compute_response_function(self, shape: tuple[int, int], params: dict) -> dict:
         ref_scale = self._reference_field_scale(params)
@@ -208,6 +239,12 @@ class InterferometricImagingModel(ImagingModel):
             iscat_collection_model=settings.collection_model,
             iscat_scattered_field_scale=float(collection_scale),
         )
+        if settings.collection_model in {"dipole", "dipole_high_na", "rayleigh_dipole"}:
+            renderer_fraction, reference_fraction = self._collection_fraction_contract(params, settings)
+            response.update(
+                iscat_renderer_collection_fraction=float(renderer_fraction),
+                iscat_collection_reference_fraction=float(reference_fraction),
+            )
         if settings.reference_model in {
             "fresnel",
             "fresnel_normal",

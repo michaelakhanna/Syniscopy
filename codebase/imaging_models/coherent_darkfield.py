@@ -9,7 +9,15 @@ from ._shared import (
     field_intensity,
     np,
 )
-from config.runtime import DarkFieldSettings, param_value
+from config.runtime import DarkFieldSettings, SampleEnvironmentSettings
+from detector_frame_conversion import (
+    DETECTOR_OUTPUT_DOMAIN_CAMERA_COUNTS,
+    MODEL_OUTPUT_DOMAIN_SCATTERED_INTENSITY,
+    REFERENCE_BASIS_NONE,
+    VALUE_FORM_ABSOLUTE,
+    DetectorFrameConversion,
+    convert_model_output_to_detector_frame,
+)
 
 class CoherentDarkFieldImagingModel(ImagingModel):
     """
@@ -21,11 +29,12 @@ class CoherentDarkFieldImagingModel(ImagingModel):
         Intensity  = |E_sca_total|²
         Contrast_i = |E_sca_i|²
 
-    Note: ``PARAMS['reference_field_amplitude']`` is ignored in this mode: the
+    Note: ``parameters['reference_field_amplitude']`` is ignored in this mode: the
     reference field has no role in the dark-field forward model.
     """
 
     uses_sample_environment_pattern = True  # Patterned substrates scatter into the dark-field stop.
+    allow_intensity_sample_environment_fallback = True
     supports_spectral_channels = True
 
     def __init__(self, params: dict) -> None:
@@ -33,7 +42,7 @@ class CoherentDarkFieldImagingModel(ImagingModel):
         # imaging-model factory.
         self._field_gain = DarkFieldSettings.from_params(params).field_gain
         if self._field_gain <= 0.0:
-            raise ValueError("PARAMS['dark_field_field_gain'] must be positive.")
+            raise ValueError("parameters['dark_field_field_gain'] must be positive.")
 
     def compute_intensity(
         self,
@@ -62,9 +71,9 @@ class CoherentDarkFieldImagingModel(ImagingModel):
         """
         return field_intensity(self._field_gain * E_sca_particle)
 
-    def scale_intensity_to_counts(
+    def convert_model_output_to_detector_frame(
         self,
-        intensity: np.ndarray,
+        model_output: np.ndarray,
         background_final: np.ndarray,
         E_ref_intensity_final: np.ndarray,
         params: dict,
@@ -96,14 +105,14 @@ class CoherentDarkFieldImagingModel(ImagingModel):
         Parameter resolution
         --------------------
         The illumination-level scale is taken from
-        ``PARAMS['dark_field_illumination_count']`` if set, and otherwise
-        falls back to ``PARAMS['background_intensity']`` (which is the
+        ``parameters['dark_field_illumination_count']`` if set, and otherwise
+        falls back to ``parameters['background_intensity']`` (which is the
         count-domain reference-beam brightness used by the other modalities,
         so in the default configuration the dark-field peak will land at a
         comparable fraction of the camera's dynamic range to the other
         modalities' reference-beam intensity).
 
-        The pedestal is taken from ``PARAMS['dark_field_background_count']``.
+        The pedestal is taken from ``parameters['dark_field_background_count']``.
         The default is zero, which preserves the ideal zero-baseline dark-field
         model; callers can set a positive pedestal to represent stray light or
         dark current.
@@ -119,9 +128,21 @@ class CoherentDarkFieldImagingModel(ImagingModel):
           returned count values as Poisson rates.
         """
         settings = DarkFieldSettings.from_params(params)
-        illumination_count = settings.illumination_count
-        background_count = settings.background_count
-        return illumination_count * intensity + background_count
+        return convert_model_output_to_detector_frame(
+            model_output=model_output,
+            background_frame=background_final,
+            reference_intensity_frame=E_ref_intensity_final,
+            conversion=DetectorFrameConversion(
+                model_output_domain=MODEL_OUTPUT_DOMAIN_SCATTERED_INTENSITY,
+                detector_output_domain=DETECTOR_OUTPUT_DOMAIN_CAMERA_COUNTS,
+                value_form=VALUE_FORM_ABSOLUTE,
+                reference_basis=REFERENCE_BASIS_NONE,
+                scale=settings.illumination_count,
+                offset=settings.background_count,
+            ),
+            params=params,
+            context="CoherentDarkFieldImagingModel.convert_model_output_to_detector_frame",
+        )
 
     def illumination_field(self, shape: tuple[int, int], params: dict) -> np.ndarray:
         """Coherent dark-field uses the shared scalar incident-field interface."""
@@ -148,8 +169,9 @@ class CoherentDarkFieldImagingModel(ImagingModel):
             return intensity
         edge = sample_environment.substrate.topography_gradient()
         edge = _mean_normalized_map(edge + 1e-12) - 1.0
-        gain = float(param_value(params, 'dark_field_sample_environment_edge_gain'))
-        pedestal = float(param_value(params, 'dark_field_sample_environment_scatter_pedestal'))
+        sample_environment_settings = SampleEnvironmentSettings.from_params(params)
+        gain = sample_environment_settings.dark_field_edge_gain
+        pedestal = sample_environment_settings.dark_field_scatter_pedestal
         return np.maximum(intensity + gain * np.maximum(edge, 0.0) + pedestal, 0.0)
 
 __all__ = ['CoherentDarkFieldImagingModel']

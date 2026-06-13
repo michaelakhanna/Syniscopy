@@ -14,13 +14,10 @@ from typing import Any
 
 import numpy as np
 from backend_fidelity import attach_backend_fidelity_metadata
-from config import param_value
+from config.runtime import TemSettings
 
 from .ctf_proxy import CTFProxyTEMBackend
-from .syniscopy_multislice import (
-    TEMBackendMetadata,
-    _require_validation_for_reference_status,
-)
+from .syniscopy_multislice import TEMBackendMetadata
 
 
 class PhysicalMultisliceTEMBackend:
@@ -28,48 +25,42 @@ class PhysicalMultisliceTEMBackend:
 
     def __init__(
         self,
-        params: dict,
         *,
         ctf_backend: CTFProxyTEMBackend,
+        tem_settings: TemSettings,
         electron_wavelength_m: float,
         pixel_size_m: float,
         dose_per_pixel: float,
         default_slice_count: int,
-        default_slice_thickness_nm: float | None,
-        default_objective_aperture_mrad: float | None = None,
     ) -> None:
-        del default_slice_thickness_nm, default_objective_aperture_mrad
         self.ctf_backend = ctf_backend
         self.lambda_m = float(electron_wavelength_m)
         self.pixel_size_m = float(pixel_size_m)
         self.dose_per_pixel = float(dose_per_pixel)
+        self.voltage_kV = tem_settings.acceleration_kV
         self.n_slices = int(default_slice_count)
         if self.n_slices <= 0:
             raise ValueError("Effective multislice slice count must be positive for multislice_physical.")
-        raw_slice = param_value(params, "tem_slice_thickness_nm")
-        self.slice_thickness_nm = None if raw_slice is None else float(raw_slice)
+        self.slice_thickness_nm = tem_settings.slice_thickness_nm
         if self.slice_thickness_nm is not None and (
             not np.isfinite(self.slice_thickness_nm) or self.slice_thickness_nm <= 0.0
         ):
-            raise ValueError("PARAMS['tem_slice_thickness_nm'] must be positive for multislice_physical.")
-        raw_aperture_mrad = param_value(params, "tem_objective_aperture_mrad")
-        self.objective_aperture_mrad = None if raw_aperture_mrad is None else float(raw_aperture_mrad)
+            raise ValueError("parameters['tem_slice_thickness_nm'] must be positive for multislice_physical.")
+        self.objective_aperture_mrad = tem_settings.objective_aperture_mrad
         if self.objective_aperture_mrad is not None:
             if not np.isfinite(self.objective_aperture_mrad) or self.objective_aperture_mrad <= 0.0:
-                raise ValueError("PARAMS['tem_objective_aperture_mrad'] must be positive when set.")
+                raise ValueError("parameters['tem_objective_aperture_mrad'] must be positive when set.")
         if not np.isfinite(self.pixel_size_m) or self.pixel_size_m <= 0.0:
             raise ValueError("pixel_size_m must be positive and finite for multislice_physical.")
         if not np.isfinite(self.lambda_m) or self.lambda_m <= 0.0:
             raise ValueError("electron wavelength must be positive and finite for multislice_physical.")
         if not np.isfinite(self.dose_per_pixel) or self.dose_per_pixel < 0.0:
             raise ValueError("tem_dose_per_pixel must be finite and non-negative for multislice_physical.")
-        self.potential_source = str(param_value(params, "tem_potential_source"))
-        self.reference_status, self.reference_validation_hash = _require_validation_for_reference_status(
-            params,
-            key_prefix="tem",
-        )
+        self.potential_source = tem_settings.potential_source
+        self.reference_status = tem_settings.reference_status
+        self.reference_validation_hash = tem_settings.reference_validation_hash
         self.validation_status = (
-            "reference_validated"
+            "validated"
             if self.reference_status == "reference_validated"
             else "diagnostic_only"
         )
@@ -90,15 +81,10 @@ class PhysicalMultisliceTEMBackend:
         cached = self._bandlimit_cache.get(key)
         if cached is not None:
             return cached
-        h, w = key
-        fx_nyquist = 0.5 / self.pixel_size_m
-        fy_nyquist = 0.5 / self.pixel_size_m
-        fx_limit = (2.0 / 3.0) * fx_nyquist
-        fy_limit = (2.0 / 3.0) * fy_nyquist
-        fx = np.fft.fftfreq(w, d=self.pixel_size_m)
-        fy = np.fft.fftfreq(h, d=self.pixel_size_m)
-        kx, ky = np.meshgrid(fx, fy, indexing="xy")
-        mask = (np.abs(kx) <= fx_limit) & (np.abs(ky) <= fy_limit)
+        kx, ky, k = self._frequency_grid(key)
+        del kx, ky
+        k_nyquist = 0.5 / self.pixel_size_m
+        mask = k <= (2.0 / 3.0) * k_nyquist
         self._bandlimit_cache[key] = mask
         return mask
 
@@ -152,7 +138,7 @@ class PhysicalMultisliceTEMBackend:
             )
         if self.slice_thickness_nm is None:
             raise ValueError(
-                "PARAMS['tem_slice_thickness_nm'] must be set for 3D multislice_physical input."
+                "parameters['tem_slice_thickness_nm'] must be set for 3D multislice_physical input."
             )
         return source, float(self.slice_thickness_nm)
 
@@ -164,10 +150,13 @@ class PhysicalMultisliceTEMBackend:
         source_stack, dz_nm = self._prepare_phase_slices(projected_phase)
         shape = tuple(source_stack.shape[-2:])
         psi = np.ones(shape, dtype=np.complex128)
-        for slice_phase in source_stack:
+        if dz_nm != 0.0:
+            psi = self._fresnel_propagate(psi, 0.5 * dz_nm)
+        for idx, slice_phase in enumerate(source_stack):
             psi *= np.exp(1j * np.asarray(slice_phase, dtype=float))
             psi = self._bandlimit_wave(psi)
-            psi = self._fresnel_propagate(psi, dz_nm)
+            step_nm = 0.5 * dz_nm if idx == source_stack.shape[0] - 1 else dz_nm
+            psi = self._fresnel_propagate(psi, step_nm)
         if not np.all(np.isfinite(psi.real)) or not np.all(np.isfinite(psi.imag)):
             raise FloatingPointError("multislice_physical produced non-finite exit wave.")
         return psi
@@ -207,16 +196,13 @@ class PhysicalMultisliceTEMBackend:
             "pixel_pitch_nm": float(self.pixel_size_m * 1.0e9),
             "slices": int(self.n_slices),
             "slice_thickness_nm": None if self.slice_thickness_nm is None else float(self.slice_thickness_nm),
-            "bandlimit_policy": "two_thirds_rectangular_nyquist",
+            "bandlimit_policy": "two_thirds_circular_nyquist",
             "objective_aperture_mrad": self.objective_aperture_mrad,
             "recommended_slices_for_stability": max(8, int(self.n_slices)),
         }
 
     def metadata(self, params: dict | None = None) -> dict[str, Any]:
         params_source = params or {}
-        voltage = float(params_source.get("tem_acceleration_kV", np.nan))
-        if not np.isfinite(voltage):
-            voltage = float("nan")
         shape_pixels = self._shape_from_params(params_source)
         fidelity = (
             "reference_validated"
@@ -227,7 +213,7 @@ class PhysicalMultisliceTEMBackend:
             backend_mode=self.backend_mode,
             backend_fidelity_level=fidelity,
             algorithm="cowley_moodie_multislice_projected_phase_with_fresnel_propagation_and_ctf_readout",
-            voltage_kV=voltage,
+            voltage_kV=self.voltage_kV,
             dose_per_pixel=self.dose_per_pixel,
             slice_thickness_nm=self.slice_thickness_nm,
             objective_aperture_mrad=self.objective_aperture_mrad,

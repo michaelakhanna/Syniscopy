@@ -35,7 +35,11 @@ def normalize_backend_fidelity_level(value: Any) -> str:
     if isinstance(value, BackendFidelityLevel):
         raw = value.value
     else:
-        raw = "proxy" if value is None else str(value).strip().lower().replace(" ", "_")
+        raw = (
+            BackendFidelityLevel.UNKNOWN.value
+            if value is None
+            else str(value).strip().lower().replace(" ", "_")
+        )
     valid = {level.value for level in BackendFidelityLevel}
     if raw not in valid:
         raise ValueError(
@@ -83,7 +87,7 @@ def extract_backend_fidelity_metadata(
         backend_fidelity_level=normalize_backend_fidelity_level(
             payload.get(
                 "backend_fidelity_level",
-                contract.get("backend_fidelity_level", "proxy"),
+                contract.get("backend_fidelity_level", BackendFidelityLevel.UNKNOWN.value),
             )
         ),
         backend_name=_first_nonempty(
@@ -109,9 +113,9 @@ def extract_backend_fidelity_metadata(
             payload.get("fidelity_class"),
             contract.get("fidelity_class"),
             payload.get("fidelity_tag"),
-            "proxy_model",
+            "not_declared",
         )
-        or "proxy_model",
+        or "not_declared",
         native_operating_assumptions=_first_nonempty(
             payload.get("native_operating_assumptions"),
             payload.get("native_units"),
@@ -203,9 +207,9 @@ def attach_backend_fidelity_metadata(
             payload.get("implemented_approximation_level"),
             payload.get("fidelity_label"),
             payload.get("fidelity_class"),
-            "proxy_model",
+            "not_declared",
         )
-        or "proxy_model",
+        or "not_declared",
         native_operating_assumptions=_first_nonempty(
             native_operating_assumptions,
             payload.get("native_operating_assumptions"),

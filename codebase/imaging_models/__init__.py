@@ -13,7 +13,7 @@ from .base import (
 from .coherent_brightfield import CoherentBrightfieldImagingModel
 from .coherent_darkfield import CoherentDarkFieldImagingModel
 from .dpc import DifferentialPhaseContrastImagingModel
-from .electron_constants import (
+from electron_optics import (
     electron_interaction_parameter_rad_per_V_nm,
     electron_wavelength_m,
     scherzer_defocus_m,

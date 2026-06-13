@@ -12,11 +12,13 @@ class GaussianProbeSEMProxyBackend:
         self,
         *,
         probe_sigma_px: float,
+        canvas_pitch_nm: float,
         edge_gain: float,
         bulk_gain: float,
         baseline: float,
     ) -> None:
         self.probe_sigma_px = float(probe_sigma_px)
+        self.canvas_pitch_nm = float(canvas_pitch_nm)
         self.edge_gain = float(edge_gain)
         self.bulk_gain = float(bulk_gain)
         self.baseline = float(baseline)
@@ -26,7 +28,7 @@ class GaussianProbeSEMProxyBackend:
 
     def contrast_from_source(self, source: np.ndarray) -> np.ndarray:
         source = np.maximum(np.asarray(source, dtype=float), 0.0)
-        edge = _gradient_magnitude(source)
+        edge = _gradient_magnitude(source, self.canvas_pitch_nm)
         source_blur = self._probe_blur(source)
         edge_blur = self._probe_blur(edge)
         se = self.edge_gain * edge_blur + self.bulk_gain * source_blur

@@ -182,22 +182,6 @@ Jerry Chao, E.~Sally~Ward, and Raimund~J. Ober.
 \newblock {\em Journal of the Optical Society of America A}, 33(7):B36--B57,
   2016.
 
-\bibitem{schleyer-caustic}
-Genevieve Schleyer.
-\newblock Raw video files: Caustic signatures produced by gold nanoparticles,
-  2024.
-\newblock Data Catalogue DOI:
-  \url{https://doi.org/10.17638/datacat.liverpool.ac.uk/2592}. Gold spherical
-  nanoparticles (10 nm, 50 nm, 100 nm diameters). Acquisition: 40 fps, pixel
-  size 0.116 um x 0.116 um (default camera; filenames marked * use 0.086 um x
-  0.086 um).
-
-\bibitem{schleyer2024label}
-Genevieve Schleyer, Eann~A. Patterson, and Judith~M. Curran.
-\newblock Label free tracking to quantify nanoparticle diffusion through
-  biological media.
-\newblock {\em Scientific Reports}, 14:18822, 2024.
-
 \bibitem{syniscopy-release}
 Michael~A. Khanna.
 \newblock {Syniscopy: Theoretical Foundations and Cross-Modality

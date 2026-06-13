@@ -6,7 +6,12 @@ from typing import Any
 
 import numpy as np
 
-from common_utils import init_infinite_dict
+from contrast_symmetry import normalize_se3_rank_symmetry_metadata
+from noise_contracts import (
+    AnalysisNoiseModel,
+    IndependentPixelNoiseModel,
+    analysis_noise_model_from_likelihood,
+)
 from shared_constants import SE3_STATE_AXES
 
 from ._constants import (
@@ -15,12 +20,14 @@ from ._constants import (
     _FISHER_SE3_AXIS_RELATIVE_TOL,
     _FISHER_SE3_EPS,
 )
+from .precision import compute_fisher_from_gradients_with_noise
 from ._metadata_helpers import (
     _derivative_unit,
     _diagnostic_metadata_aliases,
     _fisher_rank_metadata,
     _variance_units,
 )
+from unit_contracts import assert_compatible
 
 def _se3_derivative_metadata(
     pixel_size_nm: float,
@@ -56,7 +63,7 @@ def _se3_derivative_metadata(
         "signal_units": str(signal_units),
         "state_axis_units": state_axis_units,
         "derivative_units": derivative_units,
-        "lateral_derivative_mode": "detector_grid_central_difference_stationary_shift",
+        "lateral_derivative_basis": "spectral_band_limited",
         "axial_derivative_mode": "symmetric_rerendered_z_pair",
         "orientation_derivative_mode": "symmetric_body_frame_rotation_pair",
         "pixel_size_nm": float(pixel_size_nm),
@@ -130,10 +137,15 @@ def _validate_se3_renders(
 
 def compute_fisher_information_se3(
     renders: dict[str, np.ndarray],
-    noise_variance_map: np.ndarray | float,
+    noise_variance_map: np.ndarray | float | AnalysisNoiseModel | IndependentPixelNoiseModel,
     pixel_size_nm: float,
     z_step_nm: float,
     rotation_step_rad: float,
+    *,
+    signal_units: str = "contrast",
+    measurement_domain: str = "contrast",
+    noise_variance_units: str | None = None,
+    params: dict[str, Any] | None = None,
 ) -> np.ndarray:
     """
     Build the 6x6 SE(3) Fisher information matrix for a composite particle.
@@ -188,8 +200,35 @@ def compute_fisher_information_se3(
     composite at translated x, y would give a numerically equivalent estimate
     at strictly higher cost.
     """
-    from .lateral import _build_symmetric_fisher_from_gradients, _lateral_coordinate_derivatives
+    from .lateral import (
+        _lateral_coordinate_derivatives,
+        _reject_correlated_noise_for_diagonal_fisher,
+        _resolve_analysis_noise_input,
+    )
 
+    noise_variance_map, measurement_domain, signal_units, noise_variance_units, model_line_variance, noise_model = (
+        _resolve_analysis_noise_input(
+            noise_variance_map,
+            context="compute_fisher_information_se3",
+            measurement_domain=measurement_domain,
+            signal_units=signal_units,
+            noise_variance_units=noise_variance_units,
+        )
+    )
+    assert_compatible(
+        context="compute_fisher_information_se3",
+        measurement_domain=measurement_domain,
+        signal_units=signal_units,
+        noise_variance_units=noise_variance_units or _variance_units(signal_units),
+        params=params,
+    )
+    if noise_model is None or noise_model.covariance_kind == "independent_pixels":
+        _reject_correlated_noise_for_diagonal_fisher(
+            params,
+            context="compute_fisher_information_se3",
+            measurement_domain=measurement_domain,
+            signal_units=signal_units,
+        )
     _validate_se3_renders(
         renders,
         expected_shape=None,
@@ -214,31 +253,25 @@ def compute_fisher_information_se3(
 
     grads = (dI_dx0, dI_dy0, dC_dz, dC_dwx, dC_dwy, dC_dwz)
 
-    if np.isscalar(noise_variance_map):
-        if not np.isfinite(noise_variance_map) or noise_variance_map <= 0.0:
-            raise ValueError(
-                f"noise_variance_map scalar must be positive; got {noise_variance_map}."
-            )
-        inv_var = 1.0 / float(noise_variance_map)
-        F = _build_symmetric_fisher_from_gradients(grads, inv_var)
-    else:
-        var = np.asarray(noise_variance_map, dtype=float)
-        if var.shape != centre.shape:
-            raise ValueError(
-                f"noise_variance_map shape {var.shape} does not match centre "
-                f"render shape {centre.shape}."
-            )
-        if np.any(~np.isfinite(var)):
-            raise ValueError("noise_variance_map must contain only finite values.")
-        if np.any(var <= 0.0):
-            raise ValueError("noise_variance_map must contain only positive values.")
-        inv_var = 1.0 / var
-        F = _build_symmetric_fisher_from_gradients(grads, inv_var)
-    return F
+    if noise_model is None:
+        raise TypeError(
+            "compute_fisher_information_se3 requires a typed Fisher noise likelihood; "
+            "raw diagonal variances must be wrapped before this point."
+        )
+
+    # SE(3) mixes translation and rotation derivatives, but it must not own a
+    # separate covariance inverse. A local 1/variance shortcut can turn the
+    # numerical Fisher variance floor into finite orientation information, so
+    # all floor-support and covariance policy is delegated to fisher.precision.
+    return compute_fisher_from_gradients_with_noise(
+        grads,
+        noise_model,
+        context="compute_fisher_information_se3",
+    )
 
 def compute_localization_orientation_crlb(
     renders: dict[str, np.ndarray],
-    noise_variance_map: np.ndarray | float,
+    noise_variance_map: np.ndarray | float | AnalysisNoiseModel,
     pixel_size_nm: float,
     z_step_nm: float,
     rotation_step_rad: float,
@@ -297,8 +330,27 @@ def compute_localization_orientation_crlb(
     statement (no unbiased estimator can pin a state variable to which
     the data does not respond).
     """
+    original_noise_model = (
+        noise_variance_map
+        if isinstance(noise_variance_map, (AnalysisNoiseModel, IndependentPixelNoiseModel))
+        else None
+    )
+    if original_noise_model is not None:
+        original_noise_model.require_safe_for_fisher(
+            context="compute_localization_orientation_crlb"
+        )
+        measurement_domain = original_noise_model.measurement_domain
+        signal_units = original_noise_model.signal_units
+        noise_variance_units = original_noise_model.noise_variance_units
     F = compute_fisher_information_se3(
-        renders, noise_variance_map, pixel_size_nm, z_step_nm, rotation_step_rad,
+        renders,
+        noise_variance_map,
+        pixel_size_nm,
+        z_step_nm,
+        rotation_step_rad,
+        signal_units=signal_units,
+        measurement_domain=measurement_domain,
+        noise_variance_units=noise_variance_units,
     )
     derivative_metadata = _se3_derivative_metadata(
         pixel_size_nm,
@@ -461,15 +513,15 @@ def _validate_rank_int(value: Any, *, name: str, lower: int, upper: int) -> int:
         raise ValueError(f"{name} must be in [{lower}, {upper}]; got {value_int}.")
     return value_int
 
-def predict_se3_rank_from_symmetry(
-    continuous_rotational_symmetry_dim: int,
+def predict_se3_rank_from_contrast_stabilizer(
+    continuous_rotational_stabilizer_dim: int,
     translation_rank: int = 3,
     *,
     rotational_dimension: int = 3,
-    singular_rotation_axes_body: list[str] | tuple[str, ...] | None = None,
+    stabilizer_rotation_axes_body: list[str] | tuple[str, ...] | None = None,
 ) -> dict[str, Any]:
     """
-    Predict local SE(3) Fisher rank from continuous rotational symmetry.
+    Predict local SE(3) Fisher rank from a continuous contrast stabilizer.
 
     A connected stabilizer subgroup of dimension d contributes at least d null
     rotation directions. Under the generic local-observability condition, the
@@ -485,8 +537,8 @@ def predict_se3_rank_from_symmetry(
         upper=3,
     )
     symmetry_dim = _validate_rank_int(
-        continuous_rotational_symmetry_dim,
-        name="continuous_rotational_symmetry_dim",
+        continuous_rotational_stabilizer_dim,
+        name="continuous_rotational_stabilizer_dim",
         lower=0,
         upper=rotational_dimension,
     )
@@ -496,12 +548,12 @@ def predict_se3_rank_from_symmetry(
         lower=0,
         upper=3,
     )
-    axes = list(singular_rotation_axes_body or [])
+    axes = list(stabilizer_rotation_axes_body or [])
     allowed_axes = set(SE3_STATE_AXES)
     invalid_axes = [axis for axis in axes if axis not in allowed_axes]
     if invalid_axes:
         raise ValueError(
-            "singular_rotation_axes_body contains unsupported axis names: "
+            "contrast_singular_rotation_axes_body contains unsupported axis names: "
             f"{invalid_axes!r}."
         )
 
@@ -510,20 +562,20 @@ def predict_se3_rank_from_symmetry(
     predicted_nullity = (3 - translation_rank) + symmetry_dim
 
     return {
-        "continuous_rotational_symmetry_dim": symmetry_dim,
+        "continuous_rotational_stabilizer_dim": symmetry_dim,
         "translation_rank": translation_rank,
         "rotational_dimension": rotational_dimension,
         "predicted_rotational_rank": int(rotational_rank),
         "predicted_se3_rank": int(se3_rank),
         "predicted_nullity": int(predicted_nullity),
-        "symmetry_nullity_lower_bound": int(symmetry_dim),
-        "singular_rotation_axes_body": axes,
+        "stabilizer_nullity_lower_bound": int(symmetry_dim),
+        "stabilizer_rotation_axes_body": axes,
     }
 
-def predict_fused_se3_rank_from_symmetry(
-    continuous_rotational_symmetry_intersection_dim: int,
+def predict_fused_se3_rank_from_contrast_stabilizers(
+    continuous_rotational_stabilizer_intersection_dim: int,
     *,
-    per_modality_symmetry_dims: dict[str, int] | None = None,
+    per_candidate_stabilizer_dims: dict[str, int] | None = None,
     translation_rank: int = 3,
     rotational_dimension: int = 3,
 ) -> dict[str, Any]:
@@ -538,47 +590,49 @@ def predict_fused_se3_rank_from_symmetry(
     explicitly; dimensions of individual stabilizers alone are not enough to
     infer the intersection.
     """
-    prediction = predict_se3_rank_from_symmetry(
-        continuous_rotational_symmetry_intersection_dim,
+    prediction = predict_se3_rank_from_contrast_stabilizer(
+        continuous_rotational_stabilizer_intersection_dim,
         translation_rank=translation_rank,
         rotational_dimension=rotational_dimension,
     )
-    modality_dims: dict[str, int] = {}
-    if per_modality_symmetry_dims is not None:
-        for modality, dim in per_modality_symmetry_dims.items():
-            modality_dims[str(modality)] = _validate_rank_int(
+    candidate_dims: dict[str, int] = {}
+    if per_candidate_stabilizer_dims is not None:
+        for candidate, dim in per_candidate_stabilizer_dims.items():
+            candidate_dims[str(candidate)] = _validate_rank_int(
                 dim,
-                name=f"per_modality_symmetry_dims[{modality!r}]",
+                name=f"per_candidate_stabilizer_dims[{candidate!r}]",
                 lower=0,
                 upper=rotational_dimension,
             )
-    intersection_dim = prediction["continuous_rotational_symmetry_dim"]
-    symmetry_broken = (
-        any(dim > intersection_dim for dim in modality_dims.values())
-        if modality_dims else None
+    intersection_dim = prediction["continuous_rotational_stabilizer_dim"]
+    stabilizer_reduced = (
+        any(dim > intersection_dim for dim in candidate_dims.values())
+        if candidate_dims else None
     )
     return {
         **prediction,
-        "continuous_rotational_symmetry_intersection_dim": intersection_dim,
-        "per_modality_continuous_rotational_symmetry_dim": modality_dims,
-        "symmetry_broken_by_fusion": symmetry_broken,
+        "continuous_rotational_stabilizer_intersection_dim": intersection_dim,
+        "per_candidate_continuous_rotational_stabilizer_dim": candidate_dims,
+        "contrast_stabilizer_reduced_by_fusion": stabilizer_reduced,
         "fusion_rank_prediction_note": (
             "Fusion nullity is set by the intersection of contrast-functional "
-            "continuous stabilizers; per-modality stabilizer dimensions alone "
+            "continuous stabilizers; per-candidate stabilizer dimensions alone "
             "do not determine that intersection."
         ),
     }
 
 def compare_observed_and_predicted_se3_rank(
     crlb_result: dict[str, Any],
-    symmetry_metadata: dict[str, Any] | None,
+    stabilizer_metadata: dict[str, Any] | None,
     *,
     translation_rank: int = 3,
 ) -> dict[str, Any]:
     """
-    Compare an observed SE(3) CRLB rank against the symmetry-rank prediction.
+    Compare an observed SE(3) CRLB rank against stabilizer rank metadata.
 
-    Missing symmetry metadata is reported explicitly instead of guessed.
+    Geometry stabilizer metadata is a nullity lower bound. Exact generic rank
+    prediction requires contrast-stabilizer metadata because the theorem is
+    about the rendered contrast functional, not the particle shape alone.
     """
     observed_axis_rank_raw = crlb_result.get("rank", None)
     observed_axis_rank = (
@@ -602,297 +656,141 @@ def compare_observed_and_predicted_se3_rank(
         )
     )
     observed_axes = list(crlb_result.get("axes_singular", []))
-    if not symmetry_metadata or symmetry_metadata.get("continuous_rotational_symmetry_dim") is None:
+    normalized_symmetry = normalize_se3_rank_symmetry_metadata(stabilizer_metadata)
+    geometry_available = bool(normalized_symmetry.get("geometry_stabilizer_available"))
+    contrast_available = bool(normalized_symmetry.get("contrast_stabilizer_available"))
+    if not geometry_available and not contrast_available:
         return {
+            **normalized_symmetry,
             "rank_prediction_available": False,
+            "geometry_rank_bound_available": False,
             "observed_rank": observed_matrix_rank,
             "observed_matrix_rank": observed_matrix_rank,
             "observed_axis_estimability_rank": observed_axis_rank,
             "observed_axes_singular": observed_axes,
-            "rank_matches_symmetry_prediction": None,
-            "satisfies_symmetry_nullity_bound": None,
-            "rank_prediction_note": "No continuous_rotational_symmetry_dim metadata was supplied.",
+            "rank_matches_contrast_stabilizer_prediction": None,
+            "satisfies_geometry_stabilizer_bound": None,
+            "contrast_stabilizer_relation_to_geometry": None,
+            "rank_prediction_note": (
+                "No geometry_* or contrast_* continuous stabilizer metadata was supplied."
+            ),
         }
 
-    prediction = predict_se3_rank_from_symmetry(
-        symmetry_metadata["continuous_rotational_symmetry_dim"],
-        translation_rank=translation_rank,
-        singular_rotation_axes_body=symmetry_metadata.get("singular_rotation_axes_body"),
-    )
+    geometry_prediction = None
+    if geometry_available:
+        geometry_prediction = predict_se3_rank_from_contrast_stabilizer(
+            normalized_symmetry["geometry_continuous_rotational_stabilizer_dim"],
+            translation_rank=translation_rank,
+            stabilizer_rotation_axes_body=normalized_symmetry.get(
+                "geometry_singular_rotation_axes_body",
+            ),
+        )
+    contrast_prediction = None
+    if contrast_available:
+        contrast_prediction = predict_se3_rank_from_contrast_stabilizer(
+            normalized_symmetry["contrast_continuous_rotational_stabilizer_dim"],
+            translation_rank=translation_rank,
+            stabilizer_rotation_axes_body=normalized_symmetry.get(
+                "contrast_singular_rotation_axes_body",
+            ),
+        )
+
     if observed_matrix_rank is None:
         note = "Observed CRLB result did not contain a rank."
-        matches = None
-        satisfies = None
+        contrast_matches = None
+        satisfies_geometry = None
+        relation = None
         observed_nullity = None
+        observed_rotational_rank = None
+        observed_contrast_stabilizer_dim_estimate = None
     else:
         observed_nullity = 6 - observed_matrix_rank
-        matches = observed_matrix_rank == prediction["predicted_se3_rank"]
-        satisfies = observed_nullity >= prediction["symmetry_nullity_lower_bound"]
-        if matches:
-            note = "Observed numerical Fisher rank matches the generic symmetry prediction."
-        elif satisfies:
+        observed_rotational_rank = max(
+            0,
+            min(3, int(observed_matrix_rank) - int(translation_rank)),
+        )
+        observed_contrast_stabilizer_dim_estimate = int(
+            max(0, 3 - observed_rotational_rank)
+        )
+        contrast_matches = (
+            None if contrast_prediction is None
+            else observed_matrix_rank == contrast_prediction["predicted_se3_rank"]
+        )
+        satisfies_geometry = (
+            None if geometry_prediction is None
+            else observed_nullity >= geometry_prediction["predicted_nullity"]
+        )
+
+        if geometry_prediction is not None and not satisfies_geometry:
+            relation = "violates_geometry_stabilizer_bound"
             note = (
-                "Observed numerical Fisher rank satisfies the symmetry nullity lower bound but "
-                "shows additional degeneracy beyond the generic prediction."
+                "Observed numerical Fisher rank has less nullity than the geometry "
+                "stabilizer permits; check geometry metadata, render convention, or "
+                "rank tolerance."
+            )
+        elif contrast_prediction is not None:
+            if contrast_matches:
+                relation = "matches_declared_contrast_stabilizer"
+                note = (
+                    "Observed numerical Fisher rank matches the declared contrast "
+                    "stabilizer's generic prediction."
+                )
+            elif observed_nullity >= contrast_prediction["predicted_nullity"]:
+                relation = "more_degenerate_than_declared_contrast_stabilizer"
+                note = (
+                    "Observed numerical Fisher rank satisfies the declared contrast "
+                    "stabilizer nullity but shows additional degeneracy beyond the "
+                    "generic prediction."
+                )
+            else:
+                relation = "violates_declared_contrast_stabilizer_bound"
+                note = (
+                    "Observed numerical Fisher rank has less nullity than the "
+                    "declared contrast stabilizer permits."
+                )
+        elif (
+            geometry_prediction is not None
+            and observed_nullity == geometry_prediction["predicted_nullity"]
+        ):
+            relation = "contrast_matches_geometry_generic_case"
+            note = (
+                "No contrast stabilizer was supplied; observed rank matches the "
+                "generic geometry-stabilizer bound."
             )
         else:
+            relation = "contrast_adds_continuous_nullity_beyond_geometry"
             note = (
-                "Observed numerical Fisher rank violates the symmetry nullity lower bound; check "
-                "symmetry metadata, render convention, or rank tolerance."
+                "No contrast stabilizer was supplied; observed rank satisfies the "
+                "geometry-stabilizer bound but shows extra contrast-functional "
+                "degeneracy."
             )
 
     return {
-        **prediction,
-        "rank_prediction_available": True,
+        **normalized_symmetry,
+        "rank_prediction_available": contrast_prediction is not None,
+        "geometry_rank_bound_available": geometry_prediction is not None,
+        "contrast_rank_prediction_available": contrast_prediction is not None,
+        "geometry_rank_bound": geometry_prediction,
+        "contrast_rank_prediction": contrast_prediction,
         "observed_rank": observed_matrix_rank,
         "observed_matrix_rank": observed_matrix_rank,
         "observed_axis_estimability_rank": observed_axis_rank,
         "observed_axes_singular": observed_axes,
         "observed_nullity": observed_nullity,
-        "rank_matches_symmetry_prediction": matches,
-        "satisfies_symmetry_nullity_bound": satisfies,
+        "observed_rotational_rank": observed_rotational_rank,
+        "observed_contrast_stabilizer_dim_estimate": (
+            observed_contrast_stabilizer_dim_estimate
+        ),
+        "rank_matches_contrast_stabilizer_prediction": contrast_matches,
+        "satisfies_geometry_stabilizer_bound": satisfies_geometry,
+        "contrast_stabilizer_relation_to_geometry": relation,
         "rank_prediction_note": note,
     }
 
-def compare_modality_orientation_crlb(
-    renders_by_modality: dict[str, dict[str, np.ndarray]],
-    noise_variance_by_modality: dict[str, np.ndarray | float],
-    pixel_size_nm: float | dict[str, float],
-    z_step_nm: float,
-    rotation_step_rad: float,
-    *,
-    pixel_size_nm_by_modality: dict[str, float] | None = None,
-    measurement_domain_by_modality: str | dict[str, str] | None = None,
-    signal_units_by_modality: str | dict[str, str] | None = None,
-    noise_variance_units_by_modality: str | dict[str, str] | None = None,
-) -> dict[str, Any]:
-    """
-    Order imaging modalities by the orientation Cramér-Rao bound they deliver
-    on a shared composite-particle configuration.
-
-    For each modality ``M`` the caller supplies a dict of nine perturbed
-    renders (``centre``, ``z_minus/plus``, ``rx_minus/plus``,
-    ``ry_minus/plus``, ``rz_minus/plus``) of the *same* composite particle
-    plus a noise variance map. Each modality's renders are passed through
-    :func:`compute_localization_orientation_crlb` to obtain the per-axis
-    sigmas and the aggregate ``sigma_omega_total_rad``. The modalities are
-    then ordered by ``sigma_omega_total_rad``, smallest first. A modality with
-    only some observable rotation axes receives a finite aggregate over those
-    axes plus explicit ``axes_singular`` metadata; a modality with no observable
-    orientation axes reports ``sigma_omega_total_rad = +inf`` and sorts to the
-    end of the ordering.
-
-    Parameters
-    ----------
-    renders_by_modality : dict[str, dict[str, np.ndarray]]
-        Outer key = modality name; inner dict = the nine perturbed renders
-        accepted by :func:`compute_localization_orientation_crlb`. The
-        rendered images must have the same ``centre`` shape across modalities
-        --- they describe the *same* particle under different contrast
-        mechanisms; pixel pitch and noise floor scale are common.
-    noise_variance_by_modality : dict[str, ndarray or float]
-        Per-modality noise-variance map (or scalar). Keys must match
-        ``renders_by_modality``.
-    pixel_size_nm : float or dict
-        Detector pixel pitch (nm). A scalar keeps the historical shared-pitch
-        behavior; a mapping supplies one pitch per modality.
-    z_step_nm : float
-        Axial translation step used to render ``z_minus``/``z_plus`` for
-        every modality. Must match the step used to actually render.
-    rotation_step_rad : float
-        Body-frame rotation step (radians) used to render the six rotation
-        perturbations for every modality.
-
-    Returns
-    -------
-    dict with keys
-        - ``per_modality``           : dict[str, dict] from
-                                       :func:`compute_localization_orientation_crlb`,
-                                       one entry per modality.
-        - ``ordering``               : list of ``(modality, sigma_omega_total_rad)``
-                                       sorted ascending; +inf entries last.
-                                       ``ranking`` is retained as an alias.
-        - ``best_modality``          : argmin ``sigma_omega_total_rad`` over
-                                       the modalities for which the orientation
-                                       block has at least one observable axis;
-                                       ``None`` if no modality recovers any
-                                       rotation axis.
-        - ``best_modality_observable`` : synonym for ``best_modality``.
-        - ``best_modality_full_rank``  : argmin among finite modalities whose
-                                       full six-parameter block is observable;
-                                       ``None`` if no modality is full rank.
-        - ``relative_sigma_omega``   : dict[modality -> sigma / sigma_best];
-                                       +inf when sigma is +inf or no best.
-        - ``frames_to_match_best``   : dict[modality -> rho^2]; the equivalent-
-                                       frame budget required for modality M to
-                                       match one frame of the lowest-bound
-                                       modality on *orientation* precision.
-        - ``axes_singular_per_modality`` : dict[modality -> list[str]],
-                                       per-axis observability flags.
-
-    Notes
-    -----
-    The orientation comparator differs from
-    :func:`compare_modality_information_content` in that the relevant
-    summary statistic is ``sigma_omega_total_rad`` (an aggregate over the
-    three rotation axes in radians) rather than ``sigma_xy_nm``. The
-    equivalent-frame-budget formula carries through unchanged because the
-    Fisher information is additive across independent frames for *all*
-    state coordinates --- including rotational ones --- under the same
-    Gaussian-noise approximation used throughout.
-    """
-    from .lateral import (
-        _positive_finite_or_inf,
-        _resolve_modality_scalar_map,
-        _resolve_modality_string_map,
-        _sort_key_finite_then_value,
-    )
-
-    if not isinstance(renders_by_modality, dict) or not renders_by_modality:
-        raise ValueError(
-            "renders_by_modality must be a non-empty dict keyed by modality name."
-        )
-    if not isinstance(noise_variance_by_modality, dict):
-        raise ValueError("noise_variance_by_modality must be a dict.")
-    if set(renders_by_modality) != set(noise_variance_by_modality):
-        missing = set(renders_by_modality) - set(noise_variance_by_modality)
-        extra = set(noise_variance_by_modality) - set(renders_by_modality)
-        raise ValueError(
-            "renders_by_modality and noise_variance_by_modality keys must match; "
-            f"missing noise entries: {sorted(missing)}; extra noise entries: {sorted(extra)}."
-        )
-    if not np.isfinite(z_step_nm) or z_step_nm <= 0.0:
-        raise ValueError(f"z_step_nm must be positive; got {z_step_nm}.")
-    if not np.isfinite(rotation_step_rad) or rotation_step_rad <= 0.0:
-        raise ValueError(
-            f"rotation_step_rad must be positive; got {rotation_step_rad}."
-        )
-
-    pixel_sizes = _resolve_modality_scalar_map(
-        pixel_size_nm,
-        renders_by_modality.keys(),
-        "pixel_size_nm",
-        override=pixel_size_nm_by_modality,
-    )
-    measurement_domains = _resolve_modality_string_map(
-        measurement_domain_by_modality,
-        renders_by_modality.keys(),
-        "contrast",
-    )
-    signal_units = _resolve_modality_string_map(
-        signal_units_by_modality,
-        renders_by_modality.keys(),
-        "contrast",
-    )
-    noise_variance_units = _resolve_modality_string_map(
-        noise_variance_units_by_modality,
-        renders_by_modality.keys(),
-        "",
-    )
-    per_modality: dict[str, dict[str, Any]] = {}
-    for modality, renders in renders_by_modality.items():
-        try:
-            per_modality[modality] = compute_localization_orientation_crlb(
-                renders=renders,
-                noise_variance_map=noise_variance_by_modality[modality],
-                pixel_size_nm=pixel_sizes[modality],
-                z_step_nm=z_step_nm,
-                rotation_step_rad=rotation_step_rad,
-                signal_units=signal_units[modality],
-                measurement_domain=measurement_domains[modality],
-                noise_variance_units=(
-                    noise_variance_units[modality] or None
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001 — record per-modality failure without aborting comparison
-            per_modality[modality] = {
-                "error": repr(exc),
-                "sigma_x_nm": float("inf"),
-                "sigma_y_nm": float("inf"),
-                "sigma_z_nm": float("inf"),
-                "sigma_xyz_nm": float("inf"),
-                "sigma_omega_x_rad": float("inf"),
-                "sigma_omega_y_rad": float("inf"),
-                "sigma_omega_z_rad": float("inf"),
-                "sigma_omega_total_rad": float("inf"),
-                "fisher_matrix": None,
-                "fisher_det": None,
-                "singular": True,
-                "rank": 0,
-                "axes_singular": ["x", "y", "z", "omega_x", "omega_y", "omega_z"],
-                "state_axes": ("x", "y", "z", "omega_x", "omega_y", "omega_z"),
-                "sigma_units": ("nm", "nm", "nm", "rad", "rad", "rad"),
-            }
-
-    # Build the (modality, sigma_omega_total) tuples and sort.
-    items = [
-        (m, _positive_finite_or_inf(r.get("sigma_omega_total_rad", float("inf"))))
-        for m, r in per_modality.items()
-    ]
-    # Sort ascending; +inf and NaN go last.
-    ranking = sorted(items, key=_sort_key_finite_then_value)
-
-    # ``best_modality`` follows the documented observable-axis contract. The
-    # stricter full-rank winner is exposed separately for callers that need all
-    # six localization/orientation coordinates to be jointly observable.
-    best_modality: str | None = None
-    best_modality_full_rank: str | None = None
-    for modality, sigma in ranking:
-        rec = per_modality[modality]
-        if best_modality is None and np.isfinite(sigma) and sigma > 0.0:
-            best_modality = modality
-        if (
-            best_modality_full_rank is None
-            and np.isfinite(sigma)
-            and sigma > 0.0
-            and rec.get("rank", 0) == 6
-            and not rec.get("axes_singular", [])
-        ):
-            best_modality_full_rank = modality
-        if best_modality is not None and best_modality_full_rank is not None:
-            break
-
-    # Relative-precision and equivalent-frame-budget against best.
-    if best_modality is None:
-        relative = init_infinite_dict(per_modality)
-        frames = init_infinite_dict(per_modality)
-    else:
-        sigma_best = float(per_modality[best_modality]["sigma_omega_total_rad"])
-        relative = {}
-        frames = {}
-        for m, s in items:
-            if not np.isfinite(s) or s <= 0.0 or sigma_best <= 0.0:
-                relative[m] = float("inf")
-                frames[m] = float("inf")
-            else:
-                rho = s / sigma_best
-                relative[m] = float(rho)
-                frames[m] = float(rho * rho)
-
-    axes_singular_per_modality = {
-        m: list(per_modality[m].get("axes_singular", [])) for m in per_modality
-    }
-
-    return {
-        "per_modality": per_modality,
-        "ordering": ranking,
-        "ranking": ranking,
-        "best_modality": best_modality,
-        "best_modality_observable": best_modality,
-        "best_modality_full_rank": best_modality_full_rank,
-        "relative_sigma_omega": relative,
-        "frames_to_match_best": frames,
-        "axes_singular_per_modality": axes_singular_per_modality,
-        "pixel_size_nm_by_modality": pixel_sizes,
-        "measurement_domain_by_modality": measurement_domains,
-        "signal_units_by_modality": signal_units,
-        "noise_variance_units_by_modality": {
-            modality: (
-                noise_variance_units[modality]
-                or _variance_units(signal_units[modality])
-            )
-            for modality in renders_by_modality
-        },
-    }
-
-__all__ = ['compute_fisher_information_se3', 'compute_localization_orientation_crlb', 'predict_se3_rank_from_symmetry', 'predict_fused_se3_rank_from_symmetry', 'compare_observed_and_predicted_se3_rank', 'compare_modality_orientation_crlb']
+__all__ = [
+    'compute_fisher_information_se3',
+    'compute_localization_orientation_crlb',
+    'predict_se3_rank_from_contrast_stabilizer',
+    'predict_fused_se3_rank_from_contrast_stabilizers',
+    'compare_observed_and_predicted_se3_rank',
+]

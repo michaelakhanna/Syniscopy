@@ -5,6 +5,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from registry_utils import NameRegistry
+from modality_parameter_surface import (
+    ModalityParameterSurface,
+    REPORT_COMMON_OPTICAL_PARAM_KEYS,
+    REPORT_DETECTOR_PARAM_KEYS,
+    REPORT_ELECTRON_PARAM_KEYS,
+    REPORT_FLUORESCENCE_PARAM_KEYS,
+    REPORT_MODALITY_SPECIFIC_ELECTRON_PARAM_KEYS,
+    REPORT_MODALITY_SPECIFIC_OPTICAL_PARAM_KEYS,
+    REPORT_OPTICAL_PARAM_KEYS,
+    REPORT_SHARED_PARAM_KEYS,
+    REPORT_TIRF_PARAM_KEYS,
+    modality_parameter_surface,
+)
 
 
 @dataclass(frozen=True)
@@ -21,6 +34,7 @@ class ModalitySpec:
     electron: bool = False
     fluorescence: bool = False
     lab_optical: bool = False
+    comparison_identity: str | None = None
 
 
 MODALITY_SPECS: dict[str, ModalitySpec] = {
@@ -32,6 +46,12 @@ MODALITY_SPECS: dict[str, ModalitySpec] = {
         relative_reference_contrast=True,
         vectorial_full_field=True,
         lab_optical=True,
+        # Report ranking compares physical modality profiles, not public
+        # spellings. ``bright_field`` is the historical public spelling for
+        # the same partially coherent Koehler bright-field profile exposed by
+        # ``partially_coherent_bright_field``; they must not both enter one
+        # best-candidate table as distinct scientific candidates.
+        comparison_identity="partially_coherent_kohler_bright_field",
     ),
     "fluorescence_widefield": ModalitySpec(
         "fluorescence_widefield",
@@ -75,6 +95,7 @@ MODALITY_SPECS: dict[str, ModalitySpec] = {
         "quantitative phase imaging (QPI)",
         "imaging_models.qpi:QuantitativePhaseImagingModel",
         label_free_optical=True,
+        coherent_reference=True,
         vectorial_full_field=True,
         lab_optical=True,
     ),
@@ -83,6 +104,7 @@ MODALITY_SPECS: dict[str, ModalitySpec] = {
         "off-axis digital holography (DHM)",
         "imaging_models.off_axis_holography:OffAxisHolographyImagingModel",
         label_free_optical=True,
+        coherent_reference=True,
         vectorial_full_field=True,
         lab_optical=True,
     ),
@@ -91,6 +113,7 @@ MODALITY_SPECS: dict[str, ModalitySpec] = {
         "reflection interference contrast (RICM)",
         "imaging_models.ricm:ReflectionInterferenceContrastImagingModel",
         label_free_optical=True,
+        coherent_reference=True,
         relative_reference_contrast=True,
         vectorial_full_field=True,
         lab_optical=True,
@@ -100,6 +123,7 @@ MODALITY_SPECS: dict[str, ModalitySpec] = {
         "interferometric scattering (iSCAT)",
         "imaging_models.interferometric:InterferometricImagingModel",
         label_free_optical=True,
+        coherent_reference=True,
         relative_reference_contrast=True,
         vectorial_full_field=True,
         lab_optical=True,
@@ -124,6 +148,11 @@ MODALITY_SPECS: dict[str, ModalitySpec] = {
         relative_reference_contrast=True,
         vectorial_full_field=True,
         lab_optical=True,
+        # This explicit spelling is retained for public API clarity, but it is
+        # the same report-comparison identity as ``bright_field``. The lab
+        # report resolver coalesces identities so aliases cannot receive
+        # different modality ranks for identical Fisher/CRLB evidence.
+        comparison_identity="partially_coherent_kohler_bright_field",
     ),
     "coherent_bright_field": ModalitySpec(
         "coherent_bright_field",
@@ -140,7 +169,6 @@ MODALITY_SPECS: dict[str, ModalitySpec] = {
         "coherent dark-field (zero-order blocked)",
         "imaging_models.coherent_darkfield:CoherentDarkFieldImagingModel",
         label_free_optical=True,
-        coherent_reference=True,
         vectorial_full_field=True,
         lab_optical=True,
     ),
@@ -168,6 +196,39 @@ LAB_DEFAULT_MODALITIES = LAB_OPTICAL_MODALITIES + ELECTRON_MODALITIES
 MODALITY_DISPLAY_NAMES = {
     spec.id: spec.display_name for spec in MODALITY_SPECS.values()
 }
+MODALITY_COMPARISON_IDENTITIES = {
+    spec.id: spec.comparison_identity or spec.id for spec in MODALITY_SPECS.values()
+}
+
+
+def modality_report_parameter_surface(model_name: object) -> ModalityParameterSurface:
+    """Return the public report-facing parameter surface for one modality."""
+
+    spec = modality_spec(model_name)
+    return modality_parameter_surface(
+        modality=spec.id,
+        flags={
+            "label_free_optical": spec.label_free_optical,
+            "coherent_reference": spec.coherent_reference,
+            "lab_optical": spec.lab_optical,
+            "fluorescence": spec.fluorescence,
+            "electron": spec.electron,
+        },
+    )
+
+
+def relevant_param_keys(model_name: object) -> frozenset[str]:
+    """Return canonical public report-facing params relevant to one modality.
+
+    The returned keys are consumed by microscope JSON template generation and
+    microscope-overlay diagnostics. They must therefore be canonical public
+    parameters keys, not renderer-private metadata or historical aliases. The
+    modality parameter-surface object owns this contract so templates and
+    warnings cannot drift apart and cause valid configurations to be hidden or
+    falsely reported as irrelevant.
+    """
+
+    return modality_report_parameter_surface(model_name).public_keys
 
 MODALITY_REGISTRY = NameRegistry(
     supported=SUPPORTED_MODALITIES,
@@ -180,20 +241,35 @@ def canonical_modality_name(model_name: object) -> str:
     return MODALITY_REGISTRY.canonical_name(model_name)
 
 
+def normalize_modality_key(model_name: object) -> str:
+    """Normalize modality-like text without checking support."""
+    return canonical_modality_name(model_name)
+
+
+def require_modality_name(model_name: object, *, item_label: str = "imaging modality") -> str:
+    """Return a supported canonical modality name or raise a clear error."""
+    key = normalize_modality_key(model_name)
+    if key in MODALITY_SPECS:
+        return key
+    raise ValueError(
+        f"Unknown {item_label} {model_name!r}. Supported values are: {list(SUPPORTED_MODALITIES)}."
+    )
+
+
 def modality_spec(model_name: object) -> ModalitySpec:
     """Return the canonical modality spec."""
-    key = canonical_modality_name(model_name)
-    try:
-        return MODALITY_SPECS[key]
-    except KeyError as exc:
-        raise ValueError(
-            f"Unknown imaging modality {model_name!r}. Supported values are: {list(SUPPORTED_MODALITIES)}."
-        ) from exc
+    return MODALITY_SPECS[require_modality_name(model_name)]
 
 
 def modality_display_name(model_name: object) -> str:
     """Return a human-readable modality name for reports and generated tables."""
     return modality_spec(model_name).display_name
+
+
+def modality_comparison_identity(model_name: object) -> str:
+    """Return the physical comparison identity for report-facing rankings."""
+    key = require_modality_name(model_name)
+    return MODALITY_COMPARISON_IDENTITIES[key]
 
 
 def modality_uses_relative_reference_contrast(model_name: object) -> bool:
@@ -229,8 +305,19 @@ __all__ = [
     "LAB_DEFAULT_MODALITIES",
     "LAB_OPTICAL_MODALITIES",
     "MODALITY_DISPLAY_NAMES",
+    "MODALITY_COMPARISON_IDENTITIES",
     "MODALITY_REGISTRY",
+    "REPORT_COMMON_OPTICAL_PARAM_KEYS",
+    "REPORT_DETECTOR_PARAM_KEYS",
+    "REPORT_ELECTRON_PARAM_KEYS",
+    "REPORT_FLUORESCENCE_PARAM_KEYS",
+    "REPORT_MODALITY_SPECIFIC_ELECTRON_PARAM_KEYS",
+    "REPORT_MODALITY_SPECIFIC_OPTICAL_PARAM_KEYS",
+    "REPORT_OPTICAL_PARAM_KEYS",
+    "REPORT_TIRF_PARAM_KEYS",
+    "REPORT_SHARED_PARAM_KEYS",
     "MODALITY_SPECS",
+    "ModalityParameterSurface",
     "ModalitySpec",
     "RELATIVE_REFERENCE_CONTRAST_MODALITIES",
     "SUPPORTED_MODALITIES",
@@ -241,6 +328,11 @@ __all__ = [
     "is_vectorial_full_field_modality",
     "modality_name_set",
     "modality_display_name",
+    "modality_comparison_identity",
     "modality_spec",
     "modality_uses_relative_reference_contrast",
+    "modality_report_parameter_surface",
+    "relevant_param_keys",
+    "normalize_modality_key",
+    "require_modality_name",
 ]

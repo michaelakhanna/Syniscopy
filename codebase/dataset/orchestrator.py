@@ -46,43 +46,6 @@ def _configure_logging(verbose: bool = False) -> None:
     logger.setLevel(level)
 
 
-def _state_target_indices(state: object) -> list[int]:
-    if not isinstance(state, dict):
-        return []
-    values = state.get("target_indices")
-    if not isinstance(values, list):
-        return []
-    indices: list[int] = []
-    for value in values:
-        try:
-            index = int(value)
-        except (TypeError, ValueError):
-            return []
-        if index < 0:
-            return []
-        indices.append(index)
-    return indices
-
-
-def _remap_leaf_assignments_to_target_indices(
-    assignment_by_index: dict[int, dict[str, Any]],
-    leaf_assignments: Sequence[Mapping[str, Any]],
-    target_indices: Sequence[int],
-) -> tuple[dict[int, dict[str, Any]], list[dict[str, Any]]]:
-    remapped_assignment_by_index: dict[int, dict[str, Any]] = {}
-    remapped_leaf_assignments: list[dict[str, Any]] = []
-    for request_index, target_index in enumerate(target_indices):
-        assignment = dict(assignment_by_index.get(request_index, {}))
-        if not assignment:
-            continue
-        assignment["video_index"] = int(target_index)
-        remapped_assignment_by_index[int(target_index)] = assignment
-        remapped_leaf_assignments.append(assignment)
-    if remapped_assignment_by_index:
-        return remapped_assignment_by_index, remapped_leaf_assignments
-    return assignment_by_index, [dict(item) for item in leaf_assignments]
-
-
 def generate_dataset(
     num_videos: int,
     preset_name: Optional[str] = "default",
@@ -93,7 +56,6 @@ def generate_dataset(
     param_overrides: Optional[Mapping[str, Any]] = None,
     resume_existing: bool = True,
     reset_existing: bool = False,
-    append_on_config_change: bool = False,
     video_param_builder: Optional[Callable[[int, np.random.Generator], Dict[str, Any]]] = None,
     param_builder_name: Optional[str] = None,
     verbose: bool = False,
@@ -156,32 +118,19 @@ def generate_dataset(
     request_signature = _request_signature(request_payload)
     state_path = os.path.join(base_output_dir, _DATASET_STATE_FILENAME)
     prior_state = _load_json_file(state_path)
-    prior_request = prior_state.get("request") if isinstance(prior_state, dict) else None
     prior_signature = (
         prior_state.get("request_signature")
         if isinstance(prior_state, dict)
         else None
     )
     same_signature = bool(prior_signature == request_signature)
-    prior_mode = str(prior_state.get("mode", "")) if isinstance(prior_state, dict) else ""
-    prior_target_indices = _state_target_indices(prior_state)
     existing_entries_by_index = _load_completed_dataset_entries(base_output_dir)
     existing_indices = sorted(existing_entries_by_index)
-    append_requested = bool(
-        append_on_config_change
-        and existing_indices
-        and prior_signature is not None
-        and not same_signature
-    )
 
     rewrite_requested = bool(
         reset_existing
         or (existing_indices and prior_signature is None)
-        or (
-            prior_signature is not None
-            and not same_signature
-            and not append_requested
-        )
+        or (prior_signature is not None and not same_signature)
     )
     if rewrite_requested:
         if reset_existing:
@@ -206,7 +155,7 @@ def generate_dataset(
     raw_camera_frames_root_dir = os.path.join(base_output_dir, "raw_camera_frames")
     masks_root_dir = os.path.join(base_output_dir, "masks")
     raw_views_dir = os.path.join(base_output_dir, "raw_frame_views")
-    packets_dir = os.path.join(base_output_dir, "counterfactual_packets")
+    packets_dir = os.path.join(base_output_dir, "matched_microscope_packets")
     os.makedirs(video_dir, exist_ok=True)
     os.makedirs(frames_root_dir, exist_ok=True)
     os.makedirs(raw_camera_frames_root_dir, exist_ok=True)
@@ -214,47 +163,11 @@ def generate_dataset(
     os.makedirs(raw_views_dir, exist_ok=True)
     os.makedirs(packets_dir, exist_ok=True)
 
-    if append_requested:
-        append_start_index = max(existing_indices) + 1
-        request_indices = list(range(num_videos))
-        target_indices = [
-            append_start_index + request_index
-            for request_index in request_indices
-        ]
-        mode = "append"
-        start_index = target_indices[0]
-        assignment_by_index, leaf_assignments = _remap_leaf_assignments_to_target_indices(
-            assignment_by_index,
-            leaf_assignments,
-            target_indices,
-        )
-        logger.info(
-            "Existing dataset uses a different generation request; appending "
-            "current request as video indices %s.",
-            target_indices,
-        )
-    elif existing_indices and same_signature:
+    if existing_indices and same_signature:
         requested_indices = list(range(0, num_videos))
-        if prior_mode == "append" and prior_target_indices:
-            if len(prior_target_indices) == num_videos:
-                target_indices = prior_target_indices
-            else:
-                append_start_index = min(prior_target_indices)
-                target_indices = [
-                    append_start_index + request_index
-                    for request_index in requested_indices
-                ]
-            obsolete_indices = []
-            mode = "append"
-            assignment_by_index, leaf_assignments = _remap_leaf_assignments_to_target_indices(
-                assignment_by_index,
-                leaf_assignments,
-                target_indices,
-            )
-        else:
-            target_indices = requested_indices
-            obsolete_indices = [idx for idx in existing_indices if idx >= num_videos]
-            mode = "resume"
+        target_indices = requested_indices
+        obsolete_indices = [idx for idx in existing_indices if idx >= num_videos]
+        mode = "resume"
         for obsolete_index in obsolete_indices:
             _remove_video_artifacts(base_output_dir, obsolete_index)
             existing_entries_by_index.pop(obsolete_index, None)
@@ -345,9 +258,7 @@ def generate_dataset(
         random_seed=random_seed,
         dataset_preset=dataset_source_name,
     )
-    simulation_manifest["params_template_scope"] = (
-        "current_request_only" if mode == "append" else "dataset"
-    )
+    simulation_manifest["params_template_scope"] = "dataset"
     simulation_manifest["heterogeneous_dataset"] = bool(composition is not None)
     simulation_manifest["current_request"] = request_payload
     simulation_manifest["current_request_signature"] = request_signature

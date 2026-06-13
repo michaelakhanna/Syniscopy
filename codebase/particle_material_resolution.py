@@ -14,9 +14,14 @@ from material_optical_catalog import (
 )
 from material_serialization import material_properties_to_dict
 from material_types import MaterialProperties
-from optical_params import resolve_probe_wavelength_nm
+from config.runtime import OpticalInstrumentSettings
 from particle_specs import ParticleComponentSpec, get_particle_specs
 from shared_constants import NONNEGATIVE_MATERIAL_PROPERTY_FIELDS, SOURCE_MATERIAL_PROPERTY_FIELDS
+from simulation_runtime_state import runtime_state
+
+
+def _probe_wavelength_nm(params: dict) -> float:
+    return OpticalInstrumentSettings.from_params(params).probe_wavelength_nm
 
 
 def _coerce_complex(value: Any) -> complex:
@@ -27,10 +32,10 @@ def _coerce_complex(value: Any) -> complex:
     return complex(value)
 
 
-def _override_n_complex_visible(override: Any) -> complex | None:
+def _override_n_complex_visible(override: Any, wavelength_nm: float) -> complex | None:
     """Return an explicit material-property refractive index override if present."""
     if isinstance(override, MaterialProperties):
-        return override.n_complex(532.0)
+        return override.n_complex(wavelength_nm)
     if not isinstance(override, dict) or "n_complex_visible" not in override:
         return None
     return _coerce_complex(override["n_complex_visible"])
@@ -67,9 +72,10 @@ def resolve_component_refractive_index(
     component: ParticleComponentSpec,
 ) -> complex:
     """Resolve optical refractive index for one particle component."""
+    wavelength_nm = _probe_wavelength_nm(params)
     if component.refractive_index is not None:
         return _coerce_complex(component.refractive_index)
-    material_override_n = _override_n_complex_visible(component.material_properties)
+    material_override_n = _override_n_complex_visible(component.material_properties, wavelength_nm)
     if material_override_n is not None:
         return complex(material_override_n)
     if component.material is None:
@@ -80,7 +86,7 @@ def resolve_component_refractive_index(
         )
     return lookup_refractive_index(
         material_name=str(component.material),
-        wavelength_nm=resolve_probe_wavelength_nm(params),
+        wavelength_nm=wavelength_nm,
         diameter_nm=float(component.diameter_nm),
     )
 
@@ -205,7 +211,10 @@ def resolve_component_material_properties(
     if require_optical_refractive_index:
         n_complex = resolve_component_refractive_index(params, component)
     else:
-        n_complex = _override_n_complex_visible(component.material_properties)
+        n_complex = _override_n_complex_visible(
+            component.material_properties,
+            _probe_wavelength_nm(params),
+        )
         if n_complex is None and component.refractive_index is not None:
             n_complex = _coerce_complex(component.refractive_index)
     material_name = None if component.material is None else str(component.material)
@@ -213,7 +222,7 @@ def resolve_component_material_properties(
     try:
         base = _material_properties_from_name(
             material_name,
-            wavelength_nm=resolve_probe_wavelength_nm(params),
+            wavelength_nm=_probe_wavelength_nm(params),
             diameter_nm=float(component.diameter_nm),
             refractive_index=n_complex,
         )
@@ -244,13 +253,24 @@ def resolve_component_material_properties(
 
 def resolve_primary_component_refractive_indices(params: dict) -> np.ndarray:
     """Resolve one primary-component complex refractive index per logical particle."""
+    state = runtime_state(params)
+    cached = state.resolved_primary_component_refractive_indices
     specs = get_particle_specs(params)
+    if (
+        isinstance(cached, np.ndarray)
+        and state.resolved_primary_component_refractive_indices_fingerprint is not None
+        and state.resolved_primary_component_refractive_indices_fingerprint == state.particle_specs_fingerprint
+        and cached.size == len(specs)
+    ):
+        return cached
+
     resolved = [
         resolve_component_refractive_index(params, spec.primary_component)
         for spec in specs
     ]
     resolved_array = np.asarray(resolved, dtype=np.complex128)
-    params["_resolved_primary_component_refractive_indices"] = resolved_array
+    state.resolved_primary_component_refractive_indices = resolved_array
+    state.resolved_primary_component_refractive_indices_fingerprint = state.particle_specs_fingerprint
     return resolved_array
 
 
@@ -266,7 +286,16 @@ def resolve_particle_material_properties(
     fluorescence/electron/material fields. Explicit component refractive-index
     overrides still affect the optical n used by the resolved MaterialProperties.
     """
+    state = runtime_state(params)
     specs = get_particle_specs(params)
+    if (
+        state.resolved_particle_material_properties is not None
+        and state.resolved_particle_material_properties_fingerprint is not None
+        and state.resolved_particle_material_properties_fingerprint == state.particle_specs_fingerprint
+        and len(state.resolved_particle_material_properties) == len(specs)
+    ):
+        return state.resolved_particle_material_properties
+
     resolved = [
         resolve_component_material_properties(
             params,
@@ -276,9 +305,10 @@ def resolve_particle_material_properties(
         for spec in specs
     ]
 
-    params["_resolved_particle_material_properties"] = resolved
-    wavelength_nm = resolve_probe_wavelength_nm(params)
-    params["_resolved_particle_material_properties_metadata"] = [
+    state.resolved_particle_material_properties = resolved
+    state.resolved_particle_material_properties_fingerprint = state.particle_specs_fingerprint
+    wavelength_nm = _probe_wavelength_nm(params)
+    state.resolved_particle_material_properties_metadata = [
         material_properties_to_dict(material, wavelength_nm=wavelength_nm) for material in resolved
     ]
     return resolved

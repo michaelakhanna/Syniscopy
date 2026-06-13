@@ -2,7 +2,7 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.18617286.svg)](https://doi.org/10.5281/zenodo.18617286)
 
-Syniscopy is a physics-based simulator for synthetic single-particle microscopy videos. It renders shared particle trajectories across multiple microscopy forward models and writes lossless frames, supervision masks, Cramér-Rao lower-bound diagnostics, and paired outputs for comparing the same particles across microscopy modalities. A lab-facing Fisher report command turns a particle, microscope, and detector-noise configuration into modality rankings, Fisher matrices, Fisher-density maps, and fusion diagnostics.
+Syniscopy is a physics-based simulator for synthetic single-particle microscopy videos. It renders shared particle trajectories across multiple microscopy forward models and writes lossless frames, supervision masks, Cramér-Rao lower-bound diagnostics, and paired outputs for comparing the same particles across configured microscope candidates. A lab-facing Fisher report command turns a particle, microscope set, and detector-noise configuration into microscope rankings, Fisher matrices, Fisher-density maps, and fusion diagnostics.
 
 ## Citation
 
@@ -27,7 +27,7 @@ release updates, and issue/usage workflow.
 - `codebase/` contains the simulator, rendering, noise, supervision, and Cramér-Rao lower-bound modules.
 - `recipes/` contains editable dataset recipes for local generation and Colab runs.
 - `sam2_starter/` contains the public Segment Anything Model 2 training and inference starter notebooks.
-- `paper/main.pdf` is the compiled manuscript included with the public release.
+- `paper/` contains the manuscript source and paper-facing figure/table artifacts.
 - `supplemental/` contains numbered paper experiment notebooks and small configuration files.
 
 Generated raw outputs and local build files should stay outside the public release tree.
@@ -56,7 +56,7 @@ runtime and clone Meta's external Segment Anything 2 repository separately.
 
 ## Lab Fisher Report
 
-For a quick modality-choice check, write an editable lab template and then run
+For a quick microscope-choice check, write an editable lab template and then run
 the report command:
 
 ```bash
@@ -67,7 +67,7 @@ python codebase/lab_fisher_report.py --params-json lab_params.json --output lab_
 For a faster first check:
 
 ```bash
-python codebase/lab_fisher_report.py --output lab_reports/smoke --modalities bright_field,interferometric --image-size-pixels 96 --pupil-samples 96 --no-previews
+python codebase/lab_fisher_report.py --output lab_reports/smoke --modality-sweep bright_field,interferometric --image-size-pixels 96 --pupil-samples 96 --no-previews
 ```
 
 Render a short trajectory and compute dynamic posteriors in one pass:
@@ -86,29 +86,25 @@ python codebase/lab_fisher_report.py --list-instruments
 The report writes:
 
 - `report.md`: short ranked summary for the configured particle, pixel pitch, and detector-noise model.
-- `modality_ranking.csv`: per-modality lateral Fisher matrices and Cramér-Rao bounds.
+- `microscope_ranking.csv`: per-microscope lateral Fisher matrices and Cramér-Rao bounds.
 - `sequence_fisher_summary.csv`: per-frame and cumulative sequence CRLB rows.
-- `fusion_crlb.csv`: best-k Fisher-fusion diagnostics; use `--include-full-fusion` to also write the full-library row when the modality list is longer than `--max-fusion-k`.
-- `manifest.json`: requested, reported, and failed modalities.
-- `params_base.json` and `params_resolved_by_modality/`: run configuration records.
-- `dynamic_modality_summary.json`: optional dynamic Bayesian outputs when enabled.
+- `fusion_crlb.csv`: best-k Fisher-fusion diagnostics; use `--include-full-fusion` to also write the full-library row when the microscope candidate list is longer than `--max-fusion-k`.
+- `manifest.json`: requested, reported, and failed microscopes, with modality metadata.
+- `params_base.json` and `params_resolved_by_microscope/`: run configuration records.
+- `dynamic_microscope_summary.json`: optional dynamic Bayesian outputs when enabled.
 - `previews/`: display-normalized first-frame contrast previews (from rendered frame sequences).
 - `fisher_density/`: per-pixel lateral Fisher-density maps.
 
-The default lab modality set now includes optical, fluorescence, TEM, and SEM
-profiles so electron modalities appear alongside optical paths in the same
-diagnostic output.
+The default lab microscope set is the fixed-instrument modality sweep: it emits
+one configured microscope candidate per optical, fluorescence, TEM, and SEM
+contrast modality under the shared lab instrument settings.
 
 See `docs/lab_fisher_workflow.md` for the full lab-facing workflow and
 `examples/lab_fisher_params.json` for a small editable starting configuration.
 For a full parameter-exposure audit (core/advanced/hidden + workflow/runtime
 controls), see `docs/param_exposure_policy.md` and
 `docs/param_exposure_matrix.json`.
-For a read-only human summary, use `docs/param_exposure_summary.md` and regenerate all three with:
-
-```bash
-python scripts/generate_param_exposure_matrix.py --summary docs/param_exposure_summary.md
-```
+For a read-only human summary, use `docs/param_exposure_summary.md`.
 
 ## Local Dataset Generation
 
@@ -176,24 +172,18 @@ MyDrive/supplemental
 
 Then open and run the notebooks under `MyDrive/supplemental/`.
 Generated notebook outputs are written inside the same uploaded folder at
-`MyDrive/supplemental/outputs/`. The numbered supplemental notebooks write raw outputs:
-individual images, arrays, CSV files, JSON manifests, datasets, checkpoints,
-and inference masks/videos. They do not assemble paper figures.
-The CPU notebooks do not require GPU acceleration. The synthetic-corpus
-notebook writes both the raw Syniscopy dataset and the derived Segment Anything
-Model 2 video-object-segmentation cache. The Segment Anything Model 2 training
-and transfer-inference notebooks need a GPU runtime; the training notebook
-reads the generated Segment Anything Model 2 cache and writes weights/logs
-under its output folder.
+`MyDrive/supplemental/outputs/`. The numbered supplemental notebooks write raw
+outputs: individual images, arrays, CSV files, JSON manifests, and paper-facing
+diagnostic tables. They do not assemble paper figures.
+The numbered supplemental notebooks are CPU-oriented workflows and do not
+require GPU acceleration.
 
 ## Paper Data
 
 Run the numbered notebooks in `supplemental/` from the repository root or from
 the uploaded Drive folder. They write raw outputs under matching
-`supplemental/outputs/<notebook-id>/` folders. The
-paper-facing tables and figures are then assembled by `paper/assemble_output_artifacts.py`
-and `paper/regen_theorem_artifacts.py`, which write provenance manifests next to
-the generated figure and table files.
+`supplemental/outputs/<notebook-id>/` folders. Paper-facing tables, figures, and
+their provenance records live under `paper/figures/`.
 
 ```text
 supplemental/E01.ipynb
@@ -201,31 +191,19 @@ supplemental/E02.ipynb
 supplemental/E03.ipynb
 supplemental/E04.ipynb
 supplemental/E05.ipynb
-supplemental/E06.ipynb
-supplemental/E07.ipynb
-supplemental/E08.ipynb
-supplemental/E09.ipynb
 ```
 
-Segment Anything Model 2 training and inference use the listed paper workflow
-notebooks; the reusable starter notebooks remain under `sam2_starter/`.
-Reviewed real-video transfer manifests are third-party DataCat-derived
-supplemental metadata, not Syniscopy code. The reviewed clip AVI files are not
-bundled in the source release; after downloading the DataCat `50nm/` folder,
-regenerate them locally with
-`python supplemental/rebuild_liverpool_review_clips.py --raw-root /path/to/50nm`.
-Generated transfer overlays, masks, and checkpoints are reproducible from the
-notebooks and are not staged for public release by default. Paper figures
-derived from the public caustic-video dataset are covered by the manuscript
-citation and `THIRD_PARTY_NOTICES.md`.
+The reusable Segment Anything Model 2 starter notebooks remain under
+`sam2_starter/` as optional downstream workflow examples. They are not numbered
+paper experiments and are not used as manuscript evidence.
 
 ## License And External Code
 
 Syniscopy code and documentation are released under the MIT license; see
 `LICENSE`. Third-party notices are summarized in `THIRD_PARTY_NOTICES.md`.
-The Segment Anything Model 2 notebooks clone/download Meta's external Segment
-Anything 2 code and checkpoints at runtime. Segment Anything Model 2 is not
-bundled as Syniscopy code and remains under Meta's upstream licenses and
+The Segment Anything Model 2 starter notebooks clone/download Meta's external
+Segment Anything 2 code and checkpoints at runtime. Segment Anything Model 2 is
+not bundled as Syniscopy code and remains under Meta's upstream licenses and
 notices. Fine-tuned Segment Anything Model 2 checkpoints, if distributed, are
 derived from upstream Segment Anything Model 2 weights and are not MIT-licensed
 Syniscopy source code.

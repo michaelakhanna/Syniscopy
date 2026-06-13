@@ -130,10 +130,9 @@ DEFAULT = {
     "fluorescence_excitation_scale": 1.0,
     "fluorescence_emission_psf_sigma_px": 1.0,
     "fluorescence_background": 0.0,
-    "fluorescence_photon_count_scale": 500.0,
+    # Physical photon budget: absorbed excitation photons per fluorophore per frame.
+    "fluorescence_absorbed_excitation_photons_per_fluorophore_per_frame": 1000.0,
     "fluorescence_backend": "vectorial_photophysics",
-    "fluorescence_photons_per_fluorophore_per_frame": None,
-    "fluorescence_require_physical_photon_budget": False,
     "fluorescence_collection_efficiency": 1.0,
     "fluorescence_detector_qe": 1.0,
     "fluorescence_blinking_rate_per_frame": 0.0,

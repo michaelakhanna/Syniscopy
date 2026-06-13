@@ -202,7 +202,7 @@ def _compute_central_lobe_mask_floodfill(
     a 4-connected flood fill from the particle center.
 
     This is the appropriate algorithm for non-radially-symmetric particles
-    (dimers, rod stacks, or other rigid composites) whose central-lobe region is
+    (dimers, anisotropic primitives, or other rigid composites) whose central-lobe region is
     elongated or multi-lobed. The ring-averaging boundary helper with
     ``outer_ring_count=0`` assumes radial symmetry and would collapse the
     asymmetry of a composite into a circular mask that under-covers the
@@ -331,7 +331,7 @@ def generate_central_lobe_mask(
       starts at the center (or the strongest pixel in a small neighborhood),
       and expands to all connected pixels that share the seed's sign and lie
       above a small fraction of the seed's magnitude. This is the correct
-      choice for composite particles (dimers, rod stacks, or other rigid shapes)
+      choice for composite particles (dimers, anisotropic primitives, or other rigid shapes)
       whose central-lobe region is elongated or multi-lobed. Using the ring
       average for such a particle produces a roughly circular mask that under-
       covers the elongated direction and over-covers the short axis.

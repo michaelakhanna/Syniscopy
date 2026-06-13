@@ -6,10 +6,14 @@ from typing import Any
 
 import numpy as np
 
-from common_utils import init_infinite_dict
-from experiment_contracts import combine_parent_statuses, normalize_convergence_status
+from noise_contracts import (
+    AnalysisNoiseModel,
+    IndependentPixelNoiseModel,
+    analysis_noise_model_from_likelihood,
+)
 
 from ._constants import _FISHER_DET_EPS, _RELATIVE_DET_SINGULAR_TOL
+from .precision import compute_fisher_from_gradients_with_noise
 from ._metadata_helpers import (
     _derivative_unit,
     _diagnostic_metadata_aliases,
@@ -17,7 +21,84 @@ from ._metadata_helpers import (
     _localization_derivative_metadata,
     _variance_units,
 )
-from .lateral import _adaptive_crlb_from_steps
+from .lateral import (
+    _lateral_coordinate_derivatives,
+    _reject_correlated_noise_for_diagonal_fisher,
+    _resolve_analysis_noise_input,
+)
+from unit_contracts import assert_compatible
+
+
+def _adaptive_crlb_from_steps(
+    steps_by_size: dict[float, Any],
+    compute_result_for_step,
+    metric_key: str,
+    *,
+    convergence_tolerance: float,
+    min_stable_steps: int,
+    source_contract: str,
+    modality: str,
+) -> dict[str, Any]:
+    """Generic adaptive finite-difference sweep used by axial rerender stacks."""
+
+    from .convergence import (
+        _matrix_rank_condition,
+        _relative_span,
+        _select_convergence_status,
+        annotate_fisher_result_status,
+    )
+
+    per_step: list[dict[str, Any]] = []
+    for step in sorted((float(s) for s in steps_by_size), reverse=True):
+        result = compute_result_for_step(step, steps_by_size[step])
+        fisher = np.asarray(result["fisher_matrix"], dtype=float)
+        rank, cond, axes = _matrix_rank_condition(fisher)
+        item = dict(result)
+        item.update(
+            {
+                "derivative_step": float(step),
+                "fisher_rank": rank,
+                "condition_number": cond,
+                "singular_axes": axes,
+            }
+        )
+        per_step.append(item)
+
+    status, selected, reason = _select_convergence_status(
+        per_step,
+        metric_key,
+        convergence_tolerance,
+        min_stable_steps,
+    )
+    selected_result = next(
+        (
+            item
+            for item in per_step
+            if selected is not None and float(item["derivative_step"]) == float(selected)
+        ),
+        per_step[-1] if per_step else {},
+    )
+    final = annotate_fisher_result_status(
+        selected_result,
+        convergence_status=status,
+        source_contract=source_contract,
+        modality=modality,
+    )
+    return {
+        "convergence_status": status,
+        "selected_step_nm": selected,
+        "candidate_steps_nm": [float(item["derivative_step"]) for item in per_step],
+        "relative_crlb_span": _relative_span(
+            [float(item.get(metric_key, float("nan"))) for item in per_step]
+        ),
+        "rank_range": [
+            min([int(item.get("fisher_rank", 0)) for item in per_step], default=0),
+            max([int(item.get("fisher_rank", 0)) for item in per_step], default=0),
+        ],
+        "reason": reason,
+        "per_step_results": per_step,
+        "final_result": final,
+    }
 
 def _localization_3d_derivative_metadata(
     pixel_size_nm: float,
@@ -26,6 +107,7 @@ def _localization_3d_derivative_metadata(
     signal_units: str = "contrast",
     measurement_domain: str = "contrast",
     noise_variance_units: str | None = None,
+    params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Metadata for the lateral plus axial derivative convention."""
     meta = _localization_derivative_metadata(
@@ -37,6 +119,12 @@ def _localization_3d_derivative_metadata(
     meta.update(
         {
             "state_axes": ["x", "y", "z"],
+            "axis_derivative_basis_by_axis": {
+                "x": "stationary_spectral_band_limited_gradient",
+                "y": "stationary_spectral_band_limited_gradient",
+                "z": "symmetric_rerendered_z_pair",
+            },
+            "x_y_derivative_precondition": "stationary_template_identity",
             "derivative_units": [
                 _derivative_unit(signal_units, "nm"),
                 _derivative_unit(signal_units, "nm"),
@@ -51,9 +139,14 @@ def _localization_3d_derivative_metadata(
 
 def compute_fisher_information_3d(
     per_particle_contrast_stack: np.ndarray,
-    noise_variance_map: np.ndarray | float,
+    noise_variance_map: np.ndarray | float | AnalysisNoiseModel,
     pixel_size_nm: float,
     z_step_nm: float,
+    *,
+    signal_units: str = "contrast",
+    measurement_domain: str = "contrast",
+    noise_variance_units: str | None = None,
+    params: dict[str, Any] | None = None,
 ) -> np.ndarray:
     """
     Build the 3x3 Fisher information matrix F for (x, y, z) localization.
@@ -83,6 +176,15 @@ def compute_fisher_information_3d(
         Symmetric Fisher information matrix with ordering [x, y, z]. All
         entries have units of 1 / nm^2.
 
+    Contract
+    --------
+    This low-level routine is a stationary-template 3D operator: the supplied
+    z stack gives the axial derivative, while x/y derivatives are spectral
+    band-limited gradients of the central plane. Public array-only callers must
+    validate the x/y stationary-template precondition before calling this
+    function; modalities with detector/world-fixed lateral structure require an
+    explicit x/y rerendered derivative bundle instead.
+
     Notes
     -----
     The decision to take ``dC/dz`` from a *symmetric* finite difference
@@ -92,7 +194,29 @@ def compute_fisher_information_3d(
     numerical footing. The cost is two additional rendered z-planes per
     particle (``-dz`` and ``+dz``), which the caller controls.
     """
-    from .lateral import _build_symmetric_fisher_from_gradients, _lateral_coordinate_derivatives
+    noise_variance_map, measurement_domain, signal_units, noise_variance_units, model_line_variance, noise_model = (
+        _resolve_analysis_noise_input(
+            noise_variance_map,
+            context="compute_fisher_information_3d",
+            measurement_domain=measurement_domain,
+            signal_units=signal_units,
+            noise_variance_units=noise_variance_units,
+        )
+    )
+    assert_compatible(
+        context="compute_fisher_information_3d",
+        measurement_domain=measurement_domain,
+        signal_units=signal_units,
+        noise_variance_units=noise_variance_units or _variance_units(signal_units),
+        params=params,
+    )
+    if noise_model is None or noise_model.covariance_kind == "independent_pixels":
+        _reject_correlated_noise_for_diagonal_fisher(
+            params,
+            context="compute_fisher_information_3d",
+            measurement_domain=measurement_domain,
+            signal_units=signal_units,
+        )
 
     stack = np.asarray(per_particle_contrast_stack, dtype=float)
     if stack.ndim != 3 or stack.shape[0] != 3:
@@ -107,39 +231,36 @@ def compute_fisher_information_3d(
     centre = stack[1]
     dI_dx0, dI_dy0 = _lateral_coordinate_derivatives(centre, pixel_size_nm)
     dC_dz = (stack[2] - stack[0]) / (2.0 * z_step_nm)
+    grads = (dI_dx0, dI_dy0, dC_dz)
 
-    if np.isscalar(noise_variance_map):
-        if not np.isfinite(noise_variance_map) or noise_variance_map <= 0.0:
-            raise ValueError(
-                f"noise_variance_map scalar must be positive; got {noise_variance_map}."
-            )
-        inv_var = 1.0 / float(noise_variance_map)
-    else:
-        var = np.asarray(noise_variance_map, dtype=float)
-        if var.shape != centre.shape:
-            raise ValueError(
-                f"noise_variance_map shape {var.shape} does not match contrast slice "
-                f"shape {centre.shape}."
-            )
-        if np.any(~np.isfinite(var)):
-            raise ValueError("noise_variance_map must contain only finite values.")
-        if np.any(var <= 0.0):
-            raise ValueError("noise_variance_map must contain only positive values.")
-        inv_var = 1.0 / var
-    return _build_symmetric_fisher_from_gradients(
-        (dI_dx0, dI_dy0, dC_dz),
-        inv_var,
+    if noise_model is None:
+        raise TypeError(
+            "compute_fisher_information_3d requires a typed Fisher noise likelihood; "
+            "raw diagonal variances must be wrapped before this point."
+        )
+
+    # The 3D path must use the same typed likelihood-to-precision operator as
+    # lateral CRLBs and density maps. A local 1/variance shortcut treats the
+    # numerical Fisher variance floor as calibrated physical information and
+    # makes z/3D rankings depend on the caller branch rather than the noise
+    # model. Keep all covariance, floor-support, and row-correlation policy in
+    # fisher.precision.
+    return compute_fisher_from_gradients_with_noise(
+        grads,
+        noise_model,
+        context="compute_fisher_information_3d",
     )
 
 def compute_localization_crlb_3d(
     per_particle_contrast_stack: np.ndarray,
-    noise_variance_map: np.ndarray | float,
+    noise_variance_map: np.ndarray | float | AnalysisNoiseModel,
     pixel_size_nm: float,
     z_step_nm: float,
     *,
     signal_units: str = "contrast",
     measurement_domain: str = "contrast",
     noise_variance_units: str | None = None,
+    params: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Per-particle Cramér-Rao lower bound on (x, y, z) localization error.
@@ -174,10 +295,34 @@ def compute_localization_crlb_3d(
     additional z-planes per particle for the central difference while reusing
     the same noise model.
     """
+    original_noise_model = (
+        noise_variance_map
+        if isinstance(noise_variance_map, (AnalysisNoiseModel, IndependentPixelNoiseModel))
+        else None
+    )
+    if original_noise_model is not None:
+        original_noise_model.require_safe_for_fisher(context="compute_localization_crlb_3d")
+        measurement_domain = original_noise_model.measurement_domain
+        signal_units = original_noise_model.signal_units
+        noise_variance_units = original_noise_model.noise_variance_units
+    assert_compatible(
+        context="compute_localization_crlb_3d",
+        measurement_domain=measurement_domain,
+        signal_units=signal_units,
+        noise_variance_units=noise_variance_units or _variance_units(signal_units),
+        params=params,
+    )
     from .fusion import _axis_sigmas_from_fisher
 
     F = compute_fisher_information_3d(
-        per_particle_contrast_stack, noise_variance_map, pixel_size_nm, z_step_nm,
+        per_particle_contrast_stack,
+        noise_variance_map,
+        pixel_size_nm,
+        z_step_nm,
+        signal_units=signal_units,
+        measurement_domain=measurement_domain,
+        noise_variance_units=noise_variance_units,
+        params=params,
     )
     rank_metadata = _fisher_rank_metadata(F)
     derivative_metadata = _localization_3d_derivative_metadata(
@@ -187,6 +332,20 @@ def compute_localization_crlb_3d(
         measurement_domain=measurement_domain,
         noise_variance_units=noise_variance_units,
     )
+    noise_metadata: dict[str, Any] = {}
+    if original_noise_model is not None:
+        noise_metadata["analysis_noise_covariance_kind"] = original_noise_model.covariance_kind
+        noise_metadata["analysis_noise_status_reason"] = original_noise_model.status_reason
+        if original_noise_model.covariance_kind == "row_correlated_scan_lines":
+            noise_metadata["fisher_noise_covariance_model"] = (
+                "row_correlated_scan_line_covariance"
+                if float(original_noise_model.row_correlated_variance) > 0.0
+                else "transformed_row_correlated_scan_line_covariance"
+            )
+            noise_metadata["scan_line_noise_variance_counts2"] = float(
+                original_noise_model.row_correlated_variance
+            )
+            noise_metadata["safe_for_covariance_fisher_variance"] = True
     if np.any(~np.isfinite(F)):
         det_F = float("nan")
         return {
@@ -206,6 +365,7 @@ def compute_localization_crlb_3d(
             "axes_singular": ["x", "y", "z"],
             "derivative_metadata": derivative_metadata,
             **rank_metadata,
+            **noise_metadata,
             **_diagnostic_metadata_aliases(
                 derivative_metadata,
                 rank_metadata,
@@ -232,6 +392,7 @@ def compute_localization_crlb_3d(
             "only_axially_singular": False,
             "derivative_metadata": derivative_metadata,
             **rank_metadata,
+            **noise_metadata,
             **_diagnostic_metadata_aliases(
                 derivative_metadata,
                 rank_metadata,
@@ -269,6 +430,7 @@ def compute_localization_crlb_3d(
             "axes_singular": ["x", "y", "z"],
             "derivative_metadata": derivative_metadata,
             **rank_metadata,
+            **noise_metadata,
             **_diagnostic_metadata_aliases(
                 derivative_metadata,
                 rank_metadata,
@@ -316,6 +478,7 @@ def compute_localization_crlb_3d(
         "only_axially_singular": bool(axis_singular[2] and not xy_singular),
         "derivative_metadata": derivative_metadata,
         **rank_metadata,
+        **noise_metadata,
         **_diagnostic_metadata_aliases(
             derivative_metadata,
             rank_metadata,
@@ -323,260 +486,6 @@ def compute_localization_crlb_3d(
             sigma_units=["nm", "nm", "nm"],
         ),
     }
-
-def compare_modality_axial_information_content(
-    contrast_stack_by_modality: dict[str, np.ndarray],
-    noise_variance_by_modality: dict[str, np.ndarray | float],
-    pixel_size_nm: float | dict[str, float],
-    z_step_nm: float,
-    *,
-    pixel_size_nm_by_modality: dict[str, float] | None = None,
-    parent_result_metadata_by_modality: dict[str, dict[str, Any]] | None = None,
-    measurement_domain_by_modality: str | dict[str, str] | None = None,
-    signal_units_by_modality: str | dict[str, str] | None = None,
-    noise_variance_units_by_modality: str | dict[str, str] | None = None,
-) -> dict[str, Any]:
-    r"""
-    Order imaging modalities by the *axial* (z) Cramér-Rao bound they deliver
-    on a shared particle configuration, under a shared physics-faithful
-    forward model.
-
-    For each modality ``M`` the caller supplies a ``(3, H, W)`` z-stack
-    ``[C(z - dz), C(z), C(z + dz)]`` of the *same* particle and a noise
-    variance map; each stack is passed through
-    :func:`compute_localization_crlb_3d` and the modalities are then ordered
-    by ``sigma_z_nm`` smallest first. Modalities that are axially singular
-    (``sigma_z_nm = +inf`` because dC/dz vanishes — e.g. an even-in-z
-    Gaussian envelope rendered through a contrast mechanism that does not
-    encode phase) sort to the end of the ordering with infinite frames-to-
-    match-best, the correct estimator-theoretic statement that no amount of
-    frame averaging in that modality recovers axial information about that
-    particle.
-
-    Parameters
-    ----------
-    contrast_stack_by_modality : dict[str, ndarray]
-        Mapping ``modality_name -> (3, H, W) z-stack`` in the same
-        convention as :func:`compute_localization_crlb_3d`. The middle
-        plane is the in-focus reference; the outer planes feed the
-        symmetric finite-difference axial derivative.
-    noise_variance_by_modality : dict[str, ndarray | float]
-        Mapping ``modality_name -> pixel-wise variance`` (or scalar) for the
-        same modalities. Must share keys with ``contrast_stack_by_modality``.
-    pixel_size_nm : float or dict
-        Detector pixel pitch in nanometres. A scalar keeps the historical
-        shared-pitch behavior; a mapping supplies one pitch per modality.
-    z_step_nm : float
-        Axial spacing between the three rendered planes, in nanometres.
-        Must be > 0 and identical across modalities — the axial Fisher
-        derivative is `(C[2] - C[0]) / (2 * z_step_nm)` so a per-modality
-        z_step would scale the bound differently for each modality and
-        invalidate the ordering.
-
-    Returns
-    -------
-    dict with keys
-        - ``per_modality``         : dict[str, dict] from
-                                     :func:`compute_localization_crlb_3d`,
-                                     one entry per modality (preserves
-                                     ``sigma_x/y/z_nm``, ``axially_singular``,
-                                     etc.).
-        - ``ordering_z``           : list of ``(modality, sigma_z_nm)``
-                                     sorted ascending; +inf entries last.
-                                     ``ranking_z`` is retained as an alias.
-        - ``best_modality_z``      : argmin ``sigma_z_nm`` over modalities
-                                     for which the axial bound is finite;
-                                     ``None`` if every modality is axially
-                                     singular on the supplied stacks.
-        - ``relative_sigma_z``     : dict[modality -> sigma / sigma_best];
-                                     +inf when sigma is +inf or no best.
-        - ``frames_to_match_best_z`` : dict[modality -> rho^2]; the
-                                     equivalent-frame budget required for
-                                     modality M to match one frame of the
-                                     lowest-bound modality on *axial*
-                                     precision, under the assumption of
-                                     independent frames (Fisher additivity).
-        - ``axially_singular_per_modality`` : dict[modality -> bool]; the
-                                     ``axially_singular`` flag echoed from
-                                     the per-modality 3D CRLB result.
-
-    Why an axial-only ordering and not just sigma_xyz
-    -----------------------------------------------
-    The total 3D bound ``sigma_xyz`` mixes axial and lateral information
-    in a single scalar. For modalities with comparable lateral PSF widths
-    but very different axial structure, ``sigma_xyz`` can be dominated by
-    the lateral term and make the two modalities appear comparable. This helper
-    isolates the axial dimension so the ordering reflects axial-recovery
-    capability per modality, not a lateral-dominated aggregate.
-
-    Notes
-    -----
-    Ties are broken by the order in which modalities appear in the input
-    dict. Stacks must share the (3, H, W) shape across modalities; the
-    function does not resample or align across modalities — the caller is
-    responsible for producing comparable stacks (typically by routing the
-    same particle population through every ``ImagingModel`` instance with
-    the same z_step_nm and the same per-modality noise calibration).
-    """
-    from .lateral import (
-        _positive_finite_or_inf,
-        _resolve_modality_scalar_map,
-        _resolve_modality_string_map,
-        _sort_key_finite_then_value,
-    )
-
-    if not isinstance(contrast_stack_by_modality, dict) or not contrast_stack_by_modality:
-        raise ValueError(
-            "contrast_stack_by_modality must be a non-empty dict keyed by modality name."
-        )
-    if not isinstance(noise_variance_by_modality, dict):
-        raise ValueError("noise_variance_by_modality must be a dict.")
-    if set(contrast_stack_by_modality.keys()) != set(noise_variance_by_modality.keys()):
-        raise ValueError(
-            "contrast_stack_by_modality and noise_variance_by_modality must share keys; "
-            f"missing from stacks: "
-            f"{set(noise_variance_by_modality) - set(contrast_stack_by_modality)}; "
-            f"missing from noise: "
-            f"{set(contrast_stack_by_modality) - set(noise_variance_by_modality)}."
-        )
-    if not np.isfinite(z_step_nm) or z_step_nm <= 0.0:
-        raise ValueError(f"z_step_nm must be positive; got {z_step_nm}.")
-
-    pixel_sizes = _resolve_modality_scalar_map(
-        pixel_size_nm,
-        contrast_stack_by_modality.keys(),
-        "pixel_size_nm",
-        override=pixel_size_nm_by_modality,
-    )
-    measurement_domains = _resolve_modality_string_map(
-        measurement_domain_by_modality,
-        contrast_stack_by_modality.keys(),
-        "contrast",
-    )
-    signal_units = _resolve_modality_string_map(
-        signal_units_by_modality,
-        contrast_stack_by_modality.keys(),
-        "contrast",
-    )
-    noise_variance_units = _resolve_modality_string_map(
-        noise_variance_units_by_modality,
-        contrast_stack_by_modality.keys(),
-        "",
-    )
-    per_modality: dict[str, dict[str, Any]] = {}
-    for modality, stack in contrast_stack_by_modality.items():
-        try:
-            per_modality[modality] = compute_localization_crlb_3d(
-                stack,
-                noise_variance_by_modality[modality],
-                pixel_sizes[modality],
-                z_step_nm,
-                signal_units=signal_units[modality],
-                measurement_domain=measurement_domains[modality],
-                noise_variance_units=(
-                    noise_variance_units[modality] or None
-                ),
-            )
-        except Exception as exc:  # noqa: BLE001 — record per-modality failure without aborting comparison
-            per_modality[modality] = {
-                "error": repr(exc),
-                "sigma_x_nm": float("inf"),
-                "sigma_y_nm": float("inf"),
-                "sigma_z_nm": float("inf"),
-                "sigma_xy_nm": float("inf"),
-                "sigma_xyz_nm": float("inf"),
-                "fisher_matrix": None,
-                "fisher_det": None,
-                "axially_singular": True,
-                "singular": True,
-            }
-        if parent_result_metadata_by_modality is not None:
-            per_modality[modality]["parent_convergence_status"] = normalize_convergence_status(
-                dict(parent_result_metadata_by_modality).get(modality, {}).get(
-                    "convergence_status",
-                    "unchecked",
-                )
-            )
-
-    items = [
-        (m, _positive_finite_or_inf(r.get("sigma_z_nm", float("inf"))))
-        for m, r in per_modality.items()
-    ]
-
-    ranking_z = sorted(items, key=_sort_key_finite_then_value)
-
-    # Best modality is the smallest finite sigma_z whose 3D Fisher block is
-    # not axially singular. (sigma_z is finite iff the axial-derivative term
-    # carries information; axially_singular = True implies sigma_z = +inf.
-    # Checking both conditions keeps the per_modality contract explicit.)
-    best_modality_z: str | None = None
-    for modality, sigma in ranking_z:
-        rec = per_modality[modality]
-        if (
-            np.isfinite(sigma)
-            and not rec.get("axially_singular", True)
-            and sigma > 0.0
-        ):
-            best_modality_z = modality
-            break
-
-    if best_modality_z is None:
-        relative_sigma_z = init_infinite_dict(per_modality)
-        frames_to_match_best_z = init_infinite_dict(per_modality)
-    else:
-        sigma_best = float(per_modality[best_modality_z]["sigma_z_nm"])
-        relative_sigma_z = {}
-        frames_to_match_best_z = {}
-        for m, s in items:
-            if not np.isfinite(s) or s <= 0.0 or sigma_best <= 0.0:
-                relative_sigma_z[m] = float("inf")
-                frames_to_match_best_z[m] = float("inf")
-            else:
-                rho = s / sigma_best
-                relative_sigma_z[m] = float(rho)
-                frames_to_match_best_z[m] = float(rho * rho)
-
-    axially_singular_per_modality = {
-        m: bool(per_modality[m].get("axially_singular", True))
-        for m in per_modality
-    }
-
-    out: dict[str, Any] = {
-        "per_modality": per_modality,
-        "ordering_z": ranking_z,
-        "ranking_z": ranking_z,
-        "best_modality_z": best_modality_z,
-        "relative_sigma_z": relative_sigma_z,
-        "frames_to_match_best_z": frames_to_match_best_z,
-        "axially_singular_per_modality": axially_singular_per_modality,
-        "pixel_size_nm_by_modality": pixel_sizes,
-        "measurement_domain_by_modality": measurement_domains,
-        "signal_units_by_modality": signal_units,
-        "noise_variance_units_by_modality": {
-            modality: (
-                noise_variance_units[modality]
-                or _variance_units(signal_units[modality])
-            )
-            for modality in contrast_stack_by_modality
-        },
-    }
-    parent_metadata = combine_parent_statuses(parent_result_metadata_by_modality)
-    out["parent_status_metadata"] = parent_metadata
-    out["parent_convergence_status_by_modality"] = parent_metadata[
-        "parent_convergence_statuses"
-    ]
-    out["validation_status"] = parent_metadata["validation_status"]
-    out["production_grid_diagnostic"] = parent_metadata["production_grid_diagnostic"]
-    out["safe_for_ordering"] = parent_metadata["safe_for_ordering"]
-    out["safe_for_fusion"] = parent_metadata["safe_for_fusion"]
-    out["safe_for_time_allocation"] = parent_metadata["safe_for_time_allocation"]
-    out["safe_for_registration"] = parent_metadata["safe_for_registration"]
-    out["safe_for_detected_quanta_ranking"] = parent_metadata[
-        "safe_for_detected_quanta_ranking"
-    ]
-    out["status_reason"] = parent_metadata["status_reason"]
-
-    return out
 
 def adaptive_axial_crlb_from_stacks(stacks_by_z_step_nm: dict[float, np.ndarray], noise_variance_map: np.ndarray | float, pixel_size_nm: float, *, convergence_tolerance: float = 0.10, min_stable_steps: int = 2, source_contract: str = "Contract-LZ", modality: str = "unknown", signal_units: str = "contrast", measurement_domain: str = "contrast", noise_variance_units: str | None = None) -> dict[str, Any]:
     def _compute(step: float, stack: np.ndarray) -> dict[str, Any]:
@@ -600,4 +509,4 @@ def adaptive_axial_crlb_from_stacks(stacks_by_z_step_nm: dict[float, np.ndarray]
         modality=modality,
     )
 
-__all__ = ['compute_fisher_information_3d', 'compute_localization_crlb_3d', 'compare_modality_axial_information_content', 'adaptive_axial_crlb_from_stacks']
+__all__ = ['compute_fisher_information_3d', 'compute_localization_crlb_3d', 'adaptive_axial_crlb_from_stacks']

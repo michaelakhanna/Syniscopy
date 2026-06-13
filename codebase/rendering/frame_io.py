@@ -7,6 +7,7 @@ import os
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from config import MaskGenerationSettings
 import numpy as np
 
 from json_utils import json_safe
@@ -38,7 +39,7 @@ def write_supervision_sidecars(
     supervision_audit_summary: Mapping[str, Any],
 ) -> None:
     """Write supervision records, audit summary, and annotation schema sidecars."""
-    mask_output_directory = str(params["mask_output_directory"])
+    mask_output_directory = MaskGenerationSettings.from_params(params).output_directory
     audit_path = os.path.join(mask_output_directory, "supervision_audit.json")
     records_path = os.path.join(mask_output_directory, "supervision_records.jsonl")
     schema_path = os.path.join(mask_output_directory, "annotation_schema.json")

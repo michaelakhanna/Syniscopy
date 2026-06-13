@@ -7,21 +7,43 @@ its concrete subclasses.
 """
 
 from __future__ import annotations
-
 import numpy as np
-from typing import TYPE_CHECKING
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from config.runtime import (
+    BackendProfileSettings,
+    ModalitySettings,
+    OpticalInstrumentSettings,
     OpticalModeSettings,
+    OpticalScatteringSettings,
     SamplingGeometry,
-    param_value,
 )
-from optical_params import resolve_probe_wavelength_nm
 
 if TYPE_CHECKING:
     from substrate import SampleEnvironment
 
 from backend_fidelity import attach_backend_fidelity_metadata
+from detector_frame_conversion import (
+    DETECTOR_OUTPUT_DOMAIN_CAMERA_COUNTS,
+    MODEL_OUTPUT_DOMAIN_RELATIVE_INTENSITY,
+    REFERENCE_BASIS_RELATIVE_REFERENCE_INTENSITY,
+    VALUE_FORM_ABSOLUTE,
+    DetectorFrameConversion,
+    convert_model_output_to_detector_frame,
+)
+from direct_signal_contracts import (
+    DirectParticleSignalProduct,
+    analysis_contrast_representation,
+)
+from source_volume_support import (
+    SOURCE_Z_BASIS_ENTRY_SURFACE_DEPTH,
+    SOURCE_Z_BASIS_FOCUS_RELATIVE,
+    SOURCE_Z_BASIS_PHYSICAL_SAMPLE_WORLD,
+    SOURCE_Z_BASIS_PROJECTED_NO_Z,
+    normalize_source_z_basis,
+    resolve_entry_surface_depth_nm,
+)
 
 
 def is_vectorial_field(field: np.ndarray) -> bool:
@@ -35,6 +57,8 @@ def field_intensity(field: np.ndarray) -> np.ndarray:
     arr = np.asarray(field, dtype=np.complex128)
     if is_vectorial_field(arr):
         return np.sum(np.abs(arr) ** 2, axis=0)
+    if arr.ndim == 4 and arr.shape[1] == 3:
+        return np.sum(np.abs(arr) ** 2, axis=1)
     return np.abs(arr) ** 2
 
 
@@ -123,6 +147,86 @@ def coherent_phase_from_reference(E_sum: np.ndarray, E_ref: np.ndarray) -> np.nd
     return phi
 
 
+@dataclass(frozen=True)
+class SourceCoordinateContext:
+    """Coordinate contract for material-source placement and optical response."""
+
+    particle_world_z_nm: float | None
+    focus_plane_z_nm: float
+    particle_focus_relative_z_nm: float | None
+    source_density_z_basis: str = SOURCE_Z_BASIS_PHYSICAL_SAMPLE_WORLD
+    optical_response_z_basis: str = SOURCE_Z_BASIS_FOCUS_RELATIVE
+    entry_surface_depth_nm: float | None = None
+    projected_no_z: bool = False
+
+    @classmethod
+    def from_particle_z(
+        cls,
+        *,
+        particle_world_z_nm: float | None,
+        focus_plane_z_nm: float,
+        source_density_z_basis: str = SOURCE_Z_BASIS_PHYSICAL_SAMPLE_WORLD,
+        optical_response_z_basis: str = SOURCE_Z_BASIS_FOCUS_RELATIVE,
+        entry_surface_depth_nm: float | None = None,
+    ) -> "SourceCoordinateContext":
+        world_z = None if particle_world_z_nm is None else float(particle_world_z_nm)
+        focus_z = float(focus_plane_z_nm)
+        focus_relative = None if world_z is None else world_z - focus_z
+        source_basis = normalize_source_z_basis(source_density_z_basis, context="source_density_z_basis")
+        optical_basis = normalize_source_z_basis(optical_response_z_basis, context="optical_response_z_basis")
+        # Entry-surface depth is a material/source coordinate.  Derive it once
+        # in the shared context so SEM/TEM/fluorescence-specific code cannot
+        # accidentally reinterpret focus-relative z or a source-grid offset as
+        # physical material placement.
+        resolved_entry_surface_depth_nm = (
+            resolve_entry_surface_depth_nm(
+                particle_world_z_nm=world_z,
+                entry_surface_depth_nm=entry_surface_depth_nm,
+            )
+            if source_basis == SOURCE_Z_BASIS_ENTRY_SURFACE_DEPTH
+            else entry_surface_depth_nm
+        )
+        return cls(
+            particle_world_z_nm=world_z,
+            focus_plane_z_nm=focus_z,
+            particle_focus_relative_z_nm=focus_relative,
+            source_density_z_basis=source_basis,
+            optical_response_z_basis=optical_basis,
+            entry_surface_depth_nm=resolved_entry_surface_depth_nm,
+            projected_no_z=source_basis == SOURCE_Z_BASIS_PROJECTED_NO_Z,
+        )
+
+    @property
+    def source_density_z_nm(self) -> float | None:
+        basis = normalize_source_z_basis(self.source_density_z_basis, context="source_density_z_basis")
+        if self.projected_no_z or basis == SOURCE_Z_BASIS_PROJECTED_NO_Z:
+            return None
+        if basis == SOURCE_Z_BASIS_PHYSICAL_SAMPLE_WORLD:
+            return self.particle_world_z_nm
+        if basis == SOURCE_Z_BASIS_FOCUS_RELATIVE:
+            return self.particle_focus_relative_z_nm
+        if basis == SOURCE_Z_BASIS_ENTRY_SURFACE_DEPTH:
+            if self.entry_surface_depth_nm is None:
+                raise ValueError(
+                    "SourceCoordinateContext source_density_z_basis='entry_surface_depth' "
+                    "requires a resolved entry_surface_depth_nm. This is a physical "
+                    "material-depth coordinate, not focus-relative defocus or a display value."
+                )
+            return self.entry_surface_depth_nm
+        raise ValueError(f"unknown source_density_z_basis={self.source_density_z_basis!r}.")
+
+    def optical_response_z_nm_for_physical(self, z_nm: float) -> float | None:
+        basis = normalize_source_z_basis(self.optical_response_z_basis, context="optical_response_z_basis")
+        if basis == SOURCE_Z_BASIS_PROJECTED_NO_Z:
+            return None
+        z = float(z_nm)
+        if basis == SOURCE_Z_BASIS_FOCUS_RELATIVE:
+            return z - self.focus_plane_z_nm
+        if basis == SOURCE_Z_BASIS_PHYSICAL_SAMPLE_WORLD:
+            return z
+        raise ValueError(f"unknown optical_response_z_basis={self.optical_response_z_basis!r}.")
+
+
 class ImagingModel:
     """
     Abstract base for all imaging contrast models.
@@ -146,11 +250,21 @@ class ImagingModel:
     output_type: str = "intensity"
     uses_sample_environment_pattern: bool = False
     uses_sample_environment: bool = True
+    sample_environment_reference_field_only: bool = False
+    allow_intensity_sample_environment_fallback: bool = False
     uses_particle_material_sources: bool = False
     requires_complex_optical_psf: bool = True
     requires_optical_scattered_field: bool = True
     requires_pre_crop_optical_filtering: bool = False
     supports_spectral_channels: bool = False
+    # Lateral Fisher stationary shifts are a derivative-basis contract, not an
+    # optimization detail.  Subclasses with detector/world-fixed carriers or
+    # other non-translating scene terms must override these flags so high-level
+    # Fisher consumers perturb particle state instead of differentiating the
+    # detector grid.
+    stationary_lateral_fisher_safe_for_single_uniform_scene: bool = True
+    has_detector_fixed_lateral_carrier: bool = False
+    requires_rerendered_lateral_fisher: bool = False
 
     def compute_intensity(
         self,
@@ -195,11 +309,113 @@ class ImagingModel:
     ) -> np.ndarray | None:
         del particle_source_map, background_field, params, frame_index
         if self.uses_particle_material_sources:
-            raise NotImplementedError(
-                f"{type(self).__name__} declares uses_particle_material_sources=True "
-                "but does not implement compute_particle_contrast_from_source_map()."
+            raise RuntimeError(
+                f"{type(self).__name__} is a source-map modality. Bare direct "
+                "contrast arrays are not a stable analysis contract because source "
+                "density, secondary-yield, projected-phase, and detector-count "
+                "responses use different detector transfers. Use "
+                "compute_particle_signal_product_from_source_map() and explicitly "
+                "request its Fisher-safe detector/analysis array."
             )
         return None
+
+    def compute_particle_signal_product(
+        self,
+        E_sca_particle: np.ndarray,
+        background_field: np.ndarray,
+        params: dict,
+        particle_instance=None,
+        *,
+        frame_index: int = 0,
+    ) -> DirectParticleSignalProduct:
+        """Return a typed direct-particle response for Fisher-facing callers.
+
+        This shared method is intentionally separate from the untyped array API.
+        The fix-site invariant is that a caller can no longer confuse a
+        source-domain diagnostic with a detector/analysis-domain Fisher signal.
+        Non-source-map optical modalities keep their historical direct contrast
+        semantics here; source-map modalities must override this method with an
+        explicit detector-transfer policy.
+        """
+        del particle_instance, frame_index
+        if self.uses_particle_material_sources:
+            raise NotImplementedError(
+                f"{type(self).__name__} declares uses_particle_material_sources=True "
+                "and must implement compute_particle_signal_product()."
+            )
+        values = self.compute_per_particle_contrast(E_sca_particle, background_field, params)
+        representation = analysis_contrast_representation()
+        try:
+            modality = ModalitySettings.from_params(params).modality
+        except KeyError:
+            modality = type(self).__name__
+        return DirectParticleSignalProduct(
+            values=values,
+            representation=representation,
+            modality=modality,
+            producer=f"{type(self).__name__}.compute_particle_signal_product",
+            safe_for_fisher=True,
+            detector_scale_applied=False,
+            background_included=False,
+            source_representation=representation,
+            conversion_note=(
+                "Non-source-map direct optical response preserved as analysis "
+                "contrast. Source-map modalities override this method because "
+                "their detector transfer is modality-specific."
+            ),
+        )
+
+    def compute_particle_signal_product_from_source_map(
+        self,
+        particle_source_map: np.ndarray,
+        background_field: np.ndarray,
+        params: dict,
+        *,
+        frame_index: int = 0,
+    ) -> DirectParticleSignalProduct:
+        del particle_source_map, background_field, params, frame_index
+        if self.uses_particle_material_sources:
+            raise NotImplementedError(
+                f"{type(self).__name__} declares uses_particle_material_sources=True "
+                "and must implement compute_particle_signal_product_from_source_map()."
+            )
+        raise RuntimeError(
+            f"{type(self).__name__} does not use source maps; call "
+            "compute_particle_signal_product() instead."
+        )
+
+    def scattered_field_render_multiplier(
+        self,
+        params: dict,
+        *,
+        world_position_nm: np.ndarray,
+        diameter_nm: float,
+        material_properties=None,
+        frame_index: int = 0,
+        component_geometry=None,
+        orientation_matrix: np.ndarray | None = None,
+    ) -> complex:
+        del params, world_position_nm, diameter_nm, material_properties, frame_index
+        del component_geometry, orientation_matrix
+        return 1.0 + 0.0j
+
+    def particle_source_z_basis(self, params: dict) -> str:
+        """Coordinate basis expected by ``accumulate_particle_source``.
+
+        Source-map modalities must declare whether ``particle_z_nm`` is a
+        physical sample-world coordinate, a focus-relative coordinate, or
+        unused. The renderer uses this contract when focus planes shift
+        independently of particle trajectories.
+        """
+        del params
+        return SOURCE_Z_BASIS_PHYSICAL_SAMPLE_WORLD
+
+    def source_coordinate_contract(self, params: dict) -> dict:
+        source_basis = self.particle_source_z_basis(params)
+        return {
+            "source_density_z_basis": source_basis,
+            "optical_response_z_basis": "focus_relative",
+        }
 
     def compute_scene_intensity(
         self,
@@ -241,10 +457,14 @@ class ImagingModel:
         material_properties,
         params: dict,
         particle_z_nm: float | None = None,
+        source_coordinate_context: SourceCoordinateContext | None = None,
         source_multiplier: float = 1.0,
+        component_geometry=None,
+        orientation_matrix: np.ndarray | None = None,
     ) -> None:
         del source_canvas, center_x_canvas, center_y_canvas, diameter_nm, pixel_size_nm
-        del os_factor, material_properties, params, particle_z_nm, source_multiplier
+        del os_factor, material_properties, params, particle_z_nm, source_coordinate_context, source_multiplier
+        del component_geometry, orientation_matrix
         if self.uses_particle_material_sources:
             raise NotImplementedError(
                 f"{type(self).__name__} declares uses_particle_material_sources=True "
@@ -262,7 +482,7 @@ class ImagingModel:
 
     def probe_wavelength_nm(self, params: dict) -> float:
         """Detector-domain probe wavelength used by response functions."""
-        return resolve_probe_wavelength_nm(params)
+        return OpticalInstrumentSettings.from_params(params).probe_wavelength_nm
 
     def illumination_field(self, shape: tuple[int, int], params: dict) -> np.ndarray:
         """Incident-field abstraction; subclasses override geometry-specific cases."""
@@ -284,7 +504,7 @@ class ImagingModel:
             measurement_domain = "phase"
             signal_units = "radian"
         elif output_type == "fringe":
-            measurement_domain = "fringe_count"
+            measurement_domain = "count"
             signal_units = "detector_count"
         else:
             measurement_domain = "count"
@@ -293,7 +513,13 @@ class ImagingModel:
             "kind": "generic_imaging_model",
             "model_class": self.__class__.__name__,
             "output_type": output_type,
+            "observable_subtype": (
+                "raw_fringe_interferogram"
+                if output_type == "fringe"
+                else output_type
+            ),
             "optical_field_backend": optical.optical_field_backend,
+            "optical_scattering_model": OpticalScatteringSettings.from_params(params).model,
             "vectorial_detection_mode": optical.vectorial_detection_mode,
             "polarization_model": optical.polarization_model,
             "measurement_domain": measurement_domain,
@@ -308,9 +534,12 @@ class ImagingModel:
             "requires_optical_scattered_field": bool(self.requires_optical_scattered_field),
             "uses_sample_environment_pattern": bool(self.uses_sample_environment_pattern),
             "supports_spectral_channels": bool(self.supports_spectral_channels),
-            "fidelity_label": str(
-                param_value(params, "profile_fidelity_label")
+            "stationary_lateral_fisher_safe_for_single_uniform_scene": bool(
+                self.stationary_lateral_fisher_safe_for_single_uniform_scene
             ),
+            "has_detector_fixed_lateral_carrier": bool(self.has_detector_fixed_lateral_carrier),
+            "requires_rerendered_lateral_fisher": bool(self.requires_rerendered_lateral_fisher),
+            "fidelity_label": BackendProfileSettings.from_params(params).profile_fidelity_label,
         }
         return attach_backend_fidelity_metadata(response, params=params)
 
@@ -322,8 +551,7 @@ class ImagingModel:
         override this so they do not inherit an optical wavelength/NA-derived
         guard band.
         """
-        del params
-        return None
+        return BackendProfileSettings.from_params(params).filter_guard_radius_pixels()
 
     def apply_sample_environment(
         self,
@@ -350,7 +578,7 @@ class ImagingModel:
 
         The base implementation delegates to the canonical counts-domain
         camera model. Per-modality differences are supplied through
-        ``params["modality_noise"][imaging_model]`` rather than through
+        ``configured parameters["modality_noise"][imaging_model]`` rather than through
         duplicate Poisson/readout code paths.
         """
         from camera_noise import apply_camera_noise_counts
@@ -362,36 +590,31 @@ class ImagingModel:
             runtime=detector_noise_runtime,
         )
 
-    def scale_intensity_to_counts(
+    def convert_model_output_to_detector_frame(
         self,
-        intensity: np.ndarray,
+        model_output: np.ndarray,
         background_final: np.ndarray,
         E_ref_intensity_final: np.ndarray,
         params: dict,
     ) -> np.ndarray:
         """
-        Convert the model's dimensionless ``intensity`` output into detector
-        photon counts.
+        Convert this model's native output into the renderer detector frame.
 
-        Base count scaling for interferometric-scale intensity outputs:
-        divide by |E_ref|^2 (the natural scale of the interferometric
-        compute_intensity output) and multiply by ``background_final``, which
-        is the count-domain reference image constructed from the scalar
-        ``background_intensity`` and the substrate pattern. This leaves a
-        uniform ~background count level with a small contrast-scale
-        perturbation from |E_sca|.
-
-        Models whose output does not live at the same scale as |E_ref|^2
-        (dark-field, phase, etc.) must override this method. See the
-        per-class docstrings for rationale.
+        The conversion procedure is centralized in
+        ``detector_frame_conversion``; subclasses provide only the conversion
+        parameters when their output basis differs from relative-reference
+        intensity.
         """
-        E_ref_intensity_safe = np.maximum(E_ref_intensity_final, 1e-12)
-        counts = background_final * (intensity / E_ref_intensity_safe)
-        if np.any(~np.isfinite(counts)):
-            raise ValueError(f"{type(self).__name__}.scale_intensity_to_counts produced non-finite counts.")
-        if np.any(counts < 0.0):
-            raise ValueError(
-                f"{type(self).__name__}.scale_intensity_to_counts produced negative counts; "
-                "signed-output modalities must override this method."
-            )
-        return counts
+        return convert_model_output_to_detector_frame(
+            model_output=model_output,
+            background_frame=background_final,
+            reference_intensity_frame=E_ref_intensity_final,
+            conversion=DetectorFrameConversion(
+                model_output_domain=MODEL_OUTPUT_DOMAIN_RELATIVE_INTENSITY,
+                detector_output_domain=DETECTOR_OUTPUT_DOMAIN_CAMERA_COUNTS,
+                value_form=VALUE_FORM_ABSOLUTE,
+                reference_basis=REFERENCE_BASIS_RELATIVE_REFERENCE_INTENSITY,
+            ),
+            params=params,
+            context=f"{type(self).__name__}.convert_model_output_to_detector_frame",
+        )

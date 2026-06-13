@@ -87,6 +87,23 @@ def _as_float(value: Any) -> float:
     return out
 
 
+def _as_positive_fps(value: Any, name: str) -> float:
+    fps = _as_float(value)
+    if fps <= 0.0:
+        raise ValueError(f"{name} must be > 0; got {fps!r}")
+    return fps
+
+
+def _require_matching_fps(left: float | None, left_name: str, right: float | None, right_name: str) -> None:
+    if left is None or right is None:
+        return
+    if not np.isclose(float(left), float(right), rtol=1e-12, atol=0.0):
+        raise ValueError(
+            f"{left_name} and {right_name} must describe the same frame interval; "
+            f"got {left_name}={float(left)!r}, {right_name}={float(right)!r}."
+        )
+
+
 def _as_axis_list(state_axes: Sequence[str] | None, dim: int) -> tuple[str, ...]:
     if state_axes is None:
         if dim == 2:
@@ -118,6 +135,33 @@ def _symmetrize(matrix: np.ndarray) -> np.ndarray:
     return 0.5 * (matrix + matrix.T)
 
 
+def _validate_psd_matrix(
+    value: np.ndarray,
+    name: str,
+    *,
+    relative_tol: float = 1e-12,
+    positive_definite: bool = False,
+) -> np.ndarray:
+    """Return a symmetrized PSD matrix or reject invalid covariance/Fisher input."""
+    mat = _symmetrize(np.asarray(value, dtype=float))
+    eigvals = np.linalg.eigvalsh(mat)
+    if not np.all(np.isfinite(eigvals)):
+        raise ValueError(f"{name} must have finite eigenvalues")
+    scale = max(1.0, float(np.max(np.abs(eigvals))) if eigvals.size else 0.0)
+    tol = float(relative_tol) * scale
+    min_eval = float(np.min(eigvals)) if eigvals.size else 0.0
+    if min_eval < -tol:
+        raise ValueError(
+            f"{name} must be positive semidefinite; minimum eigenvalue is {min_eval:.6g}"
+        )
+    if positive_definite and min_eval <= tol:
+        raise ValueError(
+            f"{name} must be positive definite for the dynamic prior; "
+            f"minimum eigenvalue is {min_eval:.6g}"
+        )
+    return mat
+
+
 def _safe_inverse_psd(matrix: np.ndarray, *, floor_ratio: float = 1e-14) -> np.ndarray:
     """Robust inverse of symmetric positive semidefinite matrices."""
     mat = _symmetrize(np.asarray(matrix, dtype=float))
@@ -129,7 +173,9 @@ def _safe_inverse_psd(matrix: np.ndarray, *, floor_ratio: float = 1e-14) -> np.n
     eps = np.finfo(float).eps
     max_eval = float(np.max(np.abs(eigvals)))
     tol = max(eps * max(1.0, max_eval), floor_ratio * eps)
-    inv_vals = np.where(eigvals > tol, 1.0 / eigvals, 0.0)
+    inv_vals = np.zeros_like(eigvals, dtype=float)
+    positive = eigvals > tol
+    inv_vals[positive] = 1.0 / eigvals[positive]
     out = (eigvecs * inv_vals) @ eigvecs.T
     return _symmetrize(out)
 
@@ -208,6 +254,12 @@ def _axis_to_values(
     return {axis: _as_float(arr[i]) for i, axis in enumerate(target_axes)}
 
 
+def _require_nonnegative_axis_values(values: Mapping[str, float], name: str) -> None:
+    for axis, value in values.items():
+        if value < 0.0:
+            raise ValueError(f"{name}[{axis!r}] must be non-negative; got {value!r}")
+
+
 def build_brownian_process_covariance(
     state_axes: Sequence[str],
     *,
@@ -234,6 +286,8 @@ def build_brownian_process_covariance(
 
     D_trans = _axis_to_values(translational_diffusion_coeff_m2_s, trans_axes)
     D_rot = _axis_to_values(rotational_diffusion_coeff_rad2_s, rot_axes)
+    _require_nonnegative_axis_values(D_trans, "translational_diffusion_coeff_m2_s")
+    _require_nonnegative_axis_values(D_rot, "rotational_diffusion_coeff_rad2_s")
 
     q_values = {axis: 0.0 for axis in axes}
     for axis in axes:
@@ -244,6 +298,7 @@ def build_brownian_process_covariance(
 
     if extra_axis_process_variance_per_step is not None:
         extra = _axis_to_values(extra_axis_process_variance_per_step, axes)
+        _require_nonnegative_axis_values(extra, "extra_axis_process_variance_per_step")
         for axis, value in extra.items():
             if axis in q_values:
                 q_values[axis] = q_values[axis] + _as_float(value)
@@ -326,6 +381,7 @@ def _validate_fisher_sequence(per_frame_fisher: Sequence[np.ndarray]) -> list[np
             )
         if not np.all(np.isfinite(matrix)):
             raise ValueError(f"per_frame_fisher[{idx}] must contain only finite values")
+        matrices[idx] = _validate_psd_matrix(matrix, f"per_frame_fisher[{idx}]")
     return matrices
 
 
@@ -336,6 +392,7 @@ def compute_dynamic_bayesian_crlb(
     state_axes: Sequence[str] | None = None,
     state_transition_matrix: np.ndarray | None = None,
     state_transition_fps: float | None = None,
+    process_noise_fps: float | None = None,
     initial_covariance: np.ndarray | None = None,
     initial_precision: np.ndarray | None = None,
     initial_fisher: np.ndarray | None = None,
@@ -345,8 +402,11 @@ def compute_dynamic_bayesian_crlb(
     """Compute dynamic Bayesian CRLB over a sequence of per-frame Fisher matrices.
 
     Measurement information is accumulated by covariance prediction followed by
-    an information-form measurement update:
+    an information-form measurement update.  The supplied initial covariance is
+    the prior for frame 0 before the first measurement update; the one-step
+    process covariance is applied only between rendered frames:
 
+    ``P^-_0 = P_initial``
     ``P^-_t = A P_{t-1} A^T + Q``
     ``J^-_t = (P^-_t)^{-1}``
     ``J_t = J^-_t + H_t``
@@ -358,14 +418,33 @@ def compute_dynamic_bayesian_crlb(
     fisher = _validate_fisher_sequence(per_frame_fisher)
     dim = fisher[0].shape[0]
     axes = _as_axis_list(state_axes, dim)
-    q = _symmetrize(_to_square_matrix(process_noise_covariance, dim, "process_noise_covariance"))
+    q = _validate_psd_matrix(
+        _to_square_matrix(process_noise_covariance, dim, "process_noise_covariance"),
+        "process_noise_covariance",
+    )
+    transition_fps = None if state_transition_fps is None else _as_positive_fps(state_transition_fps, "state_transition_fps")
+    q_fps = None if process_noise_fps is None else _as_positive_fps(process_noise_fps, "process_noise_fps")
+    if state_transition_matrix is None and transition_fps is None and q_fps is not None:
+        transition_fps = q_fps
+    if state_transition_matrix is not None or transition_fps is not None:
+        if q_fps is None:
+            raise ValueError(
+                "process_noise_fps is required when a state transition matrix or "
+                "state_transition_fps is supplied, so Q and A cannot silently use different dt."
+            )
+        if transition_fps is None:
+            raise ValueError(
+                "state_transition_fps is required when a state_transition_matrix is supplied, "
+                "so Q and A timing can be checked explicitly."
+            )
+    _require_matching_fps(q_fps, "process_noise_fps", transition_fps, "state_transition_fps")
     if state_transition_matrix is None:
-        if state_transition_fps is None:
+        if transition_fps is None:
             transition = np.eye(dim, dtype=float)
         else:
             transition = build_velocity_state_transition_matrix(
                 axes,
-                fps=state_transition_fps,
+                fps=transition_fps,
             )
     else:
         transition = _to_square_matrix(state_transition_matrix, dim, "state_transition_matrix")
@@ -375,14 +454,26 @@ def compute_dynamic_bayesian_crlb(
         raise ValueError("Only one of initial_covariance, initial_precision, initial_fisher may be supplied.")
 
     if initial_covariance is not None:
-        p = _symmetrize(_to_square_matrix(initial_covariance, dim, "initial_covariance"))
+        p = _validate_psd_matrix(
+            _to_square_matrix(initial_covariance, dim, "initial_covariance"),
+            "initial_covariance",
+            positive_definite=True,
+        )
     elif initial_fisher is not None:
         p = _safe_inverse_psd(
-            _symmetrize(_to_square_matrix(initial_fisher, dim, "initial_fisher"))
+            _validate_psd_matrix(
+                _to_square_matrix(initial_fisher, dim, "initial_fisher"),
+                "initial_fisher",
+                positive_definite=True,
+            )
         )
     elif initial_precision is not None:
         p = _safe_inverse_psd(
-            _symmetrize(_to_square_matrix(initial_precision, dim, "initial_precision"))
+            _validate_psd_matrix(
+                _to_square_matrix(initial_precision, dim, "initial_precision"),
+                "initial_precision",
+                positive_definite=True,
+            )
         )
     else:
         if initial_variance_fallback is None:
@@ -410,7 +501,7 @@ def compute_dynamic_bayesian_crlb(
     predicted_covariances: list[np.ndarray] = []
 
     running_fisher = np.zeros((dim, dim), dtype=float)
-    for frame_fisher in fisher:
+    for frame_index, frame_fisher in enumerate(fisher):
         # Static, frame-wise accumulation for comparison.
         running_fisher = _symmetrize(running_fisher + frame_fisher)
         static_fisher.append(running_fisher.copy())
@@ -419,8 +510,13 @@ def compute_dynamic_bayesian_crlb(
         static_covariance.append(static_cov)
         static_crlb.append(_diag_crlb_for_fisher(running_fisher, static_cov))
 
-        # Bayesian prediction/update in information form.
-        predicted_cov = _symmetrize(transition @ p @ transition.T + q)
+        # Bayesian prediction/update in information form.  There is no elapsed
+        # inter-frame process interval before frame 0; the initial covariance
+        # is already the frame-0 prior.
+        if frame_index == 0:
+            predicted_cov = _symmetrize(p)
+        else:
+            predicted_cov = _symmetrize(transition @ p @ transition.T + q)
         predicted_fisher = _safe_inverse_psd(predicted_cov)
         posterior_fisher = _symmetrize(predicted_fisher + frame_fisher)
         posterior_cov = _safe_inverse_psd(posterior_fisher)
@@ -451,7 +547,7 @@ def compute_dynamic_bayesian_crlb(
         smoothed_covariance[-1] = dynamic_covariance[-1]
         for k in range(n - 2, -1, -1):
             inv_pred_next = _safe_inverse_psd(predicted_covariances[k + 1])
-            gain = _symmetrize(dynamic_covariance[k] @ transition.T @ inv_pred_next)
+            gain = dynamic_covariance[k] @ transition.T @ inv_pred_next
             candidate = smoothed_covariance[k + 1]
             if candidate is None:
                 raise RuntimeError("PCRLB smoothing failed due to an internal state error.")
@@ -503,6 +599,7 @@ def compute_brownian_prior_sensitivity_sweep(
     state_axes: Sequence[str] | None = None,
     state_transition_matrix: np.ndarray | None = None,
     state_transition_fps: float | None = None,
+    process_noise_fps: float | None = None,
     initial_covariance: np.ndarray | None = None,
     initial_precision: np.ndarray | None = None,
     initial_fisher: np.ndarray | None = None,
@@ -530,6 +627,7 @@ def compute_brownian_prior_sensitivity_sweep(
             state_axes=state_axes,
             state_transition_matrix=state_transition_matrix,
             state_transition_fps=state_transition_fps,
+            process_noise_fps=process_noise_fps,
             initial_covariance=initial_covariance,
             initial_precision=initial_precision,
             initial_fisher=initial_fisher,
@@ -560,6 +658,7 @@ def compute_dynamic_bayesian_crlb_from_fisher_sequence(
     state_axes: Sequence[str] | None = None,
     state_transition_matrix: np.ndarray | None = None,
     state_transition_fps: float | None = None,
+    process_noise_fps: float | None = None,
     initial_covariance: np.ndarray | None = None,
     initial_precision: np.ndarray | None = None,
     initial_fisher: np.ndarray | None = None,
@@ -576,12 +675,23 @@ def compute_dynamic_bayesian_crlb_from_fisher_sequence(
     dynamic_validation_status: str = "implemented_estimator_layer",
 ) -> dict[str, Any]:
     """Estimator-layer wrapper around :func:`compute_dynamic_bayesian_crlb`."""
+    metadata_fps = None if fps is None else _as_positive_fps(fps, "fps")
+    transition_fps = None if state_transition_fps is None else _as_positive_fps(state_transition_fps, "state_transition_fps")
+    q_fps = None if process_noise_fps is None else _as_positive_fps(process_noise_fps, "process_noise_fps")
+    if transition_fps is None:
+        transition_fps = metadata_fps
+    if q_fps is None:
+        q_fps = metadata_fps
+    _require_matching_fps(metadata_fps, "fps", transition_fps, "state_transition_fps")
+    _require_matching_fps(metadata_fps, "fps", q_fps, "process_noise_fps")
+    _require_matching_fps(q_fps, "process_noise_fps", transition_fps, "state_transition_fps")
     dyn = compute_dynamic_bayesian_crlb(
         per_frame_fisher_matrices,
         process_noise_covariance,
         state_axes=state_axes,
         state_transition_matrix=state_transition_matrix,
-        state_transition_fps=state_transition_fps,
+        state_transition_fps=transition_fps,
+        process_noise_fps=q_fps,
         initial_covariance=initial_covariance,
         initial_precision=initial_precision,
         initial_fisher=initial_fisher,
@@ -609,8 +719,10 @@ def compute_dynamic_bayesian_crlb_from_fisher_sequence(
         "dynamic_bayesian_enabled": True,
         "dynamic_validation_status": str(dynamic_validation_status),
         "frame_count": int(len(dyn.per_frame_fisher_matrices)),
-        "fps": None if fps is None else float(fps),
-        "dt_seconds": None if fps is None else float(1.0 / float(fps)),
+        "fps": None if metadata_fps is None else float(metadata_fps),
+        "dt_seconds": None if metadata_fps is None else float(1.0 / float(metadata_fps)),
+        "state_transition_fps": None if transition_fps is None else float(transition_fps),
+        "process_noise_fps": None if q_fps is None else float(q_fps),
         "measurement_domain": measurement_domain,
         "signal_units": signal_units,
         "noise_variance_units": noise_variance_units,
@@ -638,6 +750,9 @@ def compute_dynamic_bayesian_crlb_from_fisher_sequence(
             {
                 "static_crlb": [row.tolist() for row in dyn.static_crlb],
                 "dynamic_crlb": [row.tolist() for row in dyn.dynamic_crlb],
+                "dynamic_covariance_matrices": [
+                    row.tolist() for row in dyn.dynamic_covariance_matrices
+                ],
                 "dynamic_improvement_vs_static": [
                     row.tolist() for row in dyn.dynamic_improvement_vs_static
                 ],
@@ -699,6 +814,7 @@ def summarize_fisher_sequence(
             state_axes=state_axes,
             initial_covariance=initial_covariance,
             state_transition_fps=fps,
+            process_noise_fps=fps,
             include_smoothing=include_smoothing,
             measurement_domain=measurement_domain,
             signal_units=signal_units,

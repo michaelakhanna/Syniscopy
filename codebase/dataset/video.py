@@ -1,7 +1,8 @@
 """Per-video dataset generation runtime."""
 
 from __future__ import annotations
-from config import param_value
+from configured_parameters import configured_assign
+from config import DetectorReadoutSettings, MatchedMicroscopeSettings, SimulationOutputSettings
 
 import logging
 import os
@@ -13,10 +14,12 @@ import numpy as np
 
 from camera_noise import clear_detector_static_noise_cache
 from common_utils import relative_path
-from counterfactual_packets import save_counterfactual_modality_packet
+from matched_microscope_packets import save_matched_microscope_packet
 from json_utils import json_safe
 from metadata import build_dataset_index_entry, build_video_manifest, save_video_manifest
-from simulation import render_matched_modality_observations, run_simulation
+from simulation import render_matched_microscope_observations, run_simulation
+from simulation_runtime_state import runtime_state
+from stochastic_runtime import rng_from_seed
 from substrate.patterns import clear_sample_environment_pattern_layout_cache
 
 from .completeness import _validate_dataset_output_contract, _video_assets_complete
@@ -135,7 +138,7 @@ def process_dataset_videos(
 
         video_seed = seed_by_index[int(video_index)]
 
-        video_rng = np.random.default_rng(video_seed)
+        video_rng = rng_from_seed(video_seed, stream="dataset_video_parameters")
 
         assignment = assignment_by_index.get(int(video_index))
         active_leaf_spec = (
@@ -145,7 +148,7 @@ def process_dataset_videos(
         if video_param_builder is not None:
             params = video_param_builder(video_index, video_rng)
             if not isinstance(params, dict):
-                raise TypeError("video_param_builder must return a PARAMS dictionary.")
+                raise TypeError("video_param_builder must return a parameters dictionary.")
             params = apply_parameter_overrides(params, param_overrides)
         else:
             params = build_dataset_video_params(
@@ -160,8 +163,8 @@ def process_dataset_videos(
         # out of apply_parameter_overrides() so the override validator remains
         # strict while optics and other deterministic physics paths still see a
         # per-video seed.
-        params["random_seed"] = int(video_seed)
-        params["_substrate_pattern_layout_cache_token"] = f"{video_id}:{int(video_seed)}"
+        configured_assign(params, 'random_seed', int(video_seed))
+        runtime_state(params).substrate_pattern_layout_cache_token = f"{video_id}:{int(video_seed)}"
         _validate_dataset_output_contract(params)
 
         video_filename = os.path.join(video_dir, f"{video_id}.avi")
@@ -196,21 +199,25 @@ def process_dataset_videos(
             shutil.rmtree(channel_sidecar_dir)
         os.makedirs(masks_dir, exist_ok=True)
 
-        params["output_filename"] = video_filename
-        params["mask_output_directory"] = masks_dir
-        params["multichannel_sidecar_directory"] = channel_sidecar_dir
+        configured_assign(params, 'output_filename', video_filename)
+        configured_assign(params, 'mask_output_directory', masks_dir)
+        configured_assign(params, 'multichannel_sidecar_directory', channel_sidecar_dir)
         if representative_params is None:
             representative_params = deepcopy(params)
 
-        save_frame_sequence = bool(param_value(params, 'save_frame_sequence'))
-        save_raw_frame_views = bool(param_value(params, 'save_raw_frame_views'))
-        save_raw_camera_frame_sequence = bool(param_value(params, 'save_raw_camera_frame_sequence'))
+        output_settings = SimulationOutputSettings.from_params(params)
+        matched_settings = MatchedMicroscopeSettings.from_params(params)
+        save_frame_sequence = output_settings.save_frame_sequence
+        save_raw_frame_views = output_settings.save_raw_frame_views
+        save_raw_camera_frame_sequence = output_settings.save_raw_camera_frame_sequence
+        matched_microscopes = matched_settings.microscopes
         simulation_result = run_simulation(
             params,
             return_frames=bool(
                 save_frame_sequence
                 or save_raw_frame_views
                 or save_raw_camera_frame_sequence
+                or matched_microscopes is not None
             ),
         )
         result_metadata = (
@@ -238,7 +245,7 @@ def process_dataset_videos(
             _save_raw_camera_frame_sequence(
                 raw_signal_frames_for_sequence,
                 raw_camera_frame_sequence_dir,
-                bit_depth=int(param_value(params, "bit_depth")),
+                bit_depth=DetectorReadoutSettings.from_params(params).bit_depth,
             )
             raw_camera_frame_sequence_rel = os.path.join("raw_camera_frames", video_id)
 
@@ -296,33 +303,47 @@ def process_dataset_videos(
             manifest["background_subtracted_video_path"] = manifest.get("output_video_path")
         if raw_camera_frame_sequence_rel is not None:
             manifest["raw_camera_frame_sequence_dir"] = raw_camera_frame_sequence_rel
-        matched_modalities = param_value(params, "matched_modalities")
-        if matched_modalities is not None:
-            packet_payload = render_matched_modality_observations(
-                params,
-                matched_modalities,
+        if matched_microscopes is not None:
+            matched_params = deepcopy(params)
+            run_scope_layout = dict(result_metadata.get("run_scope_layout", {}) or {})
+            for key, value in run_scope_layout.items():
+                configured_assign(matched_params, key, value)
+            packet_payload = render_matched_microscope_observations(
+                matched_params,
+                matched_microscopes,
                 frame_index=0,
+                latent_scene=result_metadata.get("latent_scene"),
             )
-            saved_packet_path = save_counterfactual_modality_packet(
+            saved_packet_path = save_matched_microscope_packet(
                 matched_packet_path,
                 latent_state=packet_payload["latent_state"],
-                images_by_modality=packet_payload["images_by_modality"],
-                rendered_signal_frame_by_modality=packet_payload.get("rendered_signal_frame_by_modality"),
-                reference_frame_by_modality=packet_payload.get("reference_frame_by_modality"),
-                noise_variance_by_modality=packet_payload.get("noise_variance_by_modality"),
+                images_by_microscope=packet_payload["images_by_microscope"],
+                modality_by_microscope=packet_payload["metadata"]["modality_by_microscope"],
+                rendered_signal_frame_by_microscope=packet_payload.get("rendered_signal_frame_by_microscope"),
+                reference_frame_by_microscope=packet_payload.get("reference_frame_by_microscope"),
+                noise_variance_by_microscope=packet_payload.get("noise_variance_by_microscope"),
+                # Matched packets must persist the full Fisher likelihood, not
+                # only the diagonal variance summary, so row-correlated detector
+                # covariance can survive save/load and downstream fusion.
+                analysis_noise_model_by_microscope=packet_payload.get(
+                    "analysis_contrast_noise_model_by_microscope"
+                ),
                 masks=packet_payload.get("masks"),
-                fisher_by_modality=packet_payload.get("fisher_by_modality"),
-                crlb_by_modality=packet_payload.get("crlb_by_modality"),
+                fisher_by_microscope=packet_payload.get("fisher_by_microscope"),
+                crlb_by_microscope=packet_payload.get("crlb_by_microscope"),
                 metadata=packet_payload["metadata"],
                 require_information_fields=True,
             )
-            manifest["matched_modality_packet_npz"] = json_safe(
+            manifest["matched_microscope_packet_npz"] = json_safe(
                 relative_path(base_output_dir, saved_packet_path)
             )
-            manifest["matched_modalities_requested"] = [str(name) for name in matched_modalities]
-            manifest["matched_modalities"] = [
-                str(name) for name in packet_payload.get("metadata", {}).get("modalities", [])
+            manifest["matched_microscopes_requested"] = json_safe(matched_microscopes)
+            manifest["matched_microscopes"] = [
+                str(name) for name in packet_payload.get("metadata", {}).get("microscopes", [])
             ]
+            manifest["modality_by_matched_microscope"] = dict(
+                packet_payload.get("metadata", {}).get("modality_by_microscope", {})
+            )
         if frame_sequence_rel is not None:
             manifest["frame_sequence_dir"] = frame_sequence_rel
             manifest["training_frames_dir"] = frame_sequence_rel
@@ -343,7 +364,7 @@ def process_dataset_videos(
         # No new videos were needed. Reconstruct a representative template so
         # the simulation manifest still reflects the active request.
         template_seed = seed_by_index.get(start_index, _derive_video_seed(random_seed, start_index))
-        template_rng = np.random.default_rng(template_seed)
+        template_rng = rng_from_seed(template_seed, stream="dataset_template_parameters")
         template_leaf = None
         if composition is not None and leaf_assignments:
             template_leaf = assignment_by_index.get(start_index, {}).get("leaf_spec")
@@ -352,7 +373,7 @@ def process_dataset_videos(
                 video_param_builder(start_index, template_rng),
                 param_overrides,
             )
-            representative_params["random_seed"] = int(template_seed)
+            configured_assign(representative_params, 'random_seed', int(template_seed))
             _validate_dataset_output_contract(representative_params)
         else:
             template_spec = template_leaf if template_leaf is not None else leaf_specs[0]
@@ -364,7 +385,7 @@ def process_dataset_videos(
                 recipe_overrides=template_spec.get("recipe_overrides"),
                 param_overrides=template_spec.get("param_overrides"),
             )
-            representative_params["random_seed"] = int(template_seed)
+            configured_assign(representative_params, 'random_seed', int(template_seed))
             _validate_dataset_output_contract(representative_params)
 
     return dataset_entries_by_index, representative_params, generated_count, skipped_count

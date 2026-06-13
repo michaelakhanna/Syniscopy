@@ -8,7 +8,16 @@ from ._shared import (
     np,
     reference_vector_for_scattered,
 )
-from config.runtime import CountBudgetSettings, OpticalModeSettings, param_value
+from config.runtime import OpticalModeSettings, QpiReadoutSettings
+from detector_frame_conversion import (
+    DETECTOR_OUTPUT_DOMAIN_PHASE_DISPLAY_COUNTS,
+    MODEL_OUTPUT_DOMAIN_PHASE_RADIANS,
+    REFERENCE_BASIS_NONE,
+    VALUE_FORM_DISPLAY,
+    DetectorFrameConversion,
+    convert_model_output_to_detector_frame,
+)
+from stochastic_runtime import rng_from_seed
 
 class QuantitativePhaseImagingModel(ImagingModel):
     """
@@ -42,13 +51,14 @@ class QuantitativePhaseImagingModel(ImagingModel):
 
     output_type = "phase"
     uses_sample_environment_pattern = True  # Phase is referenced to the structured coherent background field.
+    sample_environment_reference_field_only = True
     supports_spectral_channels = True
 
     def __init__(self, params: dict) -> None:
         E_ref_amplitude = OpticalModeSettings.from_params(params).reference_field_amplitude
         if E_ref_amplitude <= 0.0:
             raise ValueError(
-                "PARAMS['reference_field_amplitude'] must be positive for "
+                "parameters['reference_field_amplitude'] must be positive for "
                 "QuantitativePhaseImagingModel (imaging_model='quantitative_phase'). "
                 "Phase is only defined relative to a nonzero reference field."
             )
@@ -87,44 +97,45 @@ class QuantitativePhaseImagingModel(ImagingModel):
 
     def compute_response_function(self, shape: tuple[int, int], params: dict) -> dict:
         response = super().compute_response_function(shape, params)
-        phase_noise = param_value(params, 'qpi_phase_noise_std_rad')
-        visibility = float(param_value(params, 'qpi_visibility'))
-        detected_quanta_raw = param_value(params, 'qpi_detected_quanta_per_pixel')
-        if detected_quanta_raw is None:
-            detected_quanta_raw = CountBudgetSettings.from_params(params).background_intensity
-        configured_detected_quanta = float(detected_quanta_raw)
-        exposure_scale = float(params.get("_exposure_signal_scale", 1.0))
-        detected_quanta = configured_detected_quanta * exposure_scale
-        readout_variance = 0.0 if phase_noise is None else float(phase_noise) ** 2
-        shot_variance = (
-            1.0 / (visibility * visibility * detected_quanta)
-            if visibility > 0.0 and detected_quanta > 0.0
-            else float("inf")
-        )
+        from camera_noise import QPI_PHASE_LIKELIHOOD_CONTRACT_ID, qpi_phase_noise_components_rad2
+
+        settings = QpiReadoutSettings.from_params(params)
+        noise_components = qpi_phase_noise_components_rad2(params)
         response.update(
             kind="quantitative_phase",
             count_scaling_mode="display_phase_offset_counts",
             output_units="radian",
             signal_units="radian",
             display_count_scaling="display_only",
-            qpi_visibility=visibility,
-            qpi_detected_quanta_per_pixel=detected_quanta,
-            qpi_configured_detected_quanta_per_pixel=configured_detected_quanta,
-            qpi_detected_quanta_exposure_scale=exposure_scale,
-            qpi_phase_readout_variance_rad2=readout_variance,
-            qpi_phase_variance_rad2=float(shot_variance + readout_variance),
-            phase_noise_model="1/(V^2 nQ)+sigma_phi_readout^2",
-            qpi_phase_to_count_scale=CountBudgetSettings.from_params(params).qpi_phase_to_count_scale,
+            qpi_visibility=float(noise_components["visibility"]),
+            qpi_detected_quanta_per_pixel=float(noise_components["detected_quanta_per_pixel"]),
+            qpi_configured_detected_quanta_per_pixel=float(
+                noise_components["configured_detected_quanta_per_pixel"]
+            ),
+            qpi_detected_quanta_exposure_scale=float(
+                noise_components["detected_quanta_exposure_scale"]
+            ),
+            qpi_phase_shot_variance_rad2=float(noise_components["shot_variance_rad2"]),
+            qpi_phase_readout_variance_rad2=float(noise_components["readout_variance_rad2"]),
+            qpi_phase_variance_rad2=float(noise_components["total_variance_rad2"]),
+            qpi_phase_shot_noise_enabled=bool(noise_components["shot_noise_enabled"]),
+            qpi_phase_gaussian_noise_enabled=bool(noise_components["gaussian_noise_enabled"]),
+            qpi_phase_likelihood_contract_id=QPI_PHASE_LIKELIHOOD_CONTRACT_ID,
+            qpi_detected_quanta_basis="uniform_scalar_or_per_frame_detected_quanta_map",
+            phase_noise_model="1/(V^2 N(r))+sigma_phi_readout^2",
+            qpi_phase_to_count_scale=settings.phase_to_count_scale,
             qpi_phase_noise_std_rad=(
-                None if phase_noise is None else float(phase_noise)
+                None
+                if settings.phase_noise_std_rad is None
+                else float(settings.phase_noise_std_rad)
             ),
             qpi_display_counts_clipped_to_nonnegative=True,
         )
         return response
 
-    def scale_intensity_to_counts(
+    def convert_model_output_to_detector_frame(
         self,
-        intensity: np.ndarray,
+        model_output: np.ndarray,
         background_final: np.ndarray,
         E_ref_intensity_final: np.ndarray,
         params: dict,
@@ -139,8 +150,23 @@ class QuantitativePhaseImagingModel(ImagingModel):
         paths continue to use the actual phase contrast image.
         """
         del E_ref_intensity_final
-        phase_to_count = CountBudgetSettings.from_params(params).qpi_phase_to_count_scale
-        return np.asarray(background_final, dtype=float) + phase_to_count * np.asarray(intensity, dtype=float)
+        phase_to_count = QpiReadoutSettings.from_params(params).phase_to_count_scale
+        return convert_model_output_to_detector_frame(
+            model_output=model_output,
+            background_frame=background_final,
+            reference_intensity_frame=None,
+            conversion=DetectorFrameConversion(
+                model_output_domain=MODEL_OUTPUT_DOMAIN_PHASE_RADIANS,
+                detector_output_domain=DETECTOR_OUTPUT_DOMAIN_PHASE_DISPLAY_COUNTS,
+                value_form=VALUE_FORM_DISPLAY,
+                reference_basis=REFERENCE_BASIS_NONE,
+                scale=phase_to_count,
+                offset=background_final,
+                require_nonnegative=False,
+            ),
+            params=params,
+            context="QuantitativePhaseImagingModel.convert_model_output_to_detector_frame",
+        )
 
     def compute_noise(
         self,
@@ -153,12 +179,14 @@ class QuantitativePhaseImagingModel(ImagingModel):
         """Apply QPI phase-domain noise, then return display-count values."""
         del detector_noise_runtime
         counts = np.asarray(frame_counts, dtype=float)
-        settings = CountBudgetSettings.from_params(params)
-        phase_to_count = settings.qpi_phase_to_count_scale
+        settings = QpiReadoutSettings.from_params(params)
+        phase_to_count = settings.phase_to_count_scale
         from camera_noise import qpi_phase_noise_variance_rad2
 
-        variance = qpi_phase_noise_variance_rad2(counts, params)
-        generator = rng if rng is not None else np.random.default_rng()
+        variance = qpi_phase_noise_variance_rad2(counts, params, variance_floor=0.0)
+        if not np.any(variance > 0.0):
+            return counts.copy()
+        generator = rng if rng is not None else rng_from_seed(None, stream="qpi_phase_noise")
         phase_noise = generator.normal(
             loc=0.0,
             scale=np.sqrt(np.maximum(variance, 0.0)),

@@ -15,7 +15,7 @@ from modality_registry import (
     ELECTRON_MODALITIES,
     FLUORESCENCE_MODALITIES,
     LABEL_FREE_OPTICAL_MODALITIES,
-    canonical_modality_name,
+    require_modality_name,
 )
 
 
@@ -25,12 +25,11 @@ _LIVE_OPTICAL_MODALITIES = set(LABEL_FREE_OPTICAL_MODALITIES) | _FLUORESCENCE_MO
 
 
 def _canonical(name: str) -> str:
-    normalized = str(name).strip().lower().replace("-", "_").replace(" ", "_")
-    return canonical_modality_name(normalized)
+    return require_modality_name(name, item_label="compatibility modality")
 
 
 def _has_declared_key(params: dict[str, Any], key: str) -> bool:
-    return key in params and params[key] is not None
+    return key in params and params.get(key) is not None
 
 
 def _same_declared_value(

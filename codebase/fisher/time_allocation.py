@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -15,6 +15,22 @@ from ._constants import (
     _LINE_SEARCH_SHRINK,
     _RELATIVE_DET_SINGULAR_TOL,
 )
+from .candidates import FisherMatrixCandidate, matrix_candidate_metadata_records
+
+
+def _matrix_candidate_list(
+    candidates: Sequence[FisherMatrixCandidate],
+    *,
+    context: str,
+) -> list[FisherMatrixCandidate]:
+    candidate_list = list(candidates)
+    if not candidate_list:
+        raise ValueError(f"{context} requires at least one FisherMatrixCandidate.")
+    keys = [candidate.key for candidate in candidate_list]
+    duplicates = sorted({key for key in keys if keys.count(key) > 1})
+    if duplicates:
+        raise ValueError(f"{context} candidate keys must be unique; duplicates: {duplicates!r}.")
+    return candidate_list
 
 def _scalarize_crlb(F: np.ndarray, objective: str) -> float:
     r"""Scalar criterion on the CRLB matrix F^{-1}, lower-is-better.
@@ -67,45 +83,35 @@ def _scalarize_crlb(F: np.ndarray, objective: str) -> float:
     )
 
 def compute_loewner_dominance(
-    per_modality_fisher: dict[str, np.ndarray],
+    candidates: Sequence[FisherMatrixCandidate],
     *,
-    per_modality_dt_seconds: dict[str, float] | None = None,
     atol: float = 1e-12,
 ) -> dict[str, Any]:
-    """Compute strict Loewner dominance among per-modality information rates."""
-    if not isinstance(per_modality_fisher, dict) or not per_modality_fisher:
-        raise ValueError("per_modality_fisher must be a non-empty dict.")
-    modalities = list(per_modality_fisher.keys())
-    if per_modality_dt_seconds is None:
-        per_modality_dt_seconds = {m: 1.0 for m in modalities}
-    if set(per_modality_dt_seconds) != set(modalities):
-        sym = set(per_modality_dt_seconds) ^ set(modalities)
-        raise ValueError(
-            "per_modality_dt_seconds keys must match per_modality_fisher; "
-            f"symmetric diff: {sorted(sym)!r}."
-        )
-
-    ref = np.asarray(per_modality_fisher[modalities[0]], dtype=float)
+    """Compute strict Loewner dominance among per-candidate information rates."""
+    candidate_list = _matrix_candidate_list(candidates, context="compute_loewner_dominance")
+    candidate_keys = [candidate.key for candidate in candidate_list]
+    ref = np.asarray(candidate_list[0].fisher_matrix, dtype=float)
     if ref.ndim != 2 or ref.shape[0] != ref.shape[1]:
         raise ValueError(f"Fisher matrices must be square 2D arrays; got {ref.shape}.")
     rates: dict[str, np.ndarray] = {}
-    for name in modalities:
-        dt = float(per_modality_dt_seconds[name])
+    for candidate in candidate_list:
+        name = candidate.key
+        dt = float(candidate.dt_seconds)
         if dt <= 0.0 or not np.isfinite(dt):
-            raise ValueError(f"per_modality_dt_seconds[{name!r}] must be positive.")
-        F = np.asarray(per_modality_fisher[name], dtype=float)
+            raise ValueError(f"FisherMatrixCandidate[{name!r}].dt_seconds must be positive.")
+        F = np.asarray(candidate.fisher_matrix, dtype=float)
         if F.shape != ref.shape:
             raise ValueError(
                 f"All Fisher matrices must have shape {ref.shape}; {name!r} has {F.shape}."
             )
         rates[name] = F / dt
 
-    dominates: dict[str, list[str]] = {name: [] for name in modalities}
-    dominated_by: dict[str, list[str]] = {name: [] for name in modalities}
-    eig_min: dict[str, dict[str, float]] = {name: {} for name in modalities}
+    dominates: dict[str, list[str]] = {name: [] for name in candidate_keys}
+    dominated_by: dict[str, list[str]] = {name: [] for name in candidate_keys}
+    eig_min: dict[str, dict[str, float]] = {name: {} for name in candidate_keys}
     atol = float(atol)
-    for dominant in modalities:
-        for dominated in modalities:
+    for dominant in candidate_keys:
+        for dominated in candidate_keys:
             if dominant == dominated:
                 continue
             diff = rates[dominant] - rates[dominated]
@@ -117,73 +123,66 @@ def compute_loewner_dominance(
                 dominates[dominant].append(dominated)
                 dominated_by[dominated].append(dominant)
 
-    maximal = [name for name in modalities if not dominated_by[name]]
+    maximal = [name for name in candidate_keys if not dominated_by[name]]
     return {
-        "information_rate_by_modality": rates,
+        "candidate_information_rates": rates,
         "dominates": dominates,
         "dominated_by": dominated_by,
-        "loewner_maximal_modalities": maximal,
+        "loewner_maximal_candidates": maximal,
         "dominance_eigenvalue_min": eig_min,
     }
 
 def compute_optimal_time_allocation_crlb(
-    per_modality_fisher_per_frame: dict[str, np.ndarray],
+    candidates: Sequence[FisherMatrixCandidate],
     *,
-    per_modality_dt_seconds: dict[str, float] | None = None,
     total_time_seconds: float = 1.0,
     objective: str = "A",
     min_fraction: float = 0.0,
     max_iters: int = 200,
     tol: float = 1e-9,
     prune_loewner_dominated: bool = False,
-    parent_result_metadata_by_modality: dict[str, dict[str, Any]] | None = None,
-    acquisition_cost_by_modality: dict[str, dict[str, Any]] | None = None,
-    modality_constraints: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     r"""Optimal time-slicing CRLB allocator.
 
-    Given per-modality per-frame Fisher matrices ``F_M`` and per-modality
-    per-frame time costs ``dt_M``, find the time allocation
-    :math:`\{t_M\}` that minimises a chosen scalar criterion of the joint
-    CRLB under a fixed total-time budget :math:`T = \sum_M t_M`.
+    Given per-candidate per-frame Fisher matrices ``F_i`` and per-candidate
+    per-frame time costs ``dt_i``, find the time allocation
+    :math:`\{t_i\}` that minimises a chosen scalar criterion of the joint
+    CRLB under a fixed total-time budget :math:`T = \sum_i t_i`.
 
-    The joint Fisher information at allocation :math:`\{t_M\}` is, under the
+    The joint Fisher information at allocation :math:`\{t_i\}` is, under the
     independent-noise assumption,
 
     .. math::
-        \mathbf{F}_{\mathrm{total}}(\mathbf{t}) = \sum_M (t_M / dt_M)\,\mathbf{F}_M ,
+        \mathbf{F}_{\mathrm{total}}(\mathbf{t}) = \sum_i (t_i / dt_i)\,\mathbf{F}_i ,
 
     so :math:`\mathbf{F}_{\mathrm{total}}` is linear in the time fractions.
     The criterion :math:`\Phi(\mathbf{F}_{\mathrm{total}}^{-1})` is convex in
     :math:`\mathbf{F}_{\mathrm{total}}` for the standard A-, D-, and
     E-optimality scalarizations, so the resulting problem is a convex program
-    on the simplex :math:`\{\mathbf{t} : \sum t_M = T,\, t_M \ge 0\}`.
+    on the simplex :math:`\{\mathbf{t} : \sum t_i = T,\, t_i \ge 0\}`.
 
     The implementation uses projected-gradient (Frank-Wolfe-style) iteration
     that needs only NumPy. Termination is by relative-criterion change.
 
     Parameters
     ----------
-    per_modality_fisher_per_frame : dict[str, ndarray]
-        Mapping ``modality_name -> per-frame Fisher matrix``. All matrices
-        must share the same shape ``(d, d)`` (typically d = 2 or 3).
-    per_modality_dt_seconds : dict[str, float] or None
-        Mapping ``modality_name -> seconds per frame`` for each modality.
-        If None, all dt are taken to be 1 (so the budget is interpreted
-        as total frames).
+    candidates : sequence[FisherMatrixCandidate]
+        Per-candidate Fisher matrices with their frame duration, parent
+        metadata, acquisition cost, and scheduling constraints carried on the
+        candidate object rather than parallel candidate-keyed columns.
     total_time_seconds : float, default 1.0
-        Total acquisition-time budget T. If ``per_modality_dt_seconds`` is
-        None, this is the total frame count instead.
+        Total acquisition-time budget T. If every candidate uses the default
+        ``dt_seconds=1``, this is the total frame count instead.
     objective : str, default "A"
         Optimality criterion: ``"A"`` (= ``"trace"``), ``"D"``, or ``"E"``.
         See ``_scalarize_crlb``.
     min_fraction : float, default 0.0
-        Lower bound on each time fraction t_M / T. Enforces a per-modality
-        minimum-acquisition floor (e.g. 0.05 = 5 % of T per modality).
+        Lower bound on each time fraction t_i / T. Enforces a per-candidate
+        minimum-acquisition floor (e.g. 0.05 = 5 % of T per candidate).
     prune_loewner_dominated : bool, default False
-        If True and min_fraction is zero, remove modalities whose information
-        rate F_M / dt_M is strictly Loewner-dominated before solving, then
-        report zero time for the removed modalities. Pruning is disabled when
+        If True and min_fraction is zero, remove candidates whose information
+        rate F_i / dt_i is strictly Loewner-dominated before solving, then
+        report zero time for the removed candidates. Pruning is disabled when
         min_fraction > 0 because the nonzero floor must be honored.
     max_iters : int, default 200
         Hard cap on projected-gradient iterations.
@@ -195,8 +194,8 @@ def compute_optimal_time_allocation_crlb(
     result : dict
         Keys:
 
-        - ``optimal_time_seconds`` : dict[str, float] — optimal t_M.
-        - ``optimal_frames`` : dict[str, float] — optimal n_M = t_M / dt_M
+        - ``optimal_time_seconds`` : dict[str, float] — optimal t_i.
+        - ``optimal_frames`` : dict[str, float] — optimal n_i = t_i / dt_i
           (real-valued; integer rounding is a downstream concern).
         - ``optimal_fisher`` : ndarray — F_total at the optimum.
         - ``optimal_sigma_x_nm`` : float
@@ -207,16 +206,16 @@ def compute_optimal_time_allocation_crlb(
         - ``optimal_objective_value`` : float — the scalar criterion at the
           optimum.
         - ``baseline_uniform_objective`` : float — criterion value when the
-          time budget is split equally across modalities (consistency check).
+          time budget is split equally across candidates (consistency check).
         - ``baseline_best_single_objective`` : float — criterion value when
-          the entire budget is allocated to the per-modality
-          single-modality minimiser.
+          the entire budget is allocated to the per-candidate
+          single-candidate minimiser.
         - ``allocation_gain_vs_uniform`` : float — ratio
           baseline_uniform / optimal (>= 1; reports how much better the
           allocator is than equal-split).
         - ``allocation_gain_vs_best_single`` : float — analogous ratio for
           the all-budget-to-best-single baseline.
-        - ``best_single_modality`` : str | None — the per-modality minimiser of
+        - ``best_single_candidate`` : str | None — the per-candidate minimiser of
           the criterion.
         - ``num_iterations`` : int — projected-gradient iterations used.
         - ``converged`` : bool — True when the allocator terminates before
@@ -224,7 +223,7 @@ def compute_optimal_time_allocation_crlb(
           or a better feasible baseline allocation.
         - ``termination_reason`` : str — reason associated with ``converged`` or
           ``"max_iters"`` when the iteration cap is reached.
-        - ``modalities`` : list[str] — input modality order.
+        - ``candidates`` : list[str] — input candidate order.
         - ``objective`` : str — echoed criterion identifier.
 
     Raises
@@ -232,38 +231,45 @@ def compute_optimal_time_allocation_crlb(
     ValueError
         If the input dicts are empty or have mismatched keys, if the
         Fisher matrices have inconsistent shape, if total_time_seconds
-        or any dt_M is non-positive, or if min_fraction is out of [0, 1/N].
+        or any dt_i is non-positive, or if min_fraction is out of [0, 1/N].
 
     Notes
     -----
     This bound is NOT a fusion bound (which assumes simultaneous
     measurement on independent detectors; see
-    ``compute_modality_fusion_crlb``). It is a scheduling bound for allocating
-    a fixed total acquisition time across modalities to maximise final
+    ``compute_fisher_candidate_fusion_crlb``). It is a scheduling bound for allocating
+    a fixed total acquisition time across candidates to maximise final
     precision. The two bounds answer
     complementary engineering questions: fusion evaluates
     simultaneous-channel fusion under explicit co-acquisition assumptions,
     while this routine prescribes an exposure schedule.
     Both can be combined by treating fused channels as a single virtual
-    modality with the fused per-frame Fisher matrix.
+    candidate with the fused per-frame Fisher matrix.
     """
     from .convergence import _parent_convergence_statuses, _parent_validation_statuses
 
-    if not isinstance(per_modality_fisher_per_frame, dict) or not per_modality_fisher_per_frame:
-        raise ValueError(
-            "per_modality_fisher_per_frame must be a non-empty dict keyed by modality name."
-        )
-    modalities = list(per_modality_fisher_per_frame.keys())
-    n = len(modalities)
-
-    if per_modality_dt_seconds is None:
-        per_modality_dt_seconds = {m: 1.0 for m in modalities}
-    if set(per_modality_dt_seconds.keys()) != set(modalities):
-        sym = set(per_modality_dt_seconds.keys()) ^ set(modalities)
-        raise ValueError(
-            f"per_modality_dt_seconds keys must match per_modality_fisher_per_frame; "
-            f"symmetric diff: {sorted(sym)!r}."
-        )
+    candidate_list = _matrix_candidate_list(
+        candidates,
+        context="compute_optimal_time_allocation_crlb",
+    )
+    candidate_by_key = {candidate.key: candidate for candidate in candidate_list}
+    candidates = [candidate.key for candidate in candidate_list]
+    n = len(candidates)
+    candidate_parent_metadata = {
+        candidate.key: dict(candidate.parent_result_metadata)
+        for candidate in candidate_list
+        if candidate.parent_result_metadata
+    } or None
+    candidate_acquisition_costs = {
+        candidate.key: dict(candidate.acquisition_cost)
+        for candidate in candidate_list
+        if candidate.acquisition_cost
+    }
+    candidate_constraints = {
+        candidate.key: dict(candidate.constraints)
+        for candidate in candidate_list
+        if candidate.constraints
+    }
     try:
         total_time_seconds = float(total_time_seconds)
     except (TypeError, ValueError) as exc:
@@ -274,20 +280,6 @@ def compute_optimal_time_allocation_crlb(
         raise ValueError(
             f"total_time_seconds must be finite and positive; got {total_time_seconds!r}."
         )
-    dt_seconds: dict[str, float] = {}
-    for m, dt in per_modality_dt_seconds.items():
-        try:
-            dt_value = float(dt)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                f"per_modality_dt_seconds[{m!r}] must be a finite positive scalar; got {dt!r}."
-            ) from exc
-        if not np.isfinite(dt_value) or dt_value <= 0.0:
-            raise ValueError(
-                f"per_modality_dt_seconds[{m!r}] must be finite and positive; got {dt!r}."
-            )
-        dt_seconds[m] = dt_value
-    per_modality_dt_seconds = dt_seconds
     try:
         min_fraction = float(min_fraction)
     except (TypeError, ValueError) as exc:
@@ -304,41 +296,37 @@ def compute_optimal_time_allocation_crlb(
         )
 
     # Fisher matrix shape consistency.
-    F0 = np.asarray(per_modality_fisher_per_frame[modalities[0]], dtype=float)
+    F0 = np.asarray(candidate_by_key[candidates[0]].fisher_matrix, dtype=float)
     if F0.ndim != 2 or F0.shape[0] != F0.shape[1]:
         raise ValueError(
-            f"Per-modality Fisher must be square 2-D; got shape {F0.shape} for "
-            f"{modalities[0]!r}."
+            f"Per-candidate Fisher must be square 2-D; got shape {F0.shape} for "
+            f"{candidates[0]!r}."
         )
     d = F0.shape[0]
     F_arr: dict[str, np.ndarray] = {}
-    for m in modalities:
-        F_m = np.asarray(per_modality_fisher_per_frame[m], dtype=float)
+    for m in candidates:
+        F_m = np.asarray(candidate_by_key[m].fisher_matrix, dtype=float)
         if F_m.shape != (d, d):
             raise ValueError(
-                f"Per-modality Fisher shape mismatch: {m!r} is {F_m.shape}, "
+                f"Per-candidate Fisher shape mismatch: {m!r} is {F_m.shape}, "
                 f"expected {(d, d)}."
             )
         if not np.all(np.isfinite(F_m)):
-            raise ValueError(f"Per-modality Fisher for {m!r} must contain only finite values.")
+            raise ValueError(f"Per-candidate Fisher for {m!r} must contain only finite values.")
         F_arr[m] = F_m
 
-    dt_arr = np.array([per_modality_dt_seconds[m] for m in modalities], dtype=float)
+    dt_arr = np.array([candidate_by_key[m].dt_seconds for m in candidates], dtype=float)
     T = float(total_time_seconds)
 
-    loewner_dominance = compute_loewner_dominance(
-        F_arr,
-        per_modality_dt_seconds=per_modality_dt_seconds,
-    )
-    loewner_pruned_modalities: list[str] = []
+    loewner_dominance = compute_loewner_dominance(candidate_list)
+    loewner_pruned_candidates: list[str] = []
     loewner_pruning_applied = False
     if bool(prune_loewner_dominated) and min_fraction == 0.0:
-        maximal = list(loewner_dominance["loewner_maximal_modalities"])
-        loewner_pruned_modalities = [m for m in modalities if m not in maximal]
-        if loewner_pruned_modalities and maximal:
+        maximal = list(loewner_dominance["loewner_maximal_candidates"])
+        loewner_pruned_candidates = [m for m in candidates if m not in maximal]
+        if loewner_pruned_candidates and maximal:
             sub_result = compute_optimal_time_allocation_crlb(
-                {m: F_arr[m] for m in maximal},
-                per_modality_dt_seconds={m: per_modality_dt_seconds[m] for m in maximal},
+                [candidate_by_key[m] for m in maximal],
                 total_time_seconds=total_time_seconds,
                 objective=objective,
                 min_fraction=0.0,
@@ -346,23 +334,23 @@ def compute_optimal_time_allocation_crlb(
                 tol=tol,
                 prune_loewner_dominated=False,
             )
-            expanded_time = {m: 0.0 for m in modalities}
-            expanded_frames = {m: 0.0 for m in modalities}
+            expanded_time = {m: 0.0 for m in candidates}
+            expanded_frames = {m: 0.0 for m in candidates}
             for m in maximal:
                 expanded_time[m] = float(sub_result["optimal_time_seconds"][m])
                 expanded_frames[m] = float(sub_result["optimal_frames"][m])
             sub_result["optimal_time_seconds"] = expanded_time
             sub_result["optimal_frames"] = expanded_frames
-            sub_result["modalities"] = modalities
+            sub_result["candidates"] = candidates
             sub_result["loewner_dominance"] = loewner_dominance
             sub_result["loewner_pruning_applied"] = True
-            sub_result["loewner_pruned_modalities"] = loewner_pruned_modalities
+            sub_result["loewner_pruned_candidates"] = loewner_pruned_candidates
             return sub_result
 
     # Convenience: F_total at allocation t (vector).
     def F_total_of(t: np.ndarray) -> np.ndarray:
         F = np.zeros((d, d), dtype=float)
-        for k, m in enumerate(modalities):
+        for k, m in enumerate(candidates):
             F = F + (t[k] / dt_arr[k]) * F_arr[m]
         return F
 
@@ -395,12 +383,12 @@ def compute_optimal_time_allocation_crlb(
         if obj in ("A", "TRACE"):
             cov = np.linalg.inv(F_total)
             cov2 = cov @ cov  # F^-1 F^-1; trace(F^-1 X F^-1) = trace(X cov2)
-            for k, m in enumerate(modalities):
+            for k, m in enumerate(candidates):
                 g[k] = -float(np.trace(F_arr[m] @ cov2)) / dt_arr[k]
             return g
         if obj == "D":
             cov = np.linalg.inv(F_total)
-            for k, m in enumerate(modalities):
+            for k, m in enumerate(candidates):
                 g[k] = -float(np.trace(cov @ F_arr[m])) / dt_arr[k]
             return g
         if obj == "E":
@@ -411,7 +399,7 @@ def compute_optimal_time_allocation_crlb(
                 # Subgradient of 1/lam_min at lam_min = 0 is undefined;
                 # return zero step.
                 return g
-            for k, m in enumerate(modalities):
+            for k, m in enumerate(candidates):
                 d_lam = float(v @ F_arr[m] @ v) / dt_arr[k]
                 g[k] = -d_lam / (lam_min * lam_min)
             return g
@@ -498,7 +486,7 @@ def compute_optimal_time_allocation_crlb(
     candidate_allocations: list[tuple[float, np.ndarray, str]] = [
         (last_phi, t.copy(), "frank_wolfe"),
     ]
-    for k_corner, m_corner in enumerate(modalities):
+    for k_corner, m_corner in enumerate(candidates):
         t_corner = np.full(n, lb_post, dtype=float)
         t_corner[k_corner] = T - lb_post * (n - 1)
         phi_corner = phi_of(t_corner)
@@ -519,8 +507,8 @@ def compute_optimal_time_allocation_crlb(
         termination_reason = f"baseline_candidate:{best_source}"
 
     # ----- assemble result -----
-    optimal_time_seconds = {modalities[k]: float(t[k]) for k in range(n)}
-    optimal_frames = {modalities[k]: float(t[k] / dt_arr[k]) for k in range(n)}
+    optimal_time_seconds = {candidates[k]: float(t[k]) for k in range(n)}
+    optimal_frames = {candidates[k]: float(t[k] / dt_arr[k]) for k in range(n)}
     F_opt = F_total_of(t)
     # Singularity check on the optimum's joint Fisher matrix.
     # Use the same scale-invariant determinant criterion as elsewhere in
@@ -553,14 +541,14 @@ def compute_optimal_time_allocation_crlb(
             else float(np.sqrt(sigma_x ** 2 + sigma_y ** 2))
         ),
         "optimal_objective_value": float(last_phi),
-        "modalities": modalities,
+        "candidates": candidates,
         "objective": objective.upper(),
         "num_iterations": iters,
         "converged": bool(converged),
         "termination_reason": termination_reason,
         "loewner_dominance": loewner_dominance,
         "loewner_pruning_applied": loewner_pruning_applied,
-        "loewner_pruned_modalities": loewner_pruned_modalities,
+        "loewner_pruned_candidates": loewner_pruned_candidates,
     }
     if d == 3:
         if fisher_singular:
@@ -579,38 +567,40 @@ def compute_optimal_time_allocation_crlb(
     phi_uniform = phi_of(t_uniform)
     result["baseline_uniform_objective"] = float(phi_uniform)
 
-    # ----- baseline 2: all budget to best single modality -----
+    # ----- baseline 2: all budget to best single candidate -----
     best_single_phi = float("inf")
     best_single_m: str | None = None
-    for m in modalities:
-        # All budget to this modality; respect min_fraction floor on others.
+    for m in candidates:
+        # All budget to this candidate; respect min_fraction floor on others.
         t_single = np.full(n, min_fraction * T, dtype=float)
-        idx = modalities.index(m)
+        idx = candidates.index(m)
         t_single[idx] = T - min_fraction * T * (n - 1)
         phi_m = phi_of(t_single)
         if phi_m < best_single_phi:
             best_single_phi = phi_m
             best_single_m = m
     result["baseline_best_single_objective"] = float(best_single_phi)
-    result["best_single_modality"] = best_single_m
-    status_metadata = combine_parent_statuses(parent_result_metadata_by_modality)
+    result["best_single_candidate"] = best_single_m
+    status_metadata = combine_parent_statuses(candidate_parent_metadata)
     selected_status = None
-    if best_single_m is not None and parent_result_metadata_by_modality:
-        selected_status = parent_result_metadata_by_modality.get(best_single_m, {}).get("convergence_status")
+    if best_single_m is not None and candidate_parent_metadata:
+        selected_status = candidate_parent_metadata.get(best_single_m, {}).get("convergence_status")
+    candidate_records = matrix_candidate_metadata_records(candidate_list)
     result["parent_status_metadata"] = status_metadata
-    result["parent_convergence_statuses"] = _parent_convergence_statuses(parent_result_metadata_by_modality)
-    result["parent_validation_statuses"] = _parent_validation_statuses(parent_result_metadata_by_modality)
+    result["parent_convergence_statuses"] = _parent_convergence_statuses(candidate_parent_metadata)
+    result["parent_validation_statuses"] = _parent_validation_statuses(candidate_parent_metadata)
     result["validation_status"] = status_metadata["validation_status"]
     result["time_allocation_validation_status"] = status_metadata["validation_status"]
     result["production_grid_diagnostic"] = status_metadata["production_grid_diagnostic"]
     result["safe_for_time_allocation"] = status_metadata["safe_for_time_allocation"]
-    result["selected_modality_convergence_status"] = normalize_convergence_status(selected_status)
-    result["acquisition_cost_by_modality"] = acquisition_cost_by_modality or {}
-    result["modality_constraints"] = modality_constraints or {}
+    result["selected_candidate_convergence_status"] = normalize_convergence_status(selected_status)
+    result["candidate_records"] = candidate_records
+    result["candidate_acquisition_costs"] = candidate_acquisition_costs or {}
+    result["candidate_constraints"] = candidate_constraints or {}
     result["boundary_solution"] = any(v <= 1e-12 or abs(v - total_time_seconds) <= 1e-12 for v in optimal_time_seconds.values())
     result["physical_recommendation_status"] = (
         "constrained_physical_recommendation"
-        if acquisition_cost_by_modality or modality_constraints
+        if candidate_acquisition_costs or candidate_constraints
         else "equal-cost-serial-diagnostic"
     )
 

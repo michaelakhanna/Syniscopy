@@ -8,25 +8,6 @@ from modality_registry import (
 )
 from param_schema.sample_environment import PATTERN_DEFAULT_PRESETS
 
-KNOWN_INTERNAL_PARAM_KEYS = frozenset(
-    {
-        "_camera_noise_static_seed",
-        "_particle_specs",
-        "_particle_specs_fingerprint",
-        "_resolved_particles",
-        "_resolved_primary_component_refractive_indices",
-        "_resolved_particle_material_properties",
-        "_resolved_particle_material_properties_metadata",
-        "_return_mask_arrays",
-        "_write_mask_files",
-        "_substrate_pattern_layout_cache_token",
-        "_substrate_pattern_layout_extent_nm",
-        "_substrate_pattern_layout_rng",
-        "_generated_spectral_channels",
-        "_spectral_channel_count",
-    }
-)
-
 NUM_FRAME_DURATION_SEARCH_STEPS = 32
 
 COHERENT_REFERENCE_MODALITIES = modality_name_set(VECTORIAL_FULL_FIELD_MODALITIES)

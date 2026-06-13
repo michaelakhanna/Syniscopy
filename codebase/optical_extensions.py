@@ -1,13 +1,18 @@
 """Optional optical backend helpers for broadband and coverslip-aware PSFs."""
 
 from __future__ import annotations
+from configured_parameters import configured_assign
 
 from typing import Any
 
 import numpy as np
 
-from config.runtime import param_value
-from optical_params import resolve_probe_wavelength_nm
+from config.runtime import (
+    CoverslipAberrationSettings,
+    OpticalInstrumentSettings,
+    SpectralIntegrationSettings,
+)
+from simulation_runtime_state import runtime_state
 
 
 def _finite_float(value: Any, *, key: str) -> float:
@@ -30,7 +35,8 @@ def compute_coverslip_aberration_phase(
     renderer.  When the configured actual and design coverslip settings match,
     the returned phase is exactly zero after piston removal.
     """
-    model = str(param_value(params, 'coverslip_aberration_model')).strip().lower()
+    settings = CoverslipAberrationSettings.from_params(params)
+    model = settings.model
     phase = np.zeros_like(np.asarray(sin_theta, dtype=float), dtype=float)
     metadata: dict[str, Any] = {
         "coverslip_aberration_model": model,
@@ -40,30 +46,20 @@ def compute_coverslip_aberration_phase(
     if model in {"", "none", "disabled", "off"}:
         metadata["coverslip_aberration_model"] = "none"
         return phase, metadata
-    if model not in {"gibson_lanni", "coverslip_mismatch"}:
-        raise ValueError(
-            "coverslip_aberration_model must be 'none', 'gibson_lanni', or "
-            f"'coverslip_mismatch'; got {model!r}."
-        )
-
     wavelength = _finite_float(
-        wavelength_nm if wavelength_nm is not None else resolve_probe_wavelength_nm(params),
+        wavelength_nm
+        if wavelength_nm is not None
+        else OpticalInstrumentSettings.from_params(params).probe_wavelength_nm,
         key="wavelength_nm",
     )
     if wavelength <= 0.0:
         raise ValueError("wavelength_nm must be positive.")
 
-    n_medium = _finite_float(param_value(params, "refractive_index_medium"), key="refractive_index_medium")
-    n_cs = _finite_float(param_value(params, 'coverslip_refractive_index'), key="coverslip_refractive_index")
-    n_design = _finite_float(
-        param_value(params, "coverslip_design_refractive_index"),
-        key="coverslip_design_refractive_index",
-    )
-    t_nm = 1000.0 * _finite_float(param_value(params, 'coverslip_thickness_um'), key="coverslip_thickness_um")
-    t_design_nm = 1000.0 * _finite_float(
-        param_value(params, 'coverslip_design_thickness_um'),
-        key="coverslip_design_thickness_um",
-    )
+    n_medium = OpticalInstrumentSettings.from_params(params).refractive_index_medium
+    n_cs = settings.refractive_index
+    n_design = settings.design_refractive_index
+    t_nm = 1000.0 * settings.thickness_um
+    t_design_nm = 1000.0 * settings.design_thickness_um
     if n_medium <= 0.0 or n_cs <= 0.0 or n_design <= 0.0:
         raise ValueError("coverslip and medium refractive indices must be positive.")
     if t_nm < 0.0 or t_design_nm < 0.0:
@@ -78,7 +74,7 @@ def compute_coverslip_aberration_phase(
     phase = (2.0 * np.pi / wavelength) * opd_nm
     phase = np.where(aperture, phase, 0.0)
 
-    if bool(param_value(params, 'coverslip_aberration_subtract_piston')) and np.any(aperture):
+    if settings.subtract_piston and np.any(aperture):
         phase = phase.copy()
         phase[aperture] -= float(np.mean(phase[aperture]))
 
@@ -91,14 +87,12 @@ def compute_coverslip_aberration_phase(
         p2p = 0.0
     metadata.update(
         {
-            "coverslip_aberration_model": "gibson_lanni" if model == "coverslip_mismatch" else model,
+            "coverslip_aberration_model": settings.metadata_model,
             "coverslip_thickness_um": float(t_nm / 1000.0),
             "coverslip_design_thickness_um": float(t_design_nm / 1000.0),
             "coverslip_refractive_index": float(n_cs),
             "coverslip_design_refractive_index": float(n_design),
-            "coverslip_aberration_subtract_piston": bool(
-                param_value(params, 'coverslip_aberration_subtract_piston')
-            ),
+            "coverslip_aberration_subtract_piston": bool(settings.subtract_piston),
             "coverslip_aberration_phase_rms_rad": rms,
             "coverslip_aberration_phase_peak_to_peak_rad": p2p,
         }
@@ -119,28 +113,24 @@ def _gaussian_weights(wavelengths: np.ndarray, center: float, fwhm: float) -> np
 
 def broadband_quadrature_channels(params: dict) -> list[dict[str, Any]]:
     """Build normalized spectral channels for broadband quadrature rendering."""
-    model = str(param_value(params, 'spectral_integration_model')).strip().lower()
-    if model != "broadband_quadrature":
+    settings = SpectralIntegrationSettings.from_params(params)
+    if settings.model != "broadband_quadrature":
         raise ValueError("broadband_quadrature_channels requires spectral_integration_model='broadband_quadrature'.")
 
-    explicit = param_value(params, 'broadband_wavelengths_nm')
+    explicit = settings.broadband_wavelengths_nm
     if explicit is not None:
         wavelengths = np.asarray(explicit, dtype=float).reshape(-1)
     else:
-        center = _finite_float(
-            param_value(params, "illumination_spectrum_center_nm"),
-            key="illumination_spectrum_center_nm",
+        half_width = max(0.5 * settings.illumination_fwhm_nm, 1.0)
+        wavelengths = np.linspace(
+            settings.illumination_center_nm - half_width,
+            settings.illumination_center_nm + half_width,
+            settings.illumination_num_samples,
         )
-        fwhm = _finite_float(param_value(params, 'illumination_spectrum_fwhm_nm'), key="illumination_spectrum_fwhm_nm")
-        sample_count = int(param_value(params, 'illumination_spectrum_num_samples'))
-        if sample_count <= 0:
-            raise ValueError("illumination_spectrum_num_samples must be positive.")
-        half_width = max(0.5 * fwhm, 1.0)
-        wavelengths = np.linspace(center - half_width, center + half_width, sample_count)
     if wavelengths.size == 0 or not np.all(np.isfinite(wavelengths)) or np.any(wavelengths <= 0.0):
         raise ValueError("broadband wavelengths must be a non-empty positive finite sequence.")
 
-    explicit_weights = param_value(params, 'broadband_weights')
+    explicit_weights = settings.broadband_weights
     if explicit_weights is not None:
         weights = np.asarray(explicit_weights, dtype=float).reshape(-1)
         if weights.shape != wavelengths.shape:
@@ -152,11 +142,13 @@ def broadband_quadrature_channels(params: dict) -> list[dict[str, Any]]:
             raise ValueError("broadband_weights must have positive sum.")
         weights = weights / total
     else:
-        center = float(param_value(params, "illumination_spectrum_center_nm"))
-        fwhm = float(param_value(params, "illumination_spectrum_fwhm_nm"))
-        weights = _gaussian_weights(wavelengths, center, fwhm)
+        weights = _gaussian_weights(
+            wavelengths,
+            settings.illumination_center_nm,
+            settings.illumination_fwhm_nm,
+        )
 
-    detector_model = str(param_value(params, 'detector_spectral_response_model')).strip().lower()
+    detector_model = settings.detector_spectral_response_model
     channels: list[dict[str, Any]] = []
     for idx, (wl, weight) in enumerate(zip(wavelengths, weights)):
         entry: dict[str, Any] = {
@@ -182,24 +174,26 @@ def broadband_quadrature_channels(params: dict) -> list[dict[str, Any]]:
 def expand_broadband_quadrature(params: dict) -> dict:
     """Return a params copy whose channels implement the selected spectral model."""
     out = dict(params)
-    model = str(out.get("spectral_integration_model", "single_wavelength")).strip().lower()
-    if model in {"", "single_wavelength"}:
+    settings = SpectralIntegrationSettings.from_params(out)
+    if settings.model == "single_wavelength":
         return out
-    if model == "configured_channels":
-        if out.get("channels") is None:
-            raise ValueError("spectral_integration_model='configured_channels' requires PARAMS['channels'].")
+    if settings.model == "configured_channels":
+        if settings.channels is None:
+            raise ValueError("spectral_integration_model='configured_channels' requires parameters['channels'].")
         return out
-    if model == "broadband_quadrature":
-        if out.get("channels") is not None and not bool(out.get("allow_broadband_overwrite_channels", False)):
+    if settings.model == "broadband_quadrature":
+        if settings.channels is not None and not settings.allow_broadband_overwrite_channels:
             raise ValueError(
                 "spectral_integration_model='broadband_quadrature' generates channels; "
-                "clear PARAMS['channels'] or set allow_broadband_overwrite_channels=True."
+                "clear parameters['channels'] or set allow_broadband_overwrite_channels=True."
             )
-        out["channels"] = broadband_quadrature_channels(out)
-        out["_generated_spectral_channels"] = True
-        out["_spectral_channel_count"] = len(out["channels"])
+        channels = broadband_quadrature_channels(out)
+        configured_assign(out, "channels", channels)
+        out_state = runtime_state(out)
+        out_state.generated_spectral_channels = True
+        out_state.spectral_channel_count = len(channels)
         return out
     raise ValueError(
         "spectral_integration_model must be 'single_wavelength', 'configured_channels', "
-        f"or 'broadband_quadrature'; got {model!r}."
+        f"or 'broadband_quadrature'; got {settings.model!r}."
     )

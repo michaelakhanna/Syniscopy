@@ -8,8 +8,8 @@ from ._spec import ParamSpec
 ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 "tem_model": ParamSpec(
     key="tem_model",
+    default='multislice_physical',
     type="enum",
-    default="multislice_physical",
     choices=[
         "weak_phase_ctf",
         "multislice_lite",
@@ -26,8 +26,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "tem_backend": ParamSpec(
     key="tem_backend",
+    default='multislice_physical',
     type="enum",
-    default="multislice_physical",
     choices=[
         "ctf_proxy",
         "multislice_lite",
@@ -40,8 +40,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "tem_objective_aperture_mrad": ParamSpec(
     key="tem_objective_aperture_mrad",
-    type="float",
     default=None,
+    type="float",
     min=1e-4,
     max=1e3,
     ui_label="TEM objective aperture (mrad)",
@@ -50,8 +50,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "tem_slice_thickness_nm": ParamSpec(
     key="tem_slice_thickness_nm",
-    type="float",
     default=5.0,
+    type="float",
     min=1e-6,
     max=1e9,
     ui_label="TEM z-slice thickness (nm)",
@@ -60,8 +60,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "tem_multislice_slices": ParamSpec(
     key="tem_multislice_slices",
-    type="int",
     default=8,
+    type="int",
     min=1,
     max=2048,
     ui_label="TEM multislice stack slices",
@@ -70,8 +70,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "tem_acceleration_kV": ParamSpec(
     key="tem_acceleration_kV",
-    type="float",
     default=300.0,
+    type="float",
     min=1.0,
     max=5000.0,
     ui_label="TEM accelerating voltage (kV)",
@@ -80,8 +80,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "tem_Cs_mm": ParamSpec(
     key="tem_Cs_mm",
-    type="float",
     default=0.5,
+    type="float",
     min=0.0,
     max=1000.0,
     ui_label="TEM spherical aberration C_s (mm)",
@@ -90,8 +90,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "tem_partial_coherence_alpha_mrad": ParamSpec(
     key="tem_partial_coherence_alpha_mrad",
-    type="float",
     default=0.1,
+    type="float",
     min=0.0,
     max=1000.0,
     ui_label="TEM partial-coherence half-angle (mrad)",
@@ -100,8 +100,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "tem_defocus_nm": ParamSpec(
     key="tem_defocus_nm",
-    type="float",
     default=None,
+    type="float",
     min=-1e9,
     max=1e9,
     ui_label="TEM defocus (nm)",
@@ -110,8 +110,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "tem_pixel_size_pm": ParamSpec(
     key="tem_pixel_size_pm",
-    type="float",
     default=None,
+    type="float",
     min=1e-6,
     max=1e9,
     ui_label="TEM pixel size compatibility check (pm)",
@@ -120,8 +120,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "tem_dose_per_pixel": ParamSpec(
     key="tem_dose_per_pixel",
-    type="float",
     default=100.0,
+    type="float",
     min=0.0,
     max=1e12,
     ui_label="TEM dose per pixel",
@@ -130,8 +130,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "tem_potential_source": ParamSpec(
     key="tem_potential_source",
+    default='material_projected_inner_potential',
     type="enum",
-    default="material_projected_inner_potential",
     choices=[
         "material_projected_inner_potential",
         "sample_environment_projected_potential",
@@ -146,8 +146,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "tem_reference_status": ParamSpec(
     key="tem_reference_status",
+    default='physics_based_unvalidated',
     type="enum",
-    default="physics_based_unvalidated",
     choices=["physics_based_unvalidated", "reference_validated"],
     ui_label="TEM reference status",
     group="Advanced modality",
@@ -155,26 +155,26 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "tem_reference_validation_hash": ParamSpec(
     key="tem_reference_validation_hash",
-    type="string",
     default=None,
+    type="string",
     ui_label="TEM reference validation hash",
     group="Advanced modality",
     description="SHA-256 digest required when tem_reference_status is reference_validated.",
 ),
 "tem_filter_guard_pixels": ParamSpec(
     key="tem_filter_guard_pixels",
+    default=None,
     type="int",
-    default=64,
     min=0,
     max=4096,
     ui_label="TEM filter guard pixels",
     group="Advanced modality",
-    description="Spatial guard region in pixels for TEM transfer filtering.",
+    description="Spatial guard region in pixels for TEM transfer filtering. None derives a guard from the CTF impulse-response support.",
 ),
 "tem_sample_environment_potential_scale": ParamSpec(
     key="tem_sample_environment_potential_scale",
+    default=0.0001,
     type="float",
-    default=1.0e-4,
     min=0.0,
     max=10.0,
     ui_label="TEM sample-environment potential scale",
@@ -183,8 +183,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "tem_projected_potential_scale": ParamSpec(
     key="tem_projected_potential_scale",
-    type="float",
     default=1.0,
+    type="float",
     min=0.0,
     max=1e6,
     ui_label="TEM projected-potential scale",
@@ -193,8 +193,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "tem_phase_shift_per_volt_nm": ParamSpec(
     key="tem_phase_shift_per_volt_nm",
-    type="float",
     default=None,
+    type="float",
     min=0.0,
     max=1e12,
     ui_label="TEM phase shift per volt-nm",
@@ -203,8 +203,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_model": ParamSpec(
     key="sem_model",
+    default='physical_electron_transport',
     type="enum",
-    default="physical_electron_transport",
     choices=[
         "gaussian_probe_secondary_yield",
         "interaction_volume_proxy",
@@ -219,8 +219,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_backend": ParamSpec(
     key="sem_backend",
+    default='syniscopy_transport_lite',
     type="enum",
-    default="monte_carlo_physical",
     choices=[
         "gaussian_probe_proxy",
         "interaction_volume_proxy",
@@ -232,27 +232,33 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
     ui_label="SEM backend",
     group="Advanced modality",
     description=(
-        "Selects SEM forward model fidelity: material-resolved physical "
-        "Monte Carlo transport default, transport-lite/proxy variants, or "
+        "Selects SEM forward model fidelity: transport-lite default, "
+        "material-resolved physical Monte Carlo variants, or "
         "reference-kernel table variants."
     ),
 ),
 "sem_source_representation": ParamSpec(
     key="sem_source_representation",
+    default='auto',
     type="enum",
-    default="volume",
     choices=[
+        "auto",
         "projected",
         "volume",
     ],
     ui_label="SEM source representation",
     group="Advanced modality",
-    description="Selects whether SEM particle material is accumulated as a projected 2D source map or as a sliced z-y-x source volume for volume-capable backends.",
+    description=(
+        "Selects whether SEM particle material is accumulated as a projected 2D "
+        "source map or as a sliced z-y-x source volume. auto chooses the native "
+        "safe basis for the selected backend; explicit volume requires a "
+        "native-volume SEM backend."
+    ),
 ),
 "sem_volume_slices": ParamSpec(
     key="sem_volume_slices",
-    type="int",
     default=8,
+    type="int",
     min=1,
     max=2048,
     ui_label="SEM source volume slices",
@@ -261,8 +267,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_volume_slice_thickness_nm": ParamSpec(
     key="sem_volume_slice_thickness_nm",
-    type="float",
     default=None,
+    type="float",
     min=1e-9,
     max=1e7,
     ui_label="SEM source slice thickness (nm)",
@@ -271,30 +277,40 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_source_z_origin": ParamSpec(
     key="sem_source_z_origin",
+    default='entry_surface_depth',
     type="enum",
-    default="entry_surface_depth",
     choices=[
         "entry_surface_depth",
         "focus_plane_relative",
     ],
     ui_label="SEM source z origin",
     group="Advanced modality",
-    description="Axial convention for SEM source volumes: local entry-surface depth or focus-plane-relative scene z.",
+    description=(
+        "Axial convention for SEM source placement. Native z-y-x SEM volume "
+        "transport requires entry_surface_depth because those slices are physical "
+        "material/yield depth, not optical or probe defocus. focus_plane_relative is "
+        "kept only for non-volume/projected compatibility and must not index SEM "
+        "material source volumes."
+    ),
 ),
 "sem_source_z_offset_nm": ParamSpec(
     key="sem_source_z_offset_nm",
-    type="float",
     default=0.0,
+    type="float",
     min=-1e9,
     max=1e9,
     ui_label="SEM source z offset (nm)",
     group="Advanced modality",
-    description="Axial offset applied when placing SEM source-volume slices.",
+    description=(
+        "Axial origin offset for SEM source-volume slice edges. For native "
+        "entry_surface_depth volume SEM transport this is a non-negative "
+        "slice-grid offset, not a particle-z displacement or optical defocus."
+    ),
 ),
 "sem_beam_current_nA": ParamSpec(
     key="sem_beam_current_nA",
-    type="float",
     default=0.0,
+    type="float",
     min=0.0,
     max=1.0e6,
     ui_label="SEM beam current (nA)",
@@ -303,8 +319,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_dwell_time_us": ParamSpec(
     key="sem_dwell_time_us",
-    type="float",
     default=0.0,
+    type="float",
     min=0.0,
     max=1.0e6,
     ui_label="SEM dwell time (µs)",
@@ -313,8 +329,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_detector_takeoff_angle_deg": ParamSpec(
     key="sem_detector_takeoff_angle_deg",
-    type="float",
     default=45.0,
+    type="float",
     min=0.0,
     max=90.0,
     ui_label="SEM takeoff angle (deg)",
@@ -323,8 +339,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_detector_acceptance": ParamSpec(
     key="sem_detector_acceptance",
-    type="float",
     default=1.0,
+    type="float",
     min=0.0,
     max=1.0,
     ui_label="SEM detector acceptance",
@@ -333,8 +349,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_escape_depth_nm": ParamSpec(
     key="sem_escape_depth_nm",
-    type="float",
     default=20.0,
+    type="float",
     min=0.0,
     max=1000.0,
     ui_label="SEM escape depth (nm)",
@@ -343,8 +359,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_backscatter_fraction": ParamSpec(
     key="sem_backscatter_fraction",
-    type="float",
     default=0.05,
+    type="float",
     min=0.0,
     max=1.0,
     ui_label="SEM backscatter fraction",
@@ -353,8 +369,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_transport_material_scale": ParamSpec(
     key="sem_transport_material_scale",
-    type="float",
     default=1.0,
+    type="float",
     min=0.0,
     max=10.0,
     ui_label="SEM material scale",
@@ -363,8 +379,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_transport_source_exponent": ParamSpec(
     key="sem_transport_source_exponent",
-    type="float",
     default=1.0,
+    type="float",
     min=0.05,
     max=5.0,
     ui_label="SEM source exponent",
@@ -373,8 +389,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_transport_topography_exponent": ParamSpec(
     key="sem_transport_topography_exponent",
-    type="float",
     default=1.0,
+    type="float",
     min=0.05,
     max=5.0,
     ui_label="SEM topography exponent",
@@ -383,8 +399,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_monte_carlo_trajectories": ParamSpec(
     key="sem_monte_carlo_trajectories",
-    type="int",
     default=4096,
+    type="int",
     min=1,
     max=1000000,
     ui_label="SEM MC trajectories",
@@ -393,8 +409,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_monte_carlo_steps": ParamSpec(
     key="sem_monte_carlo_steps",
-    type="int",
     default=64,
+    type="int",
     min=1,
     max=10000,
     ui_label="SEM MC steps",
@@ -403,8 +419,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_monte_carlo_seed": ParamSpec(
     key="sem_monte_carlo_seed",
-    type="int",
     default=None,
+    type="int",
     min=0,
     max=2147483647,
     ui_label="SEM MC seed",
@@ -413,8 +429,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_monte_carlo_step_nm": ParamSpec(
     key="sem_monte_carlo_step_nm",
-    type="float",
     default=None,
+    type="float",
     min=1e-9,
     max=1e6,
     ui_label="SEM MC step (nm)",
@@ -423,8 +439,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_monte_carlo_range_nm": ParamSpec(
     key="sem_monte_carlo_range_nm",
-    type="float",
     default=None,
+    type="float",
     min=1e-9,
     max=1e7,
     ui_label="SEM MC range (nm)",
@@ -433,8 +449,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_monte_carlo_scatter_std_deg": ParamSpec(
     key="sem_monte_carlo_scatter_std_deg",
-    type="float",
     default=8.0,
+    type="float",
     min=0.0,
     max=180.0,
     ui_label="SEM MC scatter std",
@@ -443,8 +459,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_monte_carlo_kernel_size_px": ParamSpec(
     key="sem_monte_carlo_kernel_size_px",
-    type="int",
     default=None,
+    type="int",
     min=1,
     max=8192,
     ui_label="SEM MC kernel size",
@@ -453,8 +469,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_physical_max_steps": ParamSpec(
     key="sem_physical_max_steps",
-    type="int",
     default=2048,
+    type="int",
     min=1,
     max=1000000,
     ui_label="SEM physical max steps",
@@ -463,8 +479,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_physical_energy_cutoff_keV": ParamSpec(
     key="sem_physical_energy_cutoff_keV",
-    type="float",
     default=0.05,
+    type="float",
     min=1e-9,
     max=1000.0,
     ui_label="SEM physical cutoff (keV)",
@@ -473,8 +489,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_physical_elastic_model": ParamSpec(
     key="sem_physical_elastic_model",
+    default='screened_rutherford',
     type="enum",
-    default="screened_rutherford",
     choices=[
         "mott_browning",
         "screened_rutherford",
@@ -489,24 +505,24 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_reference_material": ParamSpec(
     key="sem_reference_material",
+    default='default',
     type="string",
-    default="default",
     ui_label="SEM reference material",
     group="Advanced modality",
     description="Material selector for kernel-table row matching.",
 ),
 "sem_reference_geometry": ParamSpec(
     key="sem_reference_geometry",
+    default='normal',
     type="string",
-    default="normal",
     ui_label="SEM reference geometry",
     group="Advanced modality",
     description="Geometry selector for kernel-table row matching.",
 ),
 "sem_reference_source_depth_nm": ParamSpec(
     key="sem_reference_source_depth_nm",
-    type="float",
     default=0.0,
+    type="float",
     min=0.0,
     max=1000.0,
     ui_label="SEM reference source depth (nm)",
@@ -515,8 +531,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_reference_incident_angle_deg": ParamSpec(
     key="sem_reference_incident_angle_deg",
-    type="float",
     default=0.0,
+    type="float",
     min=0.0,
     max=180.0,
     ui_label="SEM reference incident angle (deg)",
@@ -525,16 +541,16 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_detector_direction_xy": ParamSpec(
     key="sem_detector_direction_xy",
-    type="json",
     default=[1.0, 0.0],
+    type="json",
     ui_label="SEM detector direction",
     group="Advanced modality",
     description="2D SEM detector direction unit vector in the detector plane.",
 ),
 "sem_acceleration_kV": ParamSpec(
     key="sem_acceleration_kV",
-    type="float",
     default=5.0,
+    type="float",
     min=0.1,
     max=50000.0,
     ui_label="SEM accelerating voltage (kV)",
@@ -543,8 +559,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_interaction_volume_nm": ParamSpec(
     key="sem_interaction_volume_nm",
-    type="float",
     default=30.0,
+    type="float",
     min=0.0,
     max=10000.0,
     ui_label="SEM interaction volume depth (nm)",
@@ -553,8 +569,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_filter_guard_pixels": ParamSpec(
     key="sem_filter_guard_pixels",
-    type="int",
     default=None,
+    type="int",
     min=0,
     max=4096,
     ui_label="SEM filter guard pixels",
@@ -563,28 +579,21 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_probe_sigma_nm": ParamSpec(
     key="sem_probe_sigma_nm",
-    type="float",
     default=None,
+    type="float",
     min=0.0,
     max=1e6,
     ui_label="SEM probe sigma (nm)",
     group="Advanced modality",
-    description="Beam probe standard deviation in nanometers; computed from pixels when unset.",
-),
-"sem_probe_sigma_pixels": ParamSpec(
-    key="sem_probe_sigma_pixels",
-    type="float",
-    default=1.0,
-    min=0.0,
-    max=1e4,
-    ui_label="SEM probe sigma (pixels)",
-    group="Advanced modality",
-    description="Legacy SEM probe sigma parameter in render pixels.",
+    description=(
+        "Beam probe standard deviation in nanometers. When unset, SEM uses a 1-px "
+        "model-pixel default."
+    ),
 ),
 "sem_edge_contrast_gain": ParamSpec(
     key="sem_edge_contrast_gain",
-    type="float",
     default=10.0,
+    type="float",
     min=0.0,
     max=1e6,
     ui_label="SEM edge contrast gain",
@@ -593,8 +602,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_bulk_contrast_gain": ParamSpec(
     key="sem_bulk_contrast_gain",
-    type="float",
     default=1.0,
+    type="float",
     min=0.0,
     max=1e6,
     ui_label="SEM bulk contrast gain",
@@ -603,8 +612,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_topography_contrast_gain": ParamSpec(
     key="sem_topography_contrast_gain",
-    type="float",
     default=0.0,
+    type="float",
     min=0.0,
     max=1e6,
     ui_label="SEM topography contrast gain",
@@ -613,8 +622,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_sample_environment_edge_gain": ParamSpec(
     key="sem_sample_environment_edge_gain",
-    type="float",
     default=10.0,
+    type="float",
     min=0.0,
     max=1e6,
     ui_label="SEM sample-environment edge gain",
@@ -623,8 +632,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_baseline_yield": ParamSpec(
     key="sem_baseline_yield",
-    type="float",
     default=0.05,
+    type="float",
     min=0.0,
     max=1e6,
     ui_label="SEM baseline yield",
@@ -633,8 +642,8 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_electrons_per_pixel": ParamSpec(
     key="sem_electrons_per_pixel",
-    type="float",
     default=1000.0,
+    type="float",
     min=0.0,
     max=1e15,
     ui_label="SEM fallback electrons per pixel",
@@ -643,16 +652,16 @@ ELECTRON_SCHEMA: dict[str, ParamSpec] = {
 ),
 "sem_reference_kernel_path": ParamSpec(
     key="sem_reference_kernel_path",
-    type="string",
     default=None,
+    type="string",
     ui_label="SEM reference kernel path",
     group="Advanced modality",
     description="Path to reference-kernel table JSON for interpolation-based SEM transport.",
 ),
 "sem_reference_kernel_sha256": ParamSpec(
     key="sem_reference_kernel_sha256",
-    type="string",
     default=None,
+    type="string",
     ui_label="SEM reference kernel SHA-256",
     group="Advanced modality",
     description="Checksum used to validate reference-kernel table provenance.",

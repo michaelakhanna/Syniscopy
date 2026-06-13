@@ -1,7 +1,7 @@
 """reference maps substrate-pattern helpers."""
 
 from __future__ import annotations
-from config import param_value
+from config import CountBudgetSettings, OpticalModeSettings, SampleEnvironmentSettings, SamplingGeometry
 
 from ._shared import (
     _BAR_MATERIAL_PATTERNS,
@@ -35,17 +35,15 @@ def generate_reference_and_background_maps(
     from .nanopillars import _bar_geometry
     from .registry import generate_sample_environment_pattern_maps
 
-    E_ref_amplitude = float(params["reference_field_amplitude"])
-    background_intensity = float(params["background_intensity"])
+    E_ref_amplitude = OpticalModeSettings.from_params(params).reference_field_amplitude
+    background_intensity = CountBudgetSettings.from_params(params).background_intensity
 
     substrate_enabled = _substrate_pattern_is_enabled(params)
 
-    pattern_model_raw = param_value(params, 'sample_environment_pattern')
-    substrate_preset_raw = param_value(params, "sample_environment_pattern_preset"
-    )
-
+    sample_environment = SampleEnvironmentSettings.from_params(params)
     pattern_model, substrate_preset = canonical_sample_environment_pattern_and_preset(
-        pattern_model_raw, substrate_preset_raw
+        sample_environment.pattern,
+        sample_environment.pattern_preset,
     )
 
     use_uniform_background = (
@@ -60,13 +58,9 @@ def generate_reference_and_background_maps(
         background_final = np.full(final_fov_shape, background_intensity, dtype=float)
         return E_ref_os, E_ref_final, background_final
 
-    pixel_size_nm = float(params["pixel_size_nm"])
-    if pixel_size_nm <= 0.0:
-        raise ValueError("PARAMS['pixel_size_nm'] must be positive.")
-
-    os_factor = float(param_value(params, "psf_oversampling_factor"))
-    if os_factor <= 0.0:
-        raise ValueError("PARAMS['psf_oversampling_factor'] must be positive.")
+    sampling = SamplingGeometry.from_params(params)
+    pixel_size_nm = sampling.detector_pixel_size_nm
+    os_factor = float(sampling.psf_oversampling_factor)
 
     if pattern_model in _CIRCULAR_VOID_PATTERNS | _CIRCULAR_MATERIAL_PATTERNS:
         geom = _circular_feature_geometry(params, pattern_model)
@@ -82,7 +76,7 @@ def generate_reference_and_background_maps(
         background_factor = float(geom["background_factor"])
     else:
         raise ValueError(
-            f"Unsupported sample_environment_pattern '{pattern_model_raw}'. "
+            f"Unsupported sample_environment_pattern '{sample_environment.pattern}'. "
                 "Supported models are 'none', 'gold_holes', 'nanopillars', "
                 "'fiducial_dots', 'grid_bars', 'holey_carbon', "
                 "'microfluidic_walls', and 'patterned_coverslip'."
@@ -134,14 +128,14 @@ def compute_contrast_scale_for_frame(
             f"frame_index={frame_index} is out of range for num_frames={num_frames}."
         )
 
-    model_raw = param_value(params, 'sample_environment_pattern_contrast_model')
-    model = str(model_raw).strip().lower()
+    sample_environment = SampleEnvironmentSettings.from_params(params)
+    model = sample_environment.pattern_contrast_model
 
     if model == "static":
         return 1.0
 
     if model == "time_dependent":
-        amplitude = float(param_value(params, 'sample_environment_pattern_contrast_amplitude'))
+        amplitude = sample_environment.pattern_contrast_amplitude
         if amplitude <= 0.0:
             return 1.0
         if amplitude > 1.0:
@@ -156,7 +150,7 @@ def compute_contrast_scale_for_frame(
         return float(alpha)
 
     raise ValueError(
-        f"Unsupported sample_environment_pattern_contrast_model '{model_raw}'. "
+        f"Unsupported sample_environment_pattern_contrast_model '{model}'. "
         "Supported models are 'static' and 'time_dependent'."
     )
 

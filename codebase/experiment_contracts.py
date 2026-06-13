@@ -5,6 +5,7 @@ from enum import Enum
 import hashlib, json
 from typing import Any, Mapping, Sequence
 import numpy as np
+from config import CountBudgetSettings, FluorescenceSettings
 from json_utils import json_safe_with_nonfinite_tags
 
 CONTRACT_SCHEMA_VERSION = "syniscopy-comparison-contract-v1"
@@ -44,7 +45,6 @@ class FisherMode(str, Enum):
     GAUSSIAN_PARAMETER_DEPENDENT_VARIANCE = "gaussian_parameter_dependent_variance"
     POISSON_GAUSSIAN_APPROX = "poisson_gaussian_approx"
     POISSON_GAUSSIAN_NUMERICAL = "poisson_gaussian_numerical"
-    MEAN_FISHER_DIAGNOSTIC = "mean_fisher_diagnostic"
 
 def stable_hash(payload: Any) -> str:
     return hashlib.sha256(json.dumps(json_safe_with_nonfinite_tags(payload), sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -63,7 +63,7 @@ class ComparisonContract:
     native_regime_policy: str = "configured-profile-not-native-benchmark"
     physical_compatibility_policy: str = "explicit-status-required-for-fusion"
     fisher_mode: str = FisherMode.GAUSSIAN_FIXED_VARIANCE.value
-    derivative_method: str = "stationary_shift_or_rerendered_with_metadata"
+    derivative_method: str = "spectral_band_limited_lateral_or_owner_specific_metadata"
     convergence_policy: str = "status-required"
     validity_policy: str = "downstream-results-inherit-parent-status"
     output_units: Mapping[str, str] = field(default_factory=lambda: {"lateral_crlb": "nm", "axial_crlb": "nm"})
@@ -147,7 +147,7 @@ class BackendContract:
     required_detector_fields: tuple[str, ...] = ("camera_gain_e_per_count", "read_noise_counts", "detector_qe")
     known_omissions: tuple[str, ...] = ()
     fidelity_class: str = "model_conditional"
-    backend_fidelity_level: str = "proxy"
+    backend_fidelity_level: str = "unknown"
     reference_backend_metadata: Mapping[str, Any] | None = None
     validation_status: str = ValidationStatus.DIAGNOSTIC_ONLY.value
     schema_version: str = BACKEND_CONTRACT_SCHEMA_VERSION
@@ -163,8 +163,11 @@ class DetectorModel:
     emccd_enabled: bool
     emccd_gain: float
     emccd_excess_noise_factor: float
+    emccd_excess_noise_factor_basis: str
+    emccd_shot_variance_multiplier: float
     camera_gain_e_per_count: float
     dark_offset_counts: float
+    dark_offset_stage: str
     read_noise_e: float | None
     read_noise_counts: float
     saturation_level: float | None
@@ -193,8 +196,10 @@ class DetectorModel:
     noise_parameterization: str
     nonlinearity_calibration: str | None
     background_offset_counts: float
+    background_offset_stage: str
     flat_field_map: str | None
     dark_frame_map: str | None
+    dark_frame_map_stage: str
     def to_dict(self) -> dict[str, Any]: return json_safe_with_nonfinite_tags(asdict(self))
 
 @dataclass(frozen=True)
@@ -254,7 +259,7 @@ class ArtifactNode:
 def default_comparison_contracts(allowed_modality_profiles: Sequence[str] = ()) -> dict[str, ComparisonContract]:
     profiles = tuple(str(x) for x in allowed_modality_profiles); common = {"allowed_modality_profiles": profiles}
     return {
-        "Contract-LP": ComparisonContract("Contract-LP", "Configured-profile lateral CRLB", derivative_method="adaptive_rerendered_xy_or_stationary_shift_with_status", ranking_objective="sigma_xy_nm", paper_label="configured-profile lateral CRLB", **common),
+        "Contract-LP": ComparisonContract("Contract-LP", "Configured-profile lateral CRLB", derivative_method="spectral_band_limited_lateral_gradient_with_sampling_diagnostics", ranking_objective="sigma_xy_nm", paper_label="configured-profile lateral CRLB", **common),
         "Contract-LZ": ComparisonContract("Contract-LZ", "Configured-profile axial/SE(3) CRLB", derivative_method="adaptive_axial_or_se3_with_singularity_status", ranking_objective="sigma_xyz_nm_or_rank", paper_label="configured-profile axial/SE(3) diagnostic", **common),
         "Contract-Q": ComparisonContract("Contract-Q", "Detected-quanta-normalized CRLB", quanta_budget_policy="fixed-total-detected-quanta-with-explicit-distribution", dose_cost_policy="not-dose; cost model required for dose claims", fisher_mode=FisherMode.POISSON_GAUSSIAN_APPROX.value, ranking_objective="sigma_xy_nm_at_detected_quanta_budget", paper_label="detected-quanta-normalized diagnostic", **common),
         "Contract-NR": ComparisonContract("Contract-NR", "Native-regime/source-use reference context", native_regime_policy="source-reported-or-calibrated-native-profile-required", ranking_objective="source-reference-check", paper_label="native-regime reference context", **common),
@@ -329,7 +334,7 @@ def backend_contract_for_modality(modality: str, response: Mapping[str, Any] | N
             "vectorial_label_free_optical" if optical_is_full_vector else "scalar_label_free_optical",
             uses_scalar_scattered_field=not optical_is_full_vector,
             uses_vectorial_field=optical_is_full_vector,
-            uses_reference_interference=(m == "interferometric"),
+            uses_reference_interference=True,
             native_units="relative_reference",
             measurement_domain="contrast",
             signal_units="relative_reference",
@@ -355,53 +360,82 @@ def backend_contract_for_modality(modality: str, response: Mapping[str, Any] | N
         return BackendContract(m, m, label, "vectorial_phase_imaging" if optical_is_full_vector else "phase_imaging", uses_scalar_scattered_field=not optical_is_full_vector, uses_vectorial_field=optical_is_full_vector, uses_phase_object=True, measurement_domain="count", signal_units="detector_count", contrast_frame_units="detector_count_difference", known_omissions=() if optical_is_full_vector else ("scalar/analyzer optical field projection",), fidelity_class="vectorial_phase_ring" if optical_is_full_vector else "scalar_phase_proxy")
     if m == "differential_phase_contrast":
         vectorial_dpc = bool(resp.get("dpc_vectorial_backend_enabled"))
+        transfer = str(resp.get("dpc_transfer_model") or "")
+        fidelity = (
+            "vectorial_asymmetric_illumination_dpc"
+            if vectorial_dpc and transfer == "asymmetric_illumination"
+            else (
+                "scalar_asymmetric_illumination_dpc"
+                if transfer == "asymmetric_illumination"
+                else (
+                    "vectorial_split_pupil_detection_dpc"
+                    if vectorial_dpc and transfer == "split_pupil_detection"
+                    else (
+                        "scalar_split_pupil_detection_dpc"
+                        if transfer == "split_pupil_detection"
+                        else "scalar_phase_proxy"
+                    )
+                )
+            )
+        )
+        omissions = ()
+        if transfer == "split_pupil_detection":
+            omissions = ("detector-side split-pupil/Foucault model, not illumination-side DPC",)
+        elif transfer == "phase_gradient_proxy":
+            omissions = ("phase-gradient proxy, not full asymmetric-illumination image formation",)
         return BackendContract(
             m,
             m,
             label,
-            "phase_imaging",
+            str(resp.get("kind") or "phase_imaging"),
             uses_scalar_scattered_field=not vectorial_dpc,
             uses_vectorial_field=vectorial_dpc,
             uses_phase_object=True,
             measurement_domain="count",
             signal_units="detector_count",
             contrast_frame_units="detector_count_difference",
-            known_omissions=() if vectorial_dpc else ("scalar phase-object approximation",),
-            fidelity_class="vectorial_phase_proxy" if vectorial_dpc else "scalar_phase_proxy",
+            axial_sensitivity_mechanism="asymmetric condenser half-disc illumination transfer",
+            axial_sensitive="conditional",
+            known_omissions=omissions,
+            fidelity_class=fidelity,
         )
     if m == "quantitative_phase":
         return BackendContract(m, m, label, "vectorial_phase_transfer" if optical_is_full_vector else "phase_transfer", uses_scalar_scattered_field=not optical_is_full_vector, uses_vectorial_field=optical_is_full_vector, uses_phase_object=True, uses_phase_units=True, native_units="radian", measurement_domain="phase", signal_units="radian", contrast_frame_units="radian", known_omissions=() if optical_is_full_vector else ("scalar/analyzer optical field projection",), fidelity_class="vectorial_phase_transfer" if optical_is_full_vector else "scalar_phase_proxy")
     if m == "off_axis_holography":
-        return BackendContract(m, m, label, "vectorial_holographic_interference" if optical_is_full_vector else "holographic_interference", uses_scalar_scattered_field=not optical_is_full_vector, uses_vectorial_field=optical_is_full_vector, uses_phase_object=True, native_units="detector_count", measurement_domain="fringe_count", signal_units="detector_count", contrast_frame_units="detector_count_difference", known_omissions=() if optical_is_full_vector else ("scalar/analyzer optical field projection",), fidelity_class="vectorial_holographic_interference" if optical_is_full_vector else "scalar_phase_proxy")
+        return BackendContract(m, m, label, "vectorial_holographic_interference" if optical_is_full_vector else "holographic_interference", uses_scalar_scattered_field=not optical_is_full_vector, uses_vectorial_field=optical_is_full_vector, uses_reference_interference=True, uses_phase_object=True, native_units="detector_count", measurement_domain="count", signal_units="detector_count", contrast_frame_units="detector_count_difference", known_omissions=() if optical_is_full_vector else ("scalar/analyzer optical field projection",), fidelity_class="vectorial_holographic_interference" if optical_is_full_vector else "scalar_phase_proxy")
     if m == "ricm":
         return BackendContract(m, m, label, "vectorial_thinfilm_reflection_interference" if optical_is_full_vector else "thinfilm_reflection_interference", uses_scalar_scattered_field=not optical_is_full_vector, uses_vectorial_field=optical_is_full_vector, uses_reference_interference=True, uses_thinfilm_stack=True, native_units="relative_reference", measurement_domain="contrast", signal_units="relative_reference", contrast_frame_units="relative_reference", known_omissions=() if optical_is_full_vector else ("scalar/analyzer optical field projection",), fidelity_class="thinfilm_vectorial" if optical_is_full_vector else "thinfilm_scalar")
     if m in {"fluorescence_widefield", "tirf_fluorescence"}:
-        level = str(resp.get("backend_fidelity_level") or "proxy")
+        level = str(resp.get("backend_fidelity_level") or "unknown")
         ref = resp.get("reference_backend_metadata")
         axial = "evanescent excitation weighting of projected source map" if m == "tirf_fluorescence" else "projected emitter source map with optional explicit z-dependent emission PSF"
-        return BackendContract(m, m, label, resp.get("fluorescence_backend", "incoherent_fluorescence_source_map" if m == "fluorescence_widefield" else "photophysics_fluorescence"), uses_scalar_scattered_field=False, uses_vectorial_field=(resp.get("fluorescence_backend") == "vectorial_photophysics"), uses_incoherent_source_map=True, uses_emission_psf=True, native_units="detector_count", measurement_domain="count", signal_units="detector_count", contrast_frame_units="detector_count_difference", axial_sensitivity_mechanism=axial, axial_sensitive="conditional" if m == "tirf_fluorescence" else "no", source_input_kind=str(resp.get("source_input_kind") or "projected_2d_fluorophore_emitter_density"), source_map_ndim=resp.get("source_map_ndim"), source_axis_order=resp.get("source_axis_order"), source_projection_policy=resp.get("source_projection_policy"), backend_consumes_volume_source=bool(resp.get("backend_consumes_volume_source", False)), volume_transport_model=resp.get("volume_transport_model"), required_material_fields=("fluorophore_density", "excitation_peak_nm", "emission_peak_nm"), required_param_fields=("fluorescence_quantum_yield",), known_omissions=() if level in {"high_fidelity", "reference_validated"} else ("physical per-fluorophore photon budget/reference calibration not supplied",), fidelity_class=str(resp.get("fidelity_label") or "fluorescence_source_map"), backend_fidelity_level=level, reference_backend_metadata=ref)
+        volume_source = bool(resp.get("backend_consumes_volume_source", False))
+        return BackendContract(m, m, label, resp.get("fluorescence_backend", "incoherent_fluorescence_source_map" if m == "fluorescence_widefield" else "photophysics_fluorescence"), uses_scalar_scattered_field=False, uses_vectorial_field=(resp.get("fluorescence_backend") == "vectorial_photophysics"), uses_incoherent_source_map=True, uses_emission_psf=True, native_units="detector_count", measurement_domain="count", signal_units="detector_count", contrast_frame_units="detector_count_difference", axial_sensitivity_mechanism=axial, axial_sensitive="conditional" if (m == "tirf_fluorescence" or volume_source) else "no", source_input_kind=str(resp.get("source_input_kind") or "projected_2d_fluorophore_emitter_density"), source_map_ndim=resp.get("source_map_ndim"), source_axis_order=resp.get("source_axis_order"), source_projection_policy=resp.get("source_projection_policy"), backend_consumes_volume_source=volume_source, volume_transport_model=resp.get("volume_transport_model"), required_material_fields=("fluorophore_density",), required_param_fields=("fluorescence_quantum_yield",), known_omissions=() if level in {"high_fidelity", "reference_validated"} else ("physical per-fluorophore photon budget/reference calibration not supplied",), fidelity_class=str(resp.get("fidelity_label") or "fluorescence_source_map"), backend_fidelity_level=level, reference_backend_metadata=ref)
     if m == "tem_phase_contrast":
-        level = str(resp.get("backend_fidelity_level") or "proxy")
+        level = str(resp.get("backend_fidelity_level") or "unknown")
         ref = resp.get("reference_backend_metadata")
-        return BackendContract(m, m, label, str(resp.get("tem_backend") or "electron_projected_potential_ctf"), uses_scalar_scattered_field=False, uses_electron_projected_potential=True, native_units="electron_count", measurement_domain="electron_count", signal_units="electron_count", contrast_frame_units="electron_count_difference", axial_sensitivity_mechanism="through-focus/tilt-series required for finite axial sensitivity", axial_sensitive="conditional", source_input_kind=str(resp.get("source_input_kind") or resp.get("tem_source_dimensionality") or "tem_source_backend_gated"), source_map_ndim=resp.get("source_map_ndim"), source_axis_order=resp.get("source_axis_order"), source_projection_policy=resp.get("source_projection_policy"), backend_consumes_volume_source=bool(resp.get("backend_consumes_volume_source", False)), volume_transport_model=resp.get("volume_transport_model"), required_material_fields=("projected_electrostatic_potential", "thickness_nm"), known_omissions=() if level != "proxy" else ("full multislice/reference validation not active unless selected",), fidelity_class=str(resp.get("fidelity_label") or "electron_ctf_proxy"), backend_fidelity_level=level, reference_backend_metadata=ref)
+        return BackendContract(m, m, label, str(resp.get("tem_backend") or "electron_projected_potential_ctf"), uses_scalar_scattered_field=False, uses_electron_projected_potential=True, native_units="electron_count", measurement_domain="electron_count", signal_units="electron_count", contrast_frame_units="electron_count_difference", axial_sensitivity_mechanism="through-focus/tilt-series required for finite axial sensitivity", axial_sensitive="conditional", source_input_kind=str(resp.get("source_input_kind") or resp.get("tem_source_dimensionality") or "tem_source_backend_gated"), source_map_ndim=resp.get("source_map_ndim"), source_axis_order=resp.get("source_axis_order"), source_projection_policy=resp.get("source_projection_policy"), backend_consumes_volume_source=bool(resp.get("backend_consumes_volume_source", False)), volume_transport_model=resp.get("volume_transport_model"), required_material_fields=("mean_inner_potential_V",), known_omissions=() if level in {"physics_based", "high_fidelity", "reference_validated"} else ("full multislice/reference validation not active unless selected",), fidelity_class=str(resp.get("fidelity_label") or "electron_ctf_proxy"), backend_fidelity_level=level, reference_backend_metadata=ref)
     if m == "sem_secondary_electron":
-        level = str(resp.get("backend_fidelity_level") or "proxy")
+        level = str(resp.get("backend_fidelity_level") or "unknown")
         ref = resp.get("reference_backend_metadata")
-        return BackendContract(m, m, label, str(resp.get("sem_backend") or "sem_probe_secondary_yield"), uses_scalar_scattered_field=False, uses_probe_scan=True, native_units="secondary_electron_yield", measurement_domain="electron_count", signal_units="electron_count", contrast_frame_units="electron_count_difference", axial_sensitivity_mechanism="topography/focus/tilt/interaction-volume conditional", axial_sensitive="conditional", source_input_kind=str(resp.get("source_input_kind") or "projected_2d_source_map"), source_map_ndim=resp.get("source_map_ndim"), source_axis_order=resp.get("source_axis_order"), source_projection_policy=resp.get("source_projection_policy"), backend_consumes_volume_source=bool(resp.get("backend_consumes_volume_source", False)), volume_transport_model=resp.get("volume_transport_model"), required_material_fields=("secondary_electron_yield", "topography"), known_omissions=() if level in {"high_fidelity", "reference_validated"} else ("reference-kernel validation required for native benchmark labeling",), fidelity_class=str(resp.get("fidelity_label") or "sem_yield_proxy"), backend_fidelity_level=level, reference_backend_metadata=ref)
+        return BackendContract(m, m, label, str(resp.get("sem_backend") or "sem_probe_secondary_yield"), uses_scalar_scattered_field=False, uses_probe_scan=True, native_units="secondary_electron_yield", measurement_domain="electron_count", signal_units="electron_count", contrast_frame_units="electron_count_difference", axial_sensitivity_mechanism="topography/focus/tilt/interaction-volume conditional", axial_sensitive="conditional", source_input_kind=str(resp.get("source_input_kind") or "projected_2d_source_map"), source_map_ndim=resp.get("source_map_ndim"), source_axis_order=resp.get("source_axis_order"), source_projection_policy=resp.get("source_projection_policy"), backend_consumes_volume_source=bool(resp.get("backend_consumes_volume_source", False)), volume_transport_model=resp.get("volume_transport_model"), required_material_fields=("se_yield_coefficient", "atomic_number", "atomic_weight_g_mol", "density_g_cm3"), known_omissions=() if level in {"high_fidelity", "reference_validated"} else ("reference-kernel validation required for native benchmark labeling",), fidelity_class=str(resp.get("fidelity_label") or "sem_yield_proxy"), backend_fidelity_level=level, reference_backend_metadata=ref)
     return BackendContract(m, m, label, "undeclared_backend", validation_status=ValidationStatus.UNCHECKED.value, known_omissions=("backend declaration missing",))
 
 def detector_model_from_params(params: Mapping[str, Any]) -> DetectorModel:
-    from camera_noise import resolve_camera_noise_config
+    from camera_noise import CameraNoiseConfig
 
-    cfg = resolve_camera_noise_config(dict(params))
+    cfg = CameraNoiseConfig.from_params(dict(params))
     return DetectorModel(
         detector_qe=float(cfg.detector_qe),
         detector_input_is_incident_quanta=bool(cfg.detector_input_is_incident_quanta),
         emccd_enabled=bool(cfg.emccd_enabled),
         emccd_gain=float(cfg.emccd_gain),
         emccd_excess_noise_factor=float(cfg.emccd_excess_noise_factor),
+        emccd_excess_noise_factor_basis=str(cfg.emccd_excess_noise_factor_basis),
+        emccd_shot_variance_multiplier=float(cfg.emccd_shot_variance_multiplier),
         camera_gain_e_per_count=float(cfg.camera_gain_e_per_count),
         dark_offset_counts=float(cfg.dark_offset_counts),
+        dark_offset_stage=str(cfg.dark_offset_stage),
         read_noise_e=cfg.read_noise_e,
         read_noise_counts=float(cfg.read_noise_counts),
         saturation_level=cfg.saturation_level,
@@ -430,8 +464,10 @@ def detector_model_from_params(params: Mapping[str, Any]) -> DetectorModel:
         noise_parameterization=str(cfg.noise_parameterization),
         nonlinearity_calibration=cfg.nonlinearity_calibration,
         background_offset_counts=float(cfg.background_offset_counts),
+        background_offset_stage=str(cfg.background_offset_stage),
         flat_field_map=cfg.flat_field_map,
         dark_frame_map=cfg.dark_frame_map,
+        dark_frame_map_stage=str(cfg.dark_frame_map_stage),
     )
 
 def _optional_float(value: Any) -> float | None:
@@ -456,15 +492,14 @@ def acquisition_cost_from_profile(modality: str, params: Mapping[str, Any] | Non
     configured_count_budget_units = None
     count_budget_source = None
     count_budget_semantics = None
+    counts = CountBudgetSettings.from_params(p)
 
     if m.startswith("tem"):
-        incident_primary_electrons = _optional_float(
-            p.get("tem_dose_per_pixel", p.get("electron_dose"))
-        )
+        incident_primary_electrons = counts.tem_dose_per_pixel
         electron_dose = electron_dose if electron_dose is not None else incident_primary_electrons
         configured_count_budget = incident_primary_electrons
         configured_count_budget_units = "incident_primary_electrons_per_pixel"
-        count_budget_source = "tem_dose_per_pixel" if "tem_dose_per_pixel" in p else "electron_dose"
+        count_budget_source = "tem_dose_per_pixel"
         detected_electron_count_kind = "transmitted_primary_electron_count"
         count_budget_semantics = (
             "TEM signal formation multiplies normalized direct-beam intensity by "
@@ -483,9 +518,7 @@ def acquisition_cost_from_profile(modality: str, params: Mapping[str, Any] | Non
                 dwell_time_us,
             )
         if incident_primary_electrons is None:
-            incident_primary_electrons = _optional_float(
-                p.get("sem_electrons_per_pixel", p.get("electron_dose"))
-            )
+            incident_primary_electrons = counts.sem_electrons_per_pixel
         electron_dose = electron_dose if electron_dose is not None else incident_primary_electrons
         configured_count_budget = incident_primary_electrons
         configured_count_budget_units = "incident_primary_electrons_per_pixel"
@@ -493,8 +526,6 @@ def acquisition_cost_from_profile(modality: str, params: Mapping[str, Any] | Non
             "sem_beam_current_nA*sem_dwell_time_us"
             if beam_current_nA is not None and beam_current_nA > 0.0 and dwell_time_us is not None and dwell_time_us > 0.0
             else "sem_electrons_per_pixel"
-            if "sem_electrons_per_pixel" in p
-            else "electron_dose"
         )
         detected_electron_count_kind = "yield_weighted_secondary_electron_count"
         count_budget_semantics = (
@@ -504,50 +535,49 @@ def acquisition_cost_from_profile(modality: str, params: Mapping[str, Any] | Non
             "TEM transmitted-electron counts."
         )
     elif fluorescence:
-        collection = _optional_float(p.get("fluorescence_collection_efficiency"))
-        collection = 1.0 if collection is None else collection
-        qe = _optional_float(p.get("fluorescence_detector_qe", p.get("detector_qe")))
-        qe = 1.0 if qe is None else qe
-        if p.get("fluorescence_photons_per_fluorophore_per_frame") is not None:
-            emitted = _optional_float(p.get("fluorescence_photons_per_fluorophore_per_frame"))
-            configured_count_budget = emitted * collection * qe if emitted is not None else None
+        fluorescence_settings = FluorescenceSettings.from_params(p)
+        collection = fluorescence_settings.collection_efficiency
+        qe = fluorescence_settings.detector_qe
+        absorbed = _optional_float(
+            p.get("fluorescence_absorbed_excitation_photons_per_fluorophore_per_frame")
+        )
+        excitation_scale = _optional_float(p.get("fluorescence_excitation_scale"))
+        quantum_yield = _optional_float(p.get("fluorescence_quantum_yield"))
+        if absorbed is not None and excitation_scale is not None and quantum_yield is not None:
+            emitted = absorbed * excitation_scale * quantum_yield
+            configured_count_budget = emitted * collection * qe
             configured_count_budget_units = "detected_counts_per_fluorophore_per_frame"
-            count_budget_source = "fluorescence_photons_per_fluorophore_per_frame"
-            photons_incident = photons_incident if photons_incident is not None else emitted
+            count_budget_source = "fluorescence_absorbed_excitation_photons_per_fluorophore_per_frame"
+            photons_incident = photons_incident if photons_incident is not None else absorbed
             photons_detected = photons_detected if photons_detected is not None else configured_count_budget
             count_budget_semantics = (
-                "Fluorescence per-fluorophore photon budget is emitted photons per "
-                "frame before collection and detector QE; configured_count_budget "
-                "records the detected-count equivalent per fluorophore."
-            )
-        elif p.get("fluorescence_photon_count_scale") is not None:
-            emitted_scale = _optional_float(p.get("fluorescence_photon_count_scale"))
-            configured_count_budget = emitted_scale * collection * qe if emitted_scale is not None else None
-            configured_count_budget_units = "detected_counts_per_source_unit"
-            count_budget_source = "fluorescence_photon_count_scale"
-            photons_incident = photons_incident if photons_incident is not None else emitted_scale
-            photons_detected = photons_detected if photons_detected is not None else configured_count_budget
-            count_budget_semantics = (
-                "Legacy fluorescence photon_count_scale is an emitted/source scale "
-                "before collection and detector QE; configured_count_budget records "
-                "the detected-count equivalent per source unit."
+                "Fluorescence budget is absorbed excitation photons per fluorophore "
+                "per frame before excitation scaling, quantum yield, collection "
+                "efficiency, and detector QE."
             )
     else:
-        configured_count_budget = _optional_float(
-            p.get("background_intensity", p.get("dark_field_illumination_count"))
-        )
+        dark_field_like = m == "dark_field" or m == "coherent_dark_field" or m.endswith("_dark_field")
+        if dark_field_like:
+            configured_count_budget = counts.dark_field_illumination_count
+            count_budget_source = "dark_field_illumination_count"
+        else:
+            configured_count_budget = counts.background_intensity
+            count_budget_source = "background_intensity"
         if configured_count_budget is not None:
             configured_count_budget_units = "detector_counts_per_pixel_per_frame"
-            count_budget_source = (
-                "background_intensity"
-                if "background_intensity" in p
-                else "dark_field_illumination_count"
-            )
             photons_detected = photons_detected if photons_detected is not None else configured_count_budget
-            count_budget_semantics = (
-                "Optical label-free profiles use configured detector-count scale "
-                "per pixel per frame unless a separate calibrated photon budget is declared."
-            )
+            if dark_field_like and count_budget_source == "dark_field_illumination_count":
+                count_budget_semantics = (
+                    "Dark-field profiles use dark_field_illumination_count as the "
+                    "detector-count slope converting dimensionless scattered "
+                    "intensity to counts per pixel per frame; "
+                    "dark_field_background_count is a separate pedestal."
+                )
+            else:
+                count_budget_semantics = (
+                    "Optical label-free profiles use configured detector-count scale "
+                    "per pixel per frame unless a separate calibrated photon budget is declared."
+                )
 
     dwell_time_s = _optional_float(p.get("dwell_time_s"))
     if dwell_time_s is None and p.get("sem_dwell_time_us") is not None:
@@ -568,7 +598,12 @@ def acquisition_cost_from_profile(modality: str, params: Mapping[str, Any] | Non
         photobleaching_cost=p.get("photobleaching_cost", None if not fluorescence else 0.0),
         radiation_damage_cost=p.get("radiation_damage_cost", None if not electron else 0.0),
         heating_cost=p.get("heating_cost"),
-        sample_preparation_class=p.get("sample_preparation_class", "vacuum_electron" if electron else "ambient_optical"),
+        sample_preparation_class=p.get(
+            "sample_preparation_class",
+            "vacuum_electron"
+            if electron
+            else ("fluorescence_labelled" if fluorescence else "ambient_optical"),
+        ),
         destructive=bool(p.get("destructive", electron)),
         live_compatible=bool(p.get("live_compatible", not electron)),
         vacuum_compatible=bool(p.get("vacuum_compatible", electron)),
@@ -603,8 +638,8 @@ def model_card_from_profile_card(profile_card: Mapping[str, Any]) -> dict[str, A
                 profile_card.get("forward_observable", backend.get("backend_family", "imaging-model")),
             )
         ),
-        "implemented_approximation_level": str(fidelity.get("implemented_approximation_level", backend.get("fidelity_class", "proxy_model"))),
-        "backend_fidelity_level": str(fidelity.get("backend_fidelity_level", backend.get("backend_fidelity_level", "proxy"))),
+        "implemented_approximation_level": str(fidelity.get("implemented_approximation_level", backend.get("fidelity_class", "not_declared"))),
+        "backend_fidelity_level": str(fidelity.get("backend_fidelity_level", backend.get("backend_fidelity_level", "unknown"))),
         "reference_backend_metadata": json_safe_with_nonfinite_tags(
             fidelity.get("reference_backend_metadata", backend.get("reference_backend_metadata"))
         ),
@@ -684,7 +719,7 @@ def fisher_result_from_crlb_result(result: Mapping[str, Any], *, result_id: str,
             crlb_summary[key] = result[key]
     if "derivative_method" not in result:
         raise KeyError("CRLB result metadata must include 'derivative_method'.")
-    return FisherResult(result_id=result_id,parent_result_ids=tuple(str(x) for x in parent_result_ids),source_contract=source_contract,modality=modality,backend_id=backend_id,profile_id=profile_id,fisher_matrix=result.get("fisher_matrix"),covariance_or_pseudoinverse=covariance,crlb_summary=crlb_summary,derivative_method=str(result["derivative_method"]),derivative_step=result.get("derivative_step", result.get("lateral_step_nm")),derivative_units=derivative_units,candidate_steps=result.get("candidate_steps", {}),convergence_status=normalized_convergence,singular_axes=tuple(singular_axes or ()),rank=None if rank is None else int(rank),rank_tolerance=float(result.get("rank_tolerance", 1e-12)),condition_number=result.get("condition_number"),validation_status=validation,production_grid_diagnostic=not safe,safe_for_ordering=safe,safe_for_fusion=safe,safe_for_time_allocation=safe,safe_for_registration=safe,safe_for_detected_quanta_ranking=safe,notes=("structured CRLB dictionary",))
+    return FisherResult(result_id=result_id,parent_result_ids=tuple(str(x) for x in parent_result_ids),source_contract=source_contract,modality=modality,backend_id=backend_id,profile_id=profile_id,fisher_matrix=result.get("fisher_matrix"),covariance_or_pseudoinverse=covariance,crlb_summary=crlb_summary,derivative_method=str(result["derivative_method"]),derivative_step=result.get("derivative_step"),derivative_units=derivative_units,candidate_steps=result.get("candidate_steps", {}),convergence_status=normalized_convergence,singular_axes=tuple(singular_axes or ()),rank=None if rank is None else int(rank),rank_tolerance=float(result.get("rank_tolerance", 1e-12)),condition_number=result.get("condition_number"),validation_status=validation,production_grid_diagnostic=not safe,safe_for_ordering=safe,safe_for_fusion=safe,safe_for_time_allocation=safe,safe_for_registration=safe,safe_for_detected_quanta_ranking=safe,notes=("structured CRLB dictionary",))
 
 def artifact_graph_manifest(nodes: Sequence[ArtifactNode | Mapping[str, Any]]) -> dict[str, Any]:
     out=[]
@@ -761,7 +796,7 @@ def detected_quanta_contract_metadata(
     distribution_rule: str = "profile_specific_detected_count_image",
     normalization_domain: str = "central_plane_or_2d_image",
     support_mask_used: bool = False,
-    readout_variance_fraction_by_modality: Mapping[str, Any] | None = None,
+    candidate_readout_variance_fraction: Mapping[str, Any] | None = None,
     phase_mapping: str = "phase variance var(phi)=1/(visibility^2*n_Q)+readout",
     count_mapping: str = "count mean scaled so central-plane sum equals budget",
 ) -> dict[str, Any]:
@@ -773,8 +808,8 @@ def detected_quanta_contract_metadata(
         "support_mask_used": bool(support_mask_used),
         "phase_domain_mapping": phase_mapping,
         "count_domain_mapping": count_mapping,
-        "readout_variance_fraction_by_modality": dict(readout_variance_fraction_by_modality or {}),
-        "budget_sum_check": "per modality central-plane detected-quanta sum equals total budget after scaling",
+        "candidate_readout_variance_fraction": dict(candidate_readout_variance_fraction or {}),
+        "budget_sum_check": "per candidate central-plane detected-quanta sum equals total budget after scaling",
         "dose_semantics": "detected quanta are not dose unless a dose_cost_contract is supplied",
     }
 

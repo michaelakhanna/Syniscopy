@@ -10,7 +10,9 @@ from imaging_models.sem_source import (
     source_like_crop,
     source_like_normalize_exposure,
 )
+from imaging_models.source_rasterization import primitive_footprint_patch
 from particle_model import ParticleInstance, ParticleType
+from particle_specs import ParticleComponentSpec
 
 
 @dataclass
@@ -58,6 +60,19 @@ class _ParticleFrameRenderState:
         return source_like_crop(self.source_canvas, crop_start, crop_end)
 
 
+@dataclass(frozen=True)
+class _ComponentRenderInfo:
+    world_position_nm: np.ndarray
+    ipsf_interpolator: object
+    signal_multiplier: float
+    source_multiplier: float
+    diameter_nm: float
+    refractive_index: complex
+    material_properties: object
+    component_geometry: ParticleComponentSpec
+    orientation_matrix: np.ndarray | None
+
+
 def _accumulate_projected_geometry_disk(
     canvas: np.ndarray,
     *,
@@ -66,7 +81,28 @@ def _accumulate_projected_geometry_disk(
     diameter_nm: float,
     pixel_size_nm: float,
     os_factor: int,
+    component_geometry: ParticleComponentSpec | None = None,
+    orientation_matrix: np.ndarray | None = None,
 ) -> None:
+    if component_geometry is not None:
+        patch = primitive_footprint_patch(
+            component_geometry=component_geometry,
+            center_x_canvas=float(center_x_canvas),
+            center_y_canvas=float(center_y_canvas),
+            pixel_size_nm=float(pixel_size_nm),
+            os_factor=int(os_factor),
+            canvas_shape=canvas.shape,
+            orientation_matrix=orientation_matrix,
+        )
+        if patch is None:
+            return
+        occupied = patch.projected_chord_nm(normalize_total=False) > 0.0
+        canvas[patch.y0:patch.y1, patch.x0:patch.x1] = np.maximum(
+            canvas[patch.y0:patch.y1, patch.x0:patch.x1],
+            occupied.astype(canvas.dtype, copy=False),
+        )
+        return
+
     radius_px = 0.5 * float(diameter_nm) / (float(pixel_size_nm) / float(os_factor))
     if not np.isfinite(radius_px) or radius_px <= 0.0:
         return
@@ -91,7 +127,7 @@ def _iter_subparticle_render_info(
     instance: ParticleInstance,
     base_position_nm: np.ndarray,
     orientation_matrix: np.ndarray | None,
-) -> list[tuple[np.ndarray, object, float, float, float, object]]:
+) -> list[_ComponentRenderInfo]:
     """
     Compute the list of sub-particle render instructions for a given particle
     instance at a given (possibly interpolated) position and orientation.
@@ -99,14 +135,19 @@ def _iter_subparticle_render_info(
     ptype: ParticleType = instance.particle_type
 
     if not ptype.is_composite or not ptype.sub_particles:
+        if instance.component_geometry is None:
+            raise ValueError("ParticleInstance.component_geometry is required for rendering.")
         return [
-            (
-                np.asarray(base_position_nm, dtype=float),
-                ptype.ipsf_interpolator,
-                float(instance.component_signal_multiplier),
-                float(instance.component_source_multiplier),
-                float(ptype.diameter_nm),
-                instance.material_properties,
+            _ComponentRenderInfo(
+                world_position_nm=np.asarray(base_position_nm, dtype=float),
+                ipsf_interpolator=ptype.ipsf_interpolator,
+                signal_multiplier=float(instance.component_signal_multiplier),
+                source_multiplier=float(instance.component_source_multiplier),
+                diameter_nm=float(ptype.diameter_nm),
+                refractive_index=complex(ptype.refractive_index),
+                material_properties=instance.material_properties,
+                component_geometry=instance.component_geometry,
+                orientation_matrix=orientation_matrix,
             )
         ]
 
@@ -124,8 +165,10 @@ def _iter_subparticle_render_info(
                 "orientation_matrix must be a 3x3 rotation matrix when provided."
             )
 
-    sub_infos: list[tuple[np.ndarray, object, float, float, float, object]] = []
+    sub_infos: list[_ComponentRenderInfo] = []
     for sub in ptype.sub_particles:
+        if sub.component_geometry is None:
+            raise ValueError("SubParticle.component_geometry is required for rendering.")
         offset = np.asarray(sub.offset_nm, dtype=float)
         if offset.shape != (3,):
             raise ValueError(
@@ -139,13 +182,20 @@ def _iter_subparticle_render_info(
 
         sub_pos_world = base_world_pos + rotated_offset
         sub_infos.append(
-            (
-                sub_pos_world,
-                sub.ipsf_interpolator,
-                float(sub.signal_multiplier),
-                float(sub.source_multiplier),
-                float(sub.diameter_nm),
-                sub.material_properties if sub.material_properties is not None else instance.material_properties,
+            _ComponentRenderInfo(
+                world_position_nm=sub_pos_world,
+                ipsf_interpolator=sub.ipsf_interpolator,
+                signal_multiplier=float(sub.signal_multiplier),
+                source_multiplier=float(sub.source_multiplier),
+                diameter_nm=float(sub.diameter_nm),
+                refractive_index=complex(sub.refractive_index),
+                material_properties=(
+                    sub.material_properties
+                    if sub.material_properties is not None
+                    else instance.material_properties
+                ),
+                component_geometry=sub.component_geometry,
+                orientation_matrix=R,
             )
         )
 

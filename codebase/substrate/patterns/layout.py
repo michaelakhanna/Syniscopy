@@ -1,10 +1,10 @@
 """layout substrate-pattern helpers."""
 
 from __future__ import annotations
-from config import param_value
-from config.runtime import internal_param_value
+from config import AcquisitionProfile, SampleEnvironmentSettings, SamplingGeometry
 
-import hashlib
+from simulation_runtime_state import runtime_state_or_default
+from stochastic_runtime import rng_from_cache_key, rng_from_seed
 
 from ._shared import (
     Dict,
@@ -139,11 +139,9 @@ def _effective_layout_extent_nm(
     params: dict,
     layout_extent_nm: float | None,
 ) -> float:
-    img_size_pixels = int(params["image_size_pixels"])
-    pixel_size_nm = float(params["pixel_size_nm"])
     if layout_extent_nm is None:
-        layout_extent_nm = img_size_pixels * pixel_size_nm
-    internal_extent = internal_param_value(params, "_substrate_pattern_layout_extent_nm")
+        layout_extent_nm = SamplingGeometry.from_params(params).detector_fov_size_nm
+    internal_extent = runtime_state_or_default(params).substrate_pattern_layout_extent_nm
     if internal_extent is not None:
         layout_extent_nm = max(float(layout_extent_nm), float(internal_extent))
     layout_extent_nm = float(layout_extent_nm)
@@ -165,18 +163,10 @@ def _get_randomization_settings(params: dict) -> Tuple[bool, float, float]:
         position_jitter_std_um (float),
         shape_regularity (float)
     """
-    enabled = bool(param_value(params, "sample_environment_pattern_randomization_enabled"))
-    jitter_nm = float(param_value(params, "sample_environment_pattern_position_jitter_std_nm"))
-    shape_reg = float(param_value(params, "sample_environment_pattern_shape_regularity"))
-
-    if jitter_nm < 0.0:
-        raise ValueError(
-            "PARAMS['sample_environment_pattern_position_jitter_std_nm'] must be non-negative."
-        )
-    if not (0.0 <= shape_reg <= 1.0):
-        raise ValueError(
-            "PARAMS['sample_environment_pattern_shape_regularity'] must be in the interval [0, 1]."
-        )
+    settings = SampleEnvironmentSettings.from_params(params)
+    enabled = settings.pattern_randomization_enabled
+    jitter_nm = settings.pattern_position_jitter_std_nm
+    shape_reg = settings.pattern_shape_regularity
 
     # Convert to micrometers for internal use.
     jitter_um = jitter_nm * 1e-3
@@ -190,19 +180,11 @@ def _get_edge_perturbation_settings(params: dict) -> Tuple[float, int]:
         max_rel_radius (float): Maximum relative radial deviation (delta_max).
         mode_count (int): Number of angular modes K used in the perturbation.
     """
-    max_rel = float(param_value(params, "sample_environment_pattern_edge_perturbation_max_rel_radius"))
-    mode_count = int(param_value(params, "sample_environment_pattern_edge_perturbation_mode_count"))
-
-    if max_rel < 0.0:
-        raise ValueError(
-            "PARAMS['sample_environment_pattern_edge_perturbation_max_rel_radius'] must be non-negative."
-        )
-    if mode_count < 0:
-        raise ValueError(
-            "PARAMS['sample_environment_pattern_edge_perturbation_mode_count'] must be non-negative."
-        )
-
-    return max_rel, mode_count
+    settings = SampleEnvironmentSettings.from_params(params)
+    return (
+        settings.pattern_edge_perturbation_max_rel_radius,
+        settings.pattern_edge_perturbation_mode_count,
+    )
 
 def _compute_lattice_bounds(
     img_size_pixels: int,
@@ -336,7 +318,7 @@ def _build_feature_layout(
     (1 - sample_environment_pattern_shape_regularity) so that highly regular shapes have
     minimal boundary roughness.
     """
-    rng = np.random.default_rng() if rng is None else rng
+    rng = rng_from_seed(None, stream="substrate_feature_layout") if rng is None else rng
     substrate_enabled = _substrate_pattern_is_enabled(params)
     if not substrate_enabled:
         # Empty layout for disabled substrate-pattern rendering.
@@ -354,8 +336,9 @@ def _build_feature_layout(
             0.0,
         )
 
-    img_size_pixels = int(params["image_size_pixels"])
-    pixel_size_nm = float(params["pixel_size_nm"])
+    sampling = SamplingGeometry.from_params(params)
+    img_size_pixels = sampling.image_size_pixels
+    pixel_size_nm = sampling.detector_pixel_size_nm
     layout_extent_nm = _effective_layout_extent_nm(params, layout_extent_nm)
 
     i_min, i_max, j_min, j_max = _compute_lattice_bounds(
@@ -464,18 +447,17 @@ def _layout_rng_for_cache_key(
     params: dict,
     cache_key: tuple,
 ) -> np.random.Generator:
-    explicit_rng = internal_param_value(params, "_substrate_pattern_layout_rng")
+    state = runtime_state_or_default(params)
+    explicit_rng = state.substrate_pattern_layout_rng
     if explicit_rng is not None:
         return explicit_rng
     has_seed_surface = (
-        param_value(params, 'random_seed') is not None
-        or internal_param_value(params, "_substrate_pattern_layout_cache_token") is not None
+        AcquisitionProfile.from_params(params).random_seed is not None
+        or state.substrate_pattern_layout_cache_token is not None
     )
     if not has_seed_surface:
-        return np.random.default_rng()
-    digest = hashlib.sha256(repr(cache_key).encode("utf-8")).digest()
-    words = [int.from_bytes(digest[i:i + 4], "big") for i in range(0, 16, 4)]
-    return np.random.default_rng(np.random.SeedSequence(words))
+        return rng_from_seed(None, stream="substrate_layout_uncached")
+    return rng_from_cache_key(cache_key, stream="substrate_pattern_layout")
 
 def _get_feature_layout_for_params(
     params: dict,
@@ -517,15 +499,15 @@ def _get_feature_layout_for_params(
     random_enabled, jitter_std_um, shape_reg = _get_randomization_settings(params)
     if random_enabled and pitch_um > 0.0 and jitter_std_um > 0.25 * float(pitch_um):
         raise ValueError(
-            "PARAMS['sample_environment_pattern_position_jitter_std_nm'] is too large "
+            "parameters['sample_environment_pattern_position_jitter_std_nm'] is too large "
             "for the configured pattern pitch. Keep jitter standard deviation <= 25% "
             "of the pattern pitch so solid/fluid classification remains local."
         )
     edge_amp_rel_max, edge_mode_count = _get_edge_perturbation_settings(params)
 
-    layout_cache_token = internal_param_value(params, "_substrate_pattern_layout_cache_token")
+    layout_cache_token = runtime_state_or_default(params).substrate_pattern_layout_cache_token
     if layout_cache_token is None:
-        layout_cache_token = param_value(params, "random_seed")
+        layout_cache_token = AcquisitionProfile.from_params(params).random_seed
     if layout_cache_token is not None:
         layout_cache_token = str(layout_cache_token)
 

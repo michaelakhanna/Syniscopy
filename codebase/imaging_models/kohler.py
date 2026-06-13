@@ -34,14 +34,24 @@ coherent limit of bench bright-field microscopes.
 
 from __future__ import annotations
 
+from functools import lru_cache
+
 import numpy as np
 
 from config.runtime import (
     AnnularDarkFieldSettings,
     KohlerBrightFieldSettings,
+    OpticalInstrumentSettings,
     OpticalModeSettings,
     SamplingGeometry,
-    param_value,
+)
+from detector_frame_conversion import (
+    DETECTOR_OUTPUT_DOMAIN_CAMERA_COUNTS,
+    MODEL_OUTPUT_DOMAIN_SCATTERED_INTENSITY,
+    REFERENCE_BASIS_NONE,
+    VALUE_FORM_ABSOLUTE,
+    DetectorFrameConversion,
+    convert_model_output_to_detector_frame,
 )
 from .base import (
     ImagingModel,
@@ -100,6 +110,16 @@ def _annulus_samples(n_target: int, r_inner: float, r_outer: float) -> np.ndarra
     return np.array(pts, dtype=float)
 
 
+@lru_cache(maxsize=128)
+def _kohler_frequency_grids(H: int, W: int, dx_m: float) -> tuple[np.ndarray, np.ndarray]:
+    kx = np.fft.fftfreq(int(W), d=float(dx_m))
+    ky = np.fft.fftfreq(int(H), d=float(dx_m))
+    KX, KY = np.meshgrid(kx, ky, indexing="xy")
+    KX.setflags(write=False)
+    KY.setflags(write=False)
+    return KX, KY
+
+
 # ---------------------------------------------------------------------------
 # Abbe-decomposition base
 # ---------------------------------------------------------------------------
@@ -108,6 +128,7 @@ class _AbbeKohlerBase(ImagingModel):
     """Shared infrastructure for Abbe-decomposed partially-coherent imaging."""
 
     uses_sample_environment_pattern = True
+    sample_environment_reference_field_only = True
     output_type = "intensity"
     requires_pre_crop_optical_filtering = True
     supports_spectral_channels = True
@@ -116,7 +137,7 @@ class _AbbeKohlerBase(ImagingModel):
         E_amp = OpticalModeSettings.from_params(params).reference_field_amplitude
         if E_amp <= 0.0:
             raise ValueError(
-                "PARAMS['reference_field_amplitude'] must be positive for "
+                "parameters['reference_field_amplitude'] must be positive for "
                 f"{type(self).__name__}."
             )
         self._E_inc_amplitude = E_amp
@@ -128,10 +149,7 @@ class _AbbeKohlerBase(ImagingModel):
 
     @staticmethod
     def _frequency_grids(shape: tuple[int, int], dx_m: float):
-        H, W = shape
-        kx = np.fft.fftfreq(W, d=dx_m)
-        ky = np.fft.fftfreq(H, d=dx_m)
-        return np.meshgrid(kx, ky, indexing="xy")
+        return _kohler_frequency_grids(int(shape[0]), int(shape[1]), float(dx_m))
 
     def _shifted_pupil_mask(
         self,
@@ -158,6 +176,39 @@ class _AbbeKohlerBase(ImagingModel):
     ) -> np.ndarray:
         mask = self._shifted_pupil_mask(shape, sx_norm, sy_norm, cutoff_cycles_per_m, dx_m)
         return np.fft.ifft2(F_field * mask)
+
+    def _source_point_chunks(self, pts: np.ndarray, shape: tuple[int, int], field: np.ndarray):
+        components = 3 if is_vectorial_field(field) else 1
+        pixels_per_source = max(1, int(shape[0]) * int(shape[1]) * components)
+        chunk_size = max(1, min(int(pts.shape[0]), 8_000_000 // pixels_per_source))
+        for start in range(0, int(pts.shape[0]), chunk_size):
+            yield pts[start : start + chunk_size]
+
+    def _shifted_pupil_masks(
+        self,
+        shape: tuple[int, int],
+        pts: np.ndarray,
+        cutoff_cycles_per_m: float,
+        dx_m: float,
+    ) -> np.ndarray:
+        KX, KY = self._frequency_grids(shape, dx_m)
+        sx = pts[:, 0][:, None, None]
+        sy = pts[:, 1][:, None, None]
+        cutoff = float(cutoff_cycles_per_m)
+        return ((KX[None, :, :] - sx * cutoff) ** 2 + (KY[None, :, :] - sy * cutoff) ** 2) <= cutoff ** 2
+
+    def _filter_field_batch(
+        self,
+        F_field: np.ndarray,
+        shape: tuple[int, int],
+        pts: np.ndarray,
+        cutoff_cycles_per_m: float,
+        dx_m: float,
+    ) -> np.ndarray:
+        masks = self._shifted_pupil_masks(shape, pts, cutoff_cycles_per_m, dx_m)
+        if is_vectorial_field(F_field):
+            return np.fft.ifft2(F_field[None, :, :, :] * masks[:, None, :, :], axes=(-2, -1))
+        return np.fft.ifft2(F_field[None, :, :] * masks, axes=(-2, -1))
 
     # --- subclass interface ---
 
@@ -187,8 +238,9 @@ class _AbbeKohlerBase(ImagingModel):
         background_field: np.ndarray,
         params: dict,
     ) -> np.ndarray:
-        wavelength_m = self.probe_wavelength_nm(params) * 1e-9
-        NA_obj = float(param_value(params, "numerical_aperture"))
+        instrument = OpticalInstrumentSettings.from_params(params)
+        wavelength_m = instrument.probe_wavelength_nm * 1e-9
+        NA_obj = instrument.numerical_aperture
         cutoff = NA_obj / wavelength_m
         dx_m = self._physical_pixel_size_nm(params) * 1e-9
         E_sca_total = np.asarray(E_sca_total, dtype=np.complex128)
@@ -207,17 +259,21 @@ class _AbbeKohlerBase(ImagingModel):
             pts = np.zeros((1, 2), dtype=float)
 
         I_total = np.zeros(shape, dtype=float)
-        for sx, sy in pts:
-            E_sca_eff = self._filter_field(F_sca, shape, sx, sy, cutoff, dx_m)
-            if F_bg is not None:
-                E_bg_eff = self._filter_field(F_bg, shape, sx, sy, cutoff, dx_m)
-            else:
-                E_bg_eff = reference_vector_for_scattered(
-                    np.full(shape, self._E_inc_amplitude, dtype=np.complex128),
-                    E_sca_total,
-                    params,
-                )
-            I_total += self._coherent_intensity_at_source(E_sca_eff, E_bg_eff, params)
+        static_reference = None
+        if F_bg is None:
+            static_reference = reference_vector_for_scattered(
+                np.full(shape, self._E_inc_amplitude, dtype=np.complex128),
+                E_sca_total,
+                params,
+            )
+        for chunk in self._source_point_chunks(pts, shape, E_sca_total):
+            E_sca_eff = self._filter_field_batch(F_sca, shape, chunk, cutoff, dx_m)
+            E_bg_eff = (
+                self._filter_field_batch(F_bg, shape, chunk, cutoff, dx_m)
+                if F_bg is not None
+                else static_reference
+            )
+            I_total += np.sum(self._coherent_intensity_at_source(E_sca_eff, E_bg_eff, params), axis=0)
         return I_total / float(pts.shape[0])
 
     def compute_per_particle_contrast(
@@ -226,8 +282,9 @@ class _AbbeKohlerBase(ImagingModel):
         background_field: np.ndarray,
         params: dict,
     ) -> np.ndarray:
-        wavelength_m = self.probe_wavelength_nm(params) * 1e-9
-        NA_obj = float(param_value(params, "numerical_aperture"))
+        instrument = OpticalInstrumentSettings.from_params(params)
+        wavelength_m = instrument.probe_wavelength_nm * 1e-9
+        NA_obj = instrument.numerical_aperture
         cutoff = NA_obj / wavelength_m
         dx_m = self._physical_pixel_size_nm(params) * 1e-9
         E_sca_particle = np.asarray(E_sca_particle, dtype=np.complex128)
@@ -247,27 +304,36 @@ class _AbbeKohlerBase(ImagingModel):
 
         I_with = np.zeros(shape, dtype=float)
         I_without = np.zeros(shape, dtype=float)
-        for sx, sy in pts:
-            E_sca_eff = self._filter_field(F_sca, shape, sx, sy, cutoff, dx_m)
-            if F_bg is not None:
-                E_bg_eff = self._filter_field(F_bg, shape, sx, sy, cutoff, dx_m)
+        static_reference = None
+        if F_bg is None:
+            static_reference = reference_vector_for_scattered(
+                np.full(shape, self._E_inc_amplitude, dtype=np.complex128),
+                E_sca_particle,
+                params,
+            )
+        for chunk in self._source_point_chunks(pts, shape, E_sca_particle):
+            E_sca_eff = self._filter_field_batch(F_sca, shape, chunk, cutoff, dx_m)
+            E_bg_eff = (
+                self._filter_field_batch(F_bg, shape, chunk, cutoff, dx_m)
+                if F_bg is not None
+                else static_reference
+            )
+            I_with += np.sum(self._coherent_intensity_at_source(E_sca_eff, E_bg_eff, params), axis=0)
+            I_without_chunk = self._coherent_no_particle_intensity(E_bg_eff, params)
+            if I_without_chunk.shape == shape:
+                I_without += float(chunk.shape[0]) * I_without_chunk
             else:
-                E_bg_eff = reference_vector_for_scattered(
-                    np.full(shape, self._E_inc_amplitude, dtype=np.complex128),
-                    E_sca_particle,
-                    params,
-                )
-            I_with += self._coherent_intensity_at_source(E_sca_eff, E_bg_eff, params)
-            I_without += self._coherent_no_particle_intensity(E_bg_eff, params)
+                I_without += np.sum(I_without_chunk, axis=0)
         return (I_with - I_without) / float(pts.shape[0])
 
     def compute_response_function(self, shape: tuple[int, int], params: dict) -> dict:
         response = super().compute_response_function(shape, params)
         pts = self._source_points(params)
+        instrument = OpticalInstrumentSettings.from_params(params)
         response.update(
             scalar_vectorial_backend=OpticalModeSettings.from_params(params).optical_field_backend,
-            objective_NA=float(param_value(params, "numerical_aperture")),
-            wavelength_nm=float(self.probe_wavelength_nm(params)),
+            objective_NA=float(instrument.numerical_aperture),
+            wavelength_nm=float(instrument.probe_wavelength_nm),
             source_point_count_actual=int(pts.shape[0]),
             source_sampling_scheme="deterministic_hex_disc_or_annulus",
         )
@@ -380,23 +446,35 @@ class AnnularDarkFieldImagingModel(_AbbeKohlerBase):
         # that couples through the objective pupil is detected.
         field_gain = AnnularDarkFieldSettings.from_params(params).dark_field.field_gain
         if field_gain <= 0.0:
-            raise ValueError("PARAMS['dark_field_field_gain'] must be positive.")
+            raise ValueError("parameters['dark_field_field_gain'] must be positive.")
         return field_intensity(field_gain * E_sca_eff + E_bg_eff)
 
     def _coherent_no_particle_intensity(self, E_bg_eff, params):
         return field_intensity(E_bg_eff)
 
-    def scale_intensity_to_counts(
+    def convert_model_output_to_detector_frame(
         self,
-        intensity: np.ndarray,
+        model_output: np.ndarray,
         background_final: np.ndarray,
         E_ref_intensity_final: np.ndarray,
         params: dict,
     ) -> np.ndarray:
         settings = AnnularDarkFieldSettings.from_params(params).dark_field
-        illumination_count = settings.illumination_count
-        background_count = settings.background_count
-        return illumination_count * intensity + background_count
+        return convert_model_output_to_detector_frame(
+            model_output=model_output,
+            background_frame=background_final,
+            reference_intensity_frame=E_ref_intensity_final,
+            conversion=DetectorFrameConversion(
+                model_output_domain=MODEL_OUTPUT_DOMAIN_SCATTERED_INTENSITY,
+                detector_output_domain=DETECTOR_OUTPUT_DOMAIN_CAMERA_COUNTS,
+                value_form=VALUE_FORM_ABSOLUTE,
+                reference_basis=REFERENCE_BASIS_NONE,
+                scale=settings.illumination_count,
+                offset=settings.background_count,
+            ),
+            params=params,
+            context="AnnularDarkFieldImagingModel.convert_model_output_to_detector_frame",
+        )
 
     def compute_response_function(self, shape: tuple[int, int], params: dict) -> dict:
         response = super().compute_response_function(shape, params)

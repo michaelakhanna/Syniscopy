@@ -1,17 +1,11 @@
 {
   "counts": {
-    "exposure_tier": {
-      "advanced": 163,
-      "core": 137,
-      "hidden": 14,
-      "workflow": 33
-    },
-    "internal": 14,
-    "params": 333,
-    "rows": 347,
-    "schema_controls": 334
+    "advanced": 170,
+    "core": 139,
+    "hidden": 11,
+    "workflow": 33
   },
-  "generated_utc": "2026-06-04T20:51:36Z",
+  "generated_utc": "2026-06-06T20:17:00Z",
   "rows": [
     {
       "exposure_tier": "advanced",
@@ -298,20 +292,6 @@
       "in_params": true,
       "in_schema": true,
       "notes": "User-settable through schema-defined control surface.",
-      "param_key": "fluorescence_blinking_rate_per_frame",
-      "schema_groups": [
-        "Advanced modality"
-      ],
-      "schema_keys": [
-        "fluorescence_blinking_rate_per_frame"
-      ],
-      "surface": "schema-control"
-    },
-    {
-      "exposure_tier": "advanced",
-      "in_params": true,
-      "in_schema": true,
-      "notes": "User-settable through schema-defined control surface.",
       "param_key": "fluorescence_collection_efficiency",
       "schema_groups": [
         "Advanced modality"
@@ -466,20 +446,6 @@
       "in_params": true,
       "in_schema": true,
       "notes": "User-settable through schema-defined control surface.",
-      "param_key": "fluorescence_recovery_rate_per_frame",
-      "schema_groups": [
-        "Advanced modality"
-      ],
-      "schema_keys": [
-        "fluorescence_recovery_rate_per_frame"
-      ],
-      "surface": "schema-control"
-    },
-    {
-      "exposure_tier": "advanced",
-      "in_params": true,
-      "in_schema": true,
-      "notes": "User-settable through schema-defined control surface.",
       "param_key": "fluorescence_reference_status",
       "schema_groups": [
         "Advanced modality"
@@ -550,12 +516,54 @@
       "in_params": true,
       "in_schema": true,
       "notes": "User-settable through schema-defined control surface.",
+      "param_key": "fluorescence_source_representation",
+      "schema_groups": [
+        "Advanced modality"
+      ],
+      "schema_keys": [
+        "fluorescence_source_representation"
+      ],
+      "surface": "schema-control"
+    },
+    {
+      "exposure_tier": "advanced",
+      "in_params": true,
+      "in_schema": true,
+      "notes": "User-settable through schema-defined control surface.",
       "param_key": "fluorescence_spectral_bandwidth_nm",
       "schema_groups": [
         "Advanced modality"
       ],
       "schema_keys": [
         "fluorescence_spectral_bandwidth_nm"
+      ],
+      "surface": "schema-control"
+    },
+    {
+      "exposure_tier": "advanced",
+      "in_params": true,
+      "in_schema": true,
+      "notes": "User-settable through schema-defined control surface.",
+      "param_key": "fluorescence_volume_slice_thickness_nm",
+      "schema_groups": [
+        "Advanced modality"
+      ],
+      "schema_keys": [
+        "fluorescence_volume_slice_thickness_nm"
+      ],
+      "surface": "schema-control"
+    },
+    {
+      "exposure_tier": "advanced",
+      "in_params": true,
+      "in_schema": true,
+      "notes": "User-settable through schema-defined control surface.",
+      "param_key": "fluorescence_volume_slices",
+      "schema_groups": [
+        "Advanced modality"
+      ],
+      "schema_keys": [
+        "fluorescence_volume_slices"
       ],
       "surface": "schema-control"
     },
@@ -758,6 +766,20 @@
     {
       "exposure_tier": "advanced",
       "in_params": true,
+      "in_schema": true,
+      "notes": "User-settable through schema-defined control surface.",
+      "param_key": "optical_filter_guard_pixels",
+      "schema_groups": [
+        "Advanced modality"
+      ],
+      "schema_keys": [
+        "optical_filter_guard_pixels"
+      ],
+      "surface": "schema-control"
+    },
+    {
+      "exposure_tier": "advanced",
+      "in_params": true,
       "in_schema": false,
       "notes": "Tunable by PARAMS override; not currently in schema controls.",
       "param_key": "particles",
@@ -776,6 +798,20 @@
       ],
       "schema_keys": [
         "profile_fidelity_label"
+      ],
+      "surface": "schema-control"
+    },
+    {
+      "exposure_tier": "advanced",
+      "in_params": true,
+      "in_schema": true,
+      "notes": "User-settable through schema-defined control surface.",
+      "param_key": "psf_z_grid_min_half_span_steps",
+      "schema_groups": [
+        "Advanced modality"
+      ],
+      "schema_keys": [
+        "psf_z_grid_min_half_span_steps"
       ],
       "surface": "schema-control"
     },
@@ -832,6 +868,20 @@
       ],
       "schema_keys": [
         "qpi_visibility"
+      ],
+      "surface": "schema-control"
+    },
+    {
+      "exposure_tier": "advanced",
+      "in_params": true,
+      "in_schema": true,
+      "notes": "User-settable through schema-defined control surface.",
+      "param_key": "ricm_gap_nm",
+      "schema_groups": [
+        "Advanced modality"
+      ],
+      "schema_keys": [
+        "ricm_gap_nm"
       ],
       "surface": "schema-control"
     },
@@ -972,6 +1022,20 @@
       ],
       "schema_keys": [
         "ricm_thinfilm_layers"
+      ],
+      "surface": "schema-control"
+    },
+    {
+      "exposure_tier": "advanced",
+      "in_params": true,
+      "in_schema": true,
+      "notes": "User-settable through schema-defined control surface.",
+      "param_key": "ricm_use_particle_z_as_gap",
+      "schema_groups": [
+        "Advanced modality"
+      ],
+      "schema_keys": [
+        "ricm_use_particle_z_as_gap"
       ],
       "surface": "schema-control"
     },
@@ -2100,6 +2164,20 @@
       "in_params": true,
       "in_schema": true,
       "notes": "User-settable through schema-defined control surface.",
+      "param_key": "tirf_fluorescence_backend",
+      "schema_groups": [
+        "Advanced modality"
+      ],
+      "schema_keys": [
+        "tirf_fluorescence_backend"
+      ],
+      "surface": "schema-control"
+    },
+    {
+      "exposure_tier": "advanced",
+      "in_params": true,
+      "in_schema": true,
+      "notes": "User-settable through schema-defined control surface.",
       "param_key": "tirf_height_offset_nm",
       "schema_groups": [
         "Advanced modality"
@@ -2176,6 +2254,20 @@
       ],
       "schema_keys": [
         "tirf_sample_refractive_index"
+      ],
+      "surface": "schema-control"
+    },
+    {
+      "exposure_tier": "advanced",
+      "in_params": true,
+      "in_schema": true,
+      "notes": "User-settable through schema-defined control surface.",
+      "param_key": "tirf_source_representation",
+      "schema_groups": [
+        "Advanced modality"
+      ],
+      "schema_keys": [
+        "tirf_source_representation"
       ],
       "surface": "schema-control"
     },
@@ -2632,6 +2724,20 @@
       "in_params": true,
       "in_schema": true,
       "notes": "User-settable through schema-defined control surface.",
+      "param_key": "dpc_illumination_sigma",
+      "schema_groups": [
+        "Imaging"
+      ],
+      "schema_keys": [
+        "dpc_illumination_sigma"
+      ],
+      "surface": "schema-control"
+    },
+    {
+      "exposure_tier": "core",
+      "in_params": true,
+      "in_schema": true,
+      "notes": "User-settable through schema-defined control surface.",
       "param_key": "dpc_intensity_gain",
       "schema_groups": [
         "Imaging"
@@ -2722,6 +2828,20 @@
       ],
       "schema_keys": [
         "dpc_phase_gradient_gain_y"
+      ],
+      "surface": "schema-control"
+    },
+    {
+      "exposure_tier": "core",
+      "in_params": true,
+      "in_schema": true,
+      "notes": "User-settable through schema-defined control surface.",
+      "param_key": "dpc_source_samples",
+      "schema_groups": [
+        "Imaging"
+      ],
+      "schema_keys": [
+        "dpc_source_samples"
       ],
       "surface": "schema-control"
     },
@@ -3192,12 +3312,12 @@
       "in_params": true,
       "in_schema": true,
       "notes": "User-settable through schema-defined control surface.",
-      "param_key": "matched_modalities",
+      "param_key": "matched_microscopes",
       "schema_groups": [
         "Imaging"
       ],
       "schema_keys": [
-        "matched_modalities"
+        "matched_microscopes"
       ],
       "surface": "schema-control"
     },
@@ -4214,16 +4334,6 @@
       "in_params": false,
       "in_schema": false,
       "notes": "Derived/runtime key intentionally excluded from user surfaces.",
-      "param_key": "_camera_noise_static_seed",
-      "schema_groups": [],
-      "schema_keys": [],
-      "surface": "internal"
-    },
-    {
-      "exposure_tier": "hidden",
-      "in_params": false,
-      "in_schema": false,
-      "notes": "Derived/runtime key intentionally excluded from user surfaces.",
       "param_key": "_generated_spectral_channels",
       "schema_groups": [],
       "schema_keys": [],
@@ -4314,37 +4424,17 @@
       "in_params": false,
       "in_schema": false,
       "notes": "Derived/runtime key intentionally excluded from user surfaces.",
-      "param_key": "_substrate_pattern_layout_cache_token",
-      "schema_groups": [],
-      "schema_keys": [],
-      "surface": "internal"
-    },
-    {
-      "exposure_tier": "hidden",
-      "in_params": false,
-      "in_schema": false,
-      "notes": "Derived/runtime key intentionally excluded from user surfaces.",
-      "param_key": "_substrate_pattern_layout_extent_nm",
-      "schema_groups": [],
-      "schema_keys": [],
-      "surface": "internal"
-    },
-    {
-      "exposure_tier": "hidden",
-      "in_params": false,
-      "in_schema": false,
-      "notes": "Derived/runtime key intentionally excluded from user surfaces.",
-      "param_key": "_substrate_pattern_layout_rng",
-      "schema_groups": [],
-      "schema_keys": [],
-      "surface": "internal"
-    },
-    {
-      "exposure_tier": "hidden",
-      "in_params": false,
-      "in_schema": false,
-      "notes": "Derived/runtime key intentionally excluded from user surfaces.",
       "param_key": "_write_mask_files",
+      "schema_groups": [],
+      "schema_keys": [],
+      "surface": "internal"
+    },
+    {
+      "exposure_tier": "hidden",
+      "in_params": false,
+      "in_schema": false,
+      "notes": "Typed run-local state owner for detector/static-map, substrate-layout, exposure-scale, and focus-plane runtime values.",
+      "param_key": "_runtime_state",
       "schema_groups": [],
       "schema_keys": [],
       "surface": "internal"

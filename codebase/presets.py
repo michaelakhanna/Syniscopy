@@ -14,8 +14,8 @@ module.
 
 Design notes
 ------------
-- This module does *not* modify config.PARAMS in-place. All public functions
-  that apply presets return new dictionaries.
+- This module does not modify any global defaults in-place. All public
+  functions that apply presets return new dictionaries.
 - Instrument presets are named, reproducible microscope-configuration bundles.
   They touch instrument and detector metadata only.
 """
@@ -23,7 +23,7 @@ Design notes
 from copy import deepcopy
 from typing import Any, Dict, Iterable
 
-from config import PARAMS
+from config import default_params
 
 
 # ---------------------------------------------------------------------------
@@ -88,8 +88,9 @@ def apply_instrument_preset(base_params: Dict[str, Any], preset_name: str) -> Di
     returns a deep copy of `base_params` with all key/value pairs from the
     specified instrument preset overlaid on top.
 
-    The base parameter dictionary is typically a copy of config.PARAMS, but it
-    can be any dictionary that follows the same structure.
+    The base parameter dictionary is typically assembled with
+    config.default_params(), but it can be any dictionary that follows the same
+    structure.
 
     Args:
         base_params (Dict[str, Any]):
@@ -125,16 +126,15 @@ def apply_instrument_preset(base_params: Dict[str, Any], preset_name: str) -> Di
 def create_params_for_instrument(preset_name: str) -> Dict[str, Any]:
     """
     Convenience helper that creates a fresh parameter dictionary for a given
-    instrument preset starting from the global config.PARAMS template.
+    instrument preset starting from concept-owned defaults.
 
     This is equivalent to:
 
-        from copy import deepcopy
-        from config import PARAMS
-        params = apply_instrument_preset(deepcopy(PARAMS), preset_name)
+        from config import default_params
+        params = apply_instrument_preset(default_params(), preset_name)
 
     but packaged in a single function for clarity. The returned dictionary is
-    independent of the global PARAMS and can be safely modified or passed to
+    independent of default owners and can be safely modified or passed to
     run_simulation without affecting other simulations.
 
     Args:
@@ -145,5 +145,4 @@ def create_params_for_instrument(preset_name: str) -> Dict[str, Any]:
         Dict[str, Any]: A new parameter dictionary configured for the specified
         instrument.
     """
-    base = deepcopy(PARAMS)
-    return apply_instrument_preset(base, preset_name)
+    return apply_instrument_preset(default_params(), preset_name)

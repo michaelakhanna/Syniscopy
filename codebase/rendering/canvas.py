@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from config import SamplingGeometry
 from imaging_models import get_imaging_model
 from particle_model import ParticleInstance, ParticleType
 from particle_specs import get_particle_specs
@@ -15,17 +16,14 @@ def _source_footprint_guard_radius_pixels(
     particle_instances: list[ParticleInstance] | None,
 ) -> int:
     """Return a source-map guard radius in oversampled canvas pixels."""
-    pixel_size_nm = float(params["pixel_size_nm"])
-    os_factor = int(params["psf_oversampling_factor"])
-    if pixel_size_nm <= 0.0 or os_factor <= 0:
-        return 0
+    sampling = SamplingGeometry.from_params(params)
     max_diameter_nm = 0.0
     if particle_instances is None:
         for spec in get_particle_specs(params):
             for component in spec.components:
                 offset = np.asarray(component.offset_nm, dtype=float)
                 offset_radius_nm = float(np.linalg.norm(offset)) if offset.size >= 2 else 0.0
-                sub_radius_nm = 0.5 * float(component.diameter_nm)
+                sub_radius_nm = float(component.bounding_radius_nm)
                 max_diameter_nm = max(max_diameter_nm, 2.0 * (offset_radius_nm + sub_radius_nm))
     else:
         for instance in particle_instances:
@@ -35,9 +33,19 @@ def _source_footprint_guard_radius_pixels(
                 for sub in ptype.sub_particles:
                     offset = np.asarray(getattr(sub, "offset_nm", [0.0, 0.0, 0.0]), dtype=float)
                     offset_radius_nm = float(np.linalg.norm(offset)) if offset.size >= 2 else 0.0
-                    sub_radius_nm = 0.5 * float(getattr(sub, "diameter_nm", 0.0))
+                    geometry = getattr(sub, "component_geometry", None)
+                    sub_radius_nm = (
+                        float(geometry.bounding_radius_nm)
+                        if geometry is not None
+                        else 0.5 * float(getattr(sub, "diameter_nm", 0.0))
+                    )
                     max_diameter_nm = max(max_diameter_nm, 2.0 * (offset_radius_nm + sub_radius_nm))
-    guard = 0.5 * max_diameter_nm / pixel_size_nm * float(os_factor)
+    guard = (
+        0.5
+        * max_diameter_nm
+        / sampling.detector_pixel_size_nm
+        * float(sampling.psf_oversampling_factor)
+    )
     return int(np.ceil(max(guard, 0.0))) + 2
 
 
@@ -47,10 +55,11 @@ def resolve_render_canvas_geometry(
     imaging_model=None,
 ) -> dict[str, int | float | str]:
     """Resolve render canvas, guard-band, and crop geometry for one model."""
-    img_size = int(params["image_size_pixels"])
-    pixel_size_nm = float(params["pixel_size_nm"])
-    os_factor = int(params["psf_oversampling_factor"])
-    os_size = img_size * os_factor
+    sampling = SamplingGeometry.from_params(params)
+    img_size = sampling.image_size_pixels
+    pixel_size_nm = sampling.detector_pixel_size_nm
+    os_factor = sampling.psf_oversampling_factor
+    os_size = sampling.model_canvas_shape[0]
     model = imaging_model if imaging_model is not None else get_imaging_model(params)
     requires_optical_scattered_field = bool(
         getattr(model, "requires_optical_scattered_field", True)

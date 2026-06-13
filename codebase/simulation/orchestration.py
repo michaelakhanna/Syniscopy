@@ -1,18 +1,34 @@
 """Public simulation orchestration entry points."""
 
 from __future__ import annotations
+from configured_parameters import configured_assign
 
 from copy import deepcopy
 from typing import Any
 
 import numpy as np
 
-from config import normalize_params
+from camera_noise import (
+    analysis_noise_params_for_frame,
+    detector_contrast_frames_for_analysis,
+)
+from config import (
+    BackgroundSubtractionSettings,
+    MicroscopeRuntimeSettings,
+    MotionDynamicsSettings,
+    RenderRuntimeConfig,
+    SampleEnvironmentSettings,
+    SpectralIntegrationSettings,
+    SupervisionSettings,
+    VolumeRenderingSettings,
+)
 from optical_extensions import expand_broadband_quadrature
 from postprocessing import compute_single_frame_contrast, normalize_contrast_frames
 from rendering import generate_video_and_masks
 from imaging_models import get_imaging_model
 from volume_rendering import (
+    VOLUME_BASIS_FOCUS_STACK_CONTRAST,
+    VOLUME_COORDINATE_FOCUS_PLANE_Z_NM,
     combine_volume_stack,
     holotomography_phase_projection_stack,
     params_for_focus_plane,
@@ -21,7 +37,7 @@ from volume_rendering import (
 
 from .latent_scene import _build_particle_instances_for_scene, _simulate_latent_scene
 from .output import (
-    _RUNTIME_PARAM_KEYS,
+    _ensure_run_scope_detector_static_seed,
     _ensure_run_scope_layout_extent,
     _ensure_run_scope_layout_token,
     _resolve_public_num_frames,
@@ -31,11 +47,20 @@ from .spectral_channels import _run_multichannel_simulation
 from .units import _canonical_contrast_frame_units
 
 
+def _validate_simulation_runtime_owners(params: dict) -> None:
+    MicroscopeRuntimeSettings.from_params(params)
+    MotionDynamicsSettings.from_params(params)
+    SampleEnvironmentSettings.from_params(params)
+    BackgroundSubtractionSettings.from_params(params)
+    SupervisionSettings.from_params(params)
+    RenderRuntimeConfig.from_params(params)
+
+
 def run_simulation(params: dict, return_frames: bool = False):
     """
     Run the complete Syniscopy simulation and video generation pipeline.
 
-    If PARAMS['channels'] is set, the simulator
+    If parameters['channels'] is set, the simulator
     uses a same-scene spectral path: one latent scene is generated, each
     wavelength is rendered against that scene, detector channels are integrated,
     and noise is applied after integration.
@@ -51,21 +76,20 @@ def run_simulation(params: dict, return_frames: bool = False):
     run_params = expand_broadband_quadrature(run_params)
     _resolve_public_num_frames(run_params)
     _ensure_run_scope_layout_token(run_params)
-    run_params = normalize_params(run_params, allowed_internal_keys=_RUNTIME_PARAM_KEYS)
+    _validate_simulation_runtime_owners(run_params)
     _ensure_run_scope_layout_extent(run_params)
-    run_params = normalize_params(run_params, allowed_internal_keys=_RUNTIME_PARAM_KEYS)
 
-    volume_mode = str(run_params["volumetric_imaging_mode"]).strip().lower()
-    if volume_mode != "single_plane":
+    volume_settings = VolumeRenderingSettings.from_params(run_params)
+    if volume_settings.imaging_mode != "single_plane":
         if return_frames:
             return generate_volumetric_views(run_params)
         raise ValueError(
-            "PARAMS['volumetric_imaging_mode'] is not 'single_plane'. "
+            "parameters['volumetric_imaging_mode'] is not 'single_plane'. "
             "Use generate_volumetric_views(params) or run_simulation(..., return_frames=True) "
             "for configured volumetric outputs."
         )
 
-    channels = run_params["channels"]
+    channels = SpectralIntegrationSettings.from_params(run_params).channels
     if channels is not None:
         return _run_multichannel_simulation(run_params, channels, return_frames=return_frames)
 
@@ -83,21 +107,33 @@ def generate_single_frame_views(params: dict) -> dict:
     Generate all relevant single-frame views for the current parameter set.
 
     Assumptions:
-      - params is a full PARAMS-like dictionary.
+      - params is a full parameters-like dictionary.
       - The caller has already configured params for the desired scenario
         (e.g., single frame, single particle) if needed.
       - This function does NOT write any files (no video, no masks).
 
     Returns:
       A dict containing:
-        - "params_resolved": a run-scoped PARAMS copy with resolved particle
+        - "params_resolved": a run-scoped parameters copy with resolved particle
           objects and material metadata.
         - "raw_signal_frame": 2D uint16 array of the signal frame.
         - "raw_reference_frame": 2D uint16 array of the reference frame.
-        - "ideal_signal_frame": optional pre-noise float signal frame.
-        - "ideal_reference_frame": optional pre-noise float reference frame.
-        - "detector_difference_frame": optional pre-noise detector-count
-          difference image, ``ideal_signal_frame - ideal_reference_frame``.
+        - "ideal_signal_frame": pre-noise detector-input signal frame.
+        - "ideal_reference_frame": pre-noise detector-input reference frame.
+        - "detector_input_signal_frame": optional model-scaled detector-input
+          signal frame before QE/offset/dark/static detector transfer.
+        - "detector_input_reference_frame": optional model-scaled detector-input
+          reference frame before QE/offset/dark/static detector transfer.
+        - "detector_mean_signal_frame": optional deterministic detector output
+          after QE/offset/dark/static transfer but before stochastic noise.
+        - "detector_mean_reference_frame": optional deterministic detector output
+          after QE/offset/dark/static transfer but before stochastic noise.
+        - "detector_object_field_frame": optional detector-grid complex
+          coherent object/background field used by off-axis DHM Fisher
+          demodulation.
+        - "detector_difference_frame": optional noise-free detector-mean
+          difference image used for count-domain analysis. Phase-output
+          modalities keep their phase-display count difference.
         - "contrast_frame": 2D floating-point array of the single-frame
           contrast view in the modality's analysis convention. Relative
           reference modalities use ``(S-R)/R``; phase-output modalities such as
@@ -123,10 +159,10 @@ def generate_single_frame_views(params: dict) -> dict:
     params_local["return_ideal_float_frames"] = True
     _resolve_public_num_frames(params_local)
     _ensure_run_scope_layout_token(params_local)
-    params_local = normalize_params(params_local, allowed_internal_keys=_RUNTIME_PARAM_KEYS)
+    _validate_simulation_runtime_owners(params_local)
     _ensure_run_scope_layout_extent(params_local)
-    params_local = normalize_params(params_local, allowed_internal_keys=_RUNTIME_PARAM_KEYS)
-    method = str(params_local["background_subtraction_method"]).strip().lower()
+    _ensure_run_scope_detector_static_seed(params_local)
+    method = BackgroundSubtractionSettings.from_params(params_local).method
     if method != "reference_frame":
         raise ValueError(
             "generate_single_frame_views requires "
@@ -151,19 +187,66 @@ def generate_single_frame_views(params: dict) -> dict:
     raw_reference_frames = rendered.reference_frames
     ideal_signal_frames = rendered.ideal_signal_frames
     ideal_reference_frames = rendered.ideal_reference_frames
+    detector_input_signal_frames = rendered.detector_input_signal_frames
+    detector_input_reference_frames = rendered.detector_input_reference_frames
+    detector_mean_signal_frames = rendered.detector_mean_signal_frames
+    detector_mean_reference_frames = rendered.detector_mean_reference_frames
+    detector_object_field_frames = rendered.detector_object_field_frames
 
     raw_signal_frame = raw_signal_frames[0] if raw_signal_frames else None
     raw_reference_frame = raw_reference_frames[0] if raw_reference_frames else None
     ideal_signal_frame = ideal_signal_frames[0] if ideal_signal_frames else None
     ideal_reference_frame = ideal_reference_frames[0] if ideal_reference_frames else None
+    detector_input_signal_frame = (
+        detector_input_signal_frames[0]
+        if detector_input_signal_frames
+        else ideal_signal_frame
+    )
+    detector_input_reference_frame = (
+        detector_input_reference_frames[0]
+        if detector_input_reference_frames
+        else ideal_reference_frame
+    )
+    detector_mean_signal_frame = (
+        detector_mean_signal_frames[0]
+        if detector_mean_signal_frames
+        else detector_input_signal_frame
+    )
+    detector_mean_reference_frame = (
+        detector_mean_reference_frames[0]
+        if detector_mean_reference_frames
+        else detector_input_reference_frame
+    )
+    detector_object_field_frame = (
+        detector_object_field_frames[0]
+        if detector_object_field_frames
+        else None
+    )
 
     if ideal_signal_frame is None or ideal_reference_frame is None:
         raise RuntimeError(
             "generate_single_frame_views requires ideal float signal/reference frames; "
             "the renderer did not return them despite return_ideal_float_frames=True."
         )
-    contrast_signal_frame = ideal_signal_frame
-    contrast_reference_frame = ideal_reference_frame
+    model = get_imaging_model(params_local)
+    render_metadata = dict(getattr(rendered, "render_metadata", {}) or {})
+    # Use the shared frame-likelihood merge so single-frame/calibration callers
+    # receive renderer-owned QPI detected-quanta sidecars instead of reconstructing
+    # phase noise from display or phase frames.
+    noise_params = analysis_noise_params_for_frame(
+        params_local,
+        render_metadata,
+        frame_index=0,
+    )
+    if getattr(model, "output_type", "intensity") == "phase":
+        contrast_signal_frame = np.asarray(ideal_signal_frame, dtype=float)
+        contrast_reference_frame = np.asarray(ideal_reference_frame, dtype=float)
+    else:
+        contrast_signal_frame, contrast_reference_frame = detector_contrast_frames_for_analysis(
+            detector_input_signal_frame,
+            detector_input_reference_frame,
+            noise_params,
+        )
     detector_difference_frame = (
         np.asarray(contrast_signal_frame, dtype=float)
         - np.asarray(contrast_reference_frame, dtype=float)
@@ -180,8 +263,6 @@ def generate_single_frame_views(params: dict) -> dict:
     )
     final_frame_8bit = final_8bit_list[0] if final_8bit_list else None
 
-    model = get_imaging_model(params_local)
-    render_metadata = dict(getattr(rendered, "render_metadata", {}) or {})
     response_function = dict(render_metadata.get("response_function", {}) or {})
     if not response_function:
         response_function = model.compute_response_function(
@@ -201,10 +282,16 @@ def generate_single_frame_views(params: dict) -> dict:
         "raw_reference_frame": raw_reference_frame,
         "ideal_signal_frame": ideal_signal_frame,
         "ideal_reference_frame": ideal_reference_frame,
+        "detector_input_signal_frame": detector_input_signal_frame,
+        "detector_input_reference_frame": detector_input_reference_frame,
+        "detector_mean_signal_frame": detector_mean_signal_frame,
+        "detector_mean_reference_frame": detector_mean_reference_frame,
+        "detector_object_field_frame": detector_object_field_frame,
         "detector_difference_frame": detector_difference_frame,
         "contrast_frame": contrast_frame,
         "contrast_frame_units": contrast_frame_units,
         "final_frame_8bit": final_frame_8bit,
+        "analysis_noise_params": noise_params,
         "render_metadata": render_metadata,
     }
 
@@ -219,7 +306,7 @@ def generate_volumetric_views(params: dict) -> dict:
     """
     params_local = deepcopy(params)
     params_local = expand_broadband_quadrature(params_local)
-    params_local = normalize_params(params_local, allowed_internal_keys=_RUNTIME_PARAM_KEYS)
+    _validate_simulation_runtime_owners(params_local)
     mode = str(params_local["volumetric_imaging_mode"]).strip().lower()
     if mode == "single_plane":
         params_local["background_subtraction_method"] = "reference_frame"
@@ -240,18 +327,10 @@ def generate_volumetric_views(params: dict) -> dict:
 
     z_planes = resolve_volume_z_planes_nm(params_local)
     shared_scene_params = params_for_focus_plane(params_local, 0.0)
-    shared_scene_params["background_subtraction_method"] = "reference_frame"
+    configured_assign(shared_scene_params, 'background_subtraction_method', "reference_frame")
     _resolve_public_num_frames(shared_scene_params)
     _ensure_run_scope_layout_token(shared_scene_params)
-    shared_scene_params = normalize_params(
-        shared_scene_params,
-        allowed_internal_keys=_RUNTIME_PARAM_KEYS,
-    )
     _ensure_run_scope_layout_extent(shared_scene_params)
-    shared_scene_params = normalize_params(
-        shared_scene_params,
-        allowed_internal_keys=_RUNTIME_PARAM_KEYS,
-    )
     shared_latent_scene = _simulate_latent_scene(shared_scene_params)
     shared_positions = np.asarray(
         shared_latent_scene.get("trajectories_nm", []),
@@ -269,7 +348,7 @@ def generate_volumetric_views(params: dict) -> dict:
     particles_for_planes = params_with_shared_positions.get("particles", []) or []
     if len(particles_for_planes) != shared_positions.shape[0]:
         raise RuntimeError(
-            "Volumetric shared-scene particle count does not match PARAMS['particles']."
+            "Volumetric shared-scene particle count does not match parameters['particles']."
         )
     for particle, position_nm in zip(particles_for_planes, shared_positions[:, 0, :]):
         motion = particle.setdefault("motion", {})
@@ -278,6 +357,7 @@ def generate_volumetric_views(params: dict) -> dict:
             float(position_nm[1]),
             float(position_nm[2]),
         ]
+    _ensure_run_scope_detector_static_seed(params_with_shared_positions)
 
     plane_views = []
     contrast_frames = []
@@ -288,20 +368,45 @@ def generate_volumetric_views(params: dict) -> dict:
             params_with_shared_positions,
             float(z_plane),
         )
-        plane_params["background_subtraction_method"] = "reference_frame"
+        configured_assign(plane_params, 'background_subtraction_method', "reference_frame")
         plane_view = generate_single_frame_views(plane_params)
+        plane_render_metadata = plane_view.setdefault("render_metadata", {})
+        plane_render_metadata["focus_plane_z_nm"] = float(z_plane)
+        plane_render_metadata["trajectory_z_semantics"] = "physical_sample_world_z_nm"
+        plane_render_metadata["optical_psf_z_semantics"] = "focus_relative_to_focus_plane_z_nm"
         plane_views.append(plane_view)
         contrast_frames.append(np.asarray(plane_view["contrast_frame"], dtype=float))
         signal_frames.append(np.asarray(plane_view["ideal_signal_frame"], dtype=float))
         reference_frames.append(np.asarray(plane_view["ideal_reference_frame"], dtype=float))
 
     contrast_volume = np.asarray(contrast_frames, dtype=float)
-    combined, volume_metadata = combine_volume_stack(contrast_volume, z_planes, params_local)
+    contrast_frame_units = (
+        str(plane_views[0].get("contrast_frame_units"))
+        if plane_views
+        else "unknown"
+    )
+    # The planes here are rerendered analysis-contrast frames at different
+    # optical focus settings, not physical per-nm density slices.  Pass that
+    # basis into the shared reducer so a public volumetric focus stack cannot
+    # be silently converted into a nonphysical contrast*nm line integral.
+    combined, volume_metadata = combine_volume_stack(
+        contrast_volume,
+        z_planes,
+        params_local,
+        volume_basis=VOLUME_BASIS_FOCUS_STACK_CONTRAST,
+        coordinate_role=VOLUME_COORDINATE_FOCUS_PLANE_Z_NM,
+        value_units=contrast_frame_units,
+    )
     volume_metadata.update(
         {
             "scene_dimensionality": str(params_local["scene_dimensionality"]),
             "volumetric_plane_count": int(len(z_planes)),
             "volumetric_source": "rerendered_particle_focus_planes",
+            "focus_planes_nm": z_planes.astype(float).tolist(),
+            "trajectory_z_semantics": "physical_sample_world_z_nm",
+            "optical_psf_z_semantics": "focus_relative_to_focus_plane_z_nm",
+            "contrast_frame_units": contrast_frame_units,
+            "measurement_domain": "phase" if contrast_frame_units == "radian" else "count_or_contrast",
         }
     )
     output: dict[str, Any] = {
@@ -315,10 +420,22 @@ def generate_volumetric_views(params: dict) -> dict:
         "volume_metadata": volume_metadata,
     }
     if mode == "holotomography_projection":
-        projection_stack, holo_metadata = holotomography_phase_projection_stack(
+        if str(volume_metadata["volume_basis"]) != "phase_density_rad_per_nm":
+            raise ValueError(
+                "holotomography_projection in generate_volumetric_views requires a "
+                "physical phase-volume basis. The rerendered focus-stack contrast "
+                "pipeline produces 'focus_stack_contrast'; construct a physical "
+                "phase-density/refractive-index volume source before projection."
+            )
+        projection_stack, holo_metadata, reconstruction_volume = holotomography_phase_projection_stack(
             contrast_volume,
             params_local,
+            z_planes_nm=z_planes,
+            input_units=contrast_frame_units,
+            input_basis=str(volume_metadata["volume_basis"]),
         )
         output["holotomography_projection_stack"] = projection_stack
+        if reconstruction_volume is not None:
+            output["holotomography_reconstruction_volume"] = reconstruction_volume
         output["volume_metadata"] = {**volume_metadata, **holo_metadata}
     return output

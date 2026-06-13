@@ -1,11 +1,13 @@
 from __future__ import annotations
+from configured_parameters import configured_assign
 
-from config import param_value
 from config.runtime import (
-    resolved_image_size_pixels,
-    resolved_model_canvas_shape,
-    resolved_pixel_size_nm,
-    resolved_psf_oversampling_factor,
+    BackendProfileSettings,
+    DetectorReadoutSettings,
+    ModalitySettings,
+    OpticalInstrumentSettings,
+    SampleEnvironmentSettings,
+    SamplingGeometry,
 )
 import json
 from pathlib import Path
@@ -30,6 +32,7 @@ from modality_registry import (
 
 
 PROFILE_SCHEMA_VERSION = "syniscopy-modality-profile-v1"
+PROFILE_RESPONSE_MAX_CANVAS_SIDE_PIXELS = 128
 
 
 _PAPER_USE_CATEGORY_BY_DOMAIN = {
@@ -43,7 +46,6 @@ _ELECTRON_PAPER_USE_CATEGORY_BY_FIDELITY = {
     "proxy": "simplified_electron_proxy",
     "simplified_proxy": "simplified_electron_proxy",
     "simplified_electron_proxy": "simplified_electron_proxy",
-    "physics_based_unvalidated": "high_fidelity_electron_profile",
     "physics_based": "high_fidelity_electron_profile",
     "high_fidelity": "high_fidelity_electron_profile",
     "reference_validated": "reference_validated_electron_profile",
@@ -85,14 +87,13 @@ def _noise_model(params: dict, measurement_domain: str) -> str:
     if measurement_domain == "phase":
         return "phase_variance_readout_and_detected_quanta"
     try:
-        from camera_noise import resolve_camera_noise_config
+        from camera_noise import CameraNoiseConfig
 
-        cfg = resolve_camera_noise_config(params)
+        cfg = CameraNoiseConfig.from_params(params)
         shot_enabled = bool(cfg.shot_noise_enabled)
         gaussian_enabled = bool(cfg.gaussian_noise_enabled)
     except Exception:
-        shot_enabled = bool(param_value(params, 'shot_noise_enabled'))
-        gaussian_enabled = bool(param_value(params, 'gaussian_noise_enabled'))
+        return "noise_model_unresolved"
     if shot_enabled and gaussian_enabled:
         return "poisson_shot_plus_gaussian_read_noise"
     if shot_enabled:
@@ -115,8 +116,10 @@ def _count_scaling_mode(params: dict, response: dict[str, Any], measurement_doma
 def _paper_use_category(modality: str, measurement_domain: str, response: dict[str, Any]) -> str:
     modality = canonical_modality_name(modality)
     if is_electron_modality(modality):
-        level = str(response.get("backend_fidelity_level", "proxy")).strip().lower().replace(" ", "_")
-        return _ELECTRON_PAPER_USE_CATEGORY_BY_FIDELITY.get(level, "simplified_electron_proxy")
+        level = str(response.get("backend_fidelity_level", "unknown")).strip().lower().replace(" ", "_")
+        return _ELECTRON_PAPER_USE_CATEGORY_BY_FIDELITY.get(level, "unknown_backend_fidelity")
+    if modality in {"fluorescence_widefield", "tirf_fluorescence"}:
+        return _PAPER_USE_CATEGORY_BY_DOMAIN.get(measurement_domain, "core_scalar_optical_profile")
     vectorial_markers = " ".join(
         str(response.get(key, ""))
         for key in (
@@ -147,6 +150,24 @@ def _paper_use_category(modality: str, measurement_domain: str, response: dict[s
     return _PAPER_USE_CATEGORY_BY_DOMAIN.get(measurement_domain, "core_scalar_optical_profile")
 
 
+def _profile_response_params(
+    params: dict,
+    *,
+    shape: tuple[int, int],
+    response_shape_source: str,
+) -> tuple[dict, dict[str, Any]]:
+    response_params = dict(params)
+    overrides: dict[str, Any] = {}
+    if response_shape_source != "bounded_representative_profile_canvas":
+        return response_params, overrides
+    instrument = OpticalInstrumentSettings.from_params(response_params)
+    if not instrument.vectorial_pupil_samples_is_explicit:
+        samples = max(32, min(instrument.pupil_samples, max(shape)))
+        configured_assign(response_params, 'vectorial_pupil_samples', samples)
+        overrides["vectorial_pupil_samples"] = samples
+    return response_params, overrides
+
+
 def _active_parameters(params: dict, modality: str) -> dict[str, Any]:
     prefixes = (
         "imaging_model",
@@ -156,6 +177,7 @@ def _active_parameters(params: dict, modality: str) -> dict[str, Any]:
         "probe_wavelength_nm",
         "numerical_aperture",
         "refractive_index_medium",
+        "reference_field_amplitude",
         "background_intensity",
         "shot_noise_enabled",
         "gaussian_noise_enabled",
@@ -178,6 +200,10 @@ def _active_parameters(params: dict, modality: str) -> dict[str, Any]:
         "fisher_likelihood_model",
         "detected_quanta_derivative_target",
         "optical_field_backend",
+        "optical_scattering_model",
+        "optical_cluster_scattering_model",
+        "optical_cluster_dda_voxel_size_nm",
+        "optical_cluster_dda_max_dipoles",
         "spectral_integration_model",
         "illumination_spectrum_",
         "broadband_",
@@ -198,6 +224,7 @@ def _active_parameters(params: dict, modality: str) -> dict[str, Any]:
         "quantitative_phase": ("qpi_",),
         "qpi": ("qpi_",),
         "ricm": ("ricm_",),
+        "interferometric": ("iscat_",),
         "dpc": ("dpc_",),
         "differential_phase_contrast": ("dpc_",),
         "zernike_phase_contrast": ("zernike_",),
@@ -278,15 +305,17 @@ def _augment_profile_card(card: dict[str, Any], params: dict, modality: str) -> 
     card["nonlinear_detector_effects_active"] = nonlinear_detector
     card["deterministic_detector_transfer_active"] = deterministic_transfer
     card["safe_for_linear_fisher_variance"] = linear_fisher_safe
-    card["fisher_variance_model_scope"] = (
-        "linear_poisson_gaussian_only"
-        if linear_fisher_safe
-        else "diagnostic_only_linearized_detector_variance"
+    card["safe_for_covariance_fisher_variance"] = bool(
+        detector.get("safe_for_covariance_fisher_variance", linear_fisher_safe)
     )
-    card["detector_likelihood_status"] = (
-        "linear_poisson_gaussian_compatible"
-        if linear_fisher_safe
-        else "nonlinear_or_static_transfer_not_in_linear_fisher"
+    card["fisher_variance_model_scope"] = str(
+        detector.get("fisher_variance_model_scope", "")
+    )
+    card["covariance_fisher_variance_model_scope"] = str(
+        detector.get("covariance_fisher_variance_model_scope", "")
+    )
+    card["detector_likelihood_status"] = str(
+        detector.get("detector_likelihood_status", "")
     )
     card["model_card"] = model_card_from_profile_card(card)
     return card
@@ -300,22 +329,48 @@ def profile_card_for_model(
     response_function: Mapping[str, Any] | None = None,
     model_canvas_shape: tuple[int, int] | None = None,
 ) -> dict:
-    raw_modality = modality_name if modality_name is not None else param_value(params, 'imaging_model')
+    raw_modality = modality_name if modality_name is not None else ModalitySettings.from_params(params).modality
     modality = canonical_modality_name(str(raw_modality))
+    sampling = SamplingGeometry.from_params(params)
+    resolved_shape = sampling.model_canvas_shape
     if model_canvas_shape is not None:
         shape = (int(model_canvas_shape[0]), int(model_canvas_shape[1]))
+        response_shape_source = "caller_supplied_canvas_shape"
+    elif response_function is not None:
+        shape = tuple(int(v) for v in resolved_shape)
+        response_shape_source = "response_function_supplied_canvas_shape_unspecified"
     else:
-        shape = resolved_model_canvas_shape(params)
+        shape = (
+            min(int(resolved_shape[0]), PROFILE_RESPONSE_MAX_CANVAS_SIDE_PIXELS),
+            min(int(resolved_shape[1]), PROFILE_RESPONSE_MAX_CANVAS_SIDE_PIXELS),
+        )
+        response_shape_source = (
+            "resolved_model_canvas_shape"
+            if shape == tuple(int(v) for v in resolved_shape)
+            else "bounded_representative_profile_canvas"
+        )
+    response_params, response_parameter_overrides = _profile_response_params(
+        params,
+        shape=shape,
+        response_shape_source=response_shape_source,
+    )
+    response_model = (
+        get_imaging_model(response_params)
+        if response_parameter_overrides and response_function is None
+        else imaging_model
+    )
     response = (
         dict(response_function)
         if response_function is not None
-        else imaging_model.compute_response_function(shape, params)
+        else response_model.compute_response_function(shape, response_params)
     )
     output_type = str(getattr(imaging_model, "output_type", response.get("output_type", "intensity")))
     measurement_domain, signal_units = _measurement_domain_and_units(modality, output_type, response)
-    detector_pixel_size_nm = float(resolved_pixel_size_nm(params))
-    oversampling = float(resolved_psf_oversampling_factor(params))
-    fidelity_label = str(response.get("fidelity_label", param_value(params, "profile_fidelity_label")))
+    detector_pixel_size_nm = float(sampling.detector_pixel_size_nm)
+    oversampling = float(sampling.psf_oversampling_factor)
+    profile_settings = BackendProfileSettings.from_params(params)
+    fidelity_label = str(response.get("fidelity_label", profile_settings.profile_fidelity_label))
+    sample_environment = SampleEnvironmentSettings.from_params(params)
     card = {
         "schema_version": PROFILE_SCHEMA_VERSION,
         "canonical_modality_name": modality,
@@ -328,32 +383,36 @@ def profile_card_for_model(
         "noise_model": _noise_model(params, measurement_domain),
         "count_scaling_mode": _count_scaling_mode(params, response, measurement_domain),
         "derivative_validity_scope": (
-            "stationary-shift derivatives require translationally invariant scenes; "
-            "structured environments require rerendered_xy metadata"
+            "lateral derivatives use the spectral band-limited gradient of the "
+            "center-rendered contrast image; validity is reported through "
+            "Nyquist-band and boundary-support diagnostics"
         ),
         "active_parameters": _active_parameters(params, modality),
         "detector_parameters": {
             "detector_pixel_size_nm": detector_pixel_size_nm,
             "model_canvas_pixel_size_nm": detector_pixel_size_nm / oversampling,
             "psf_oversampling_factor": oversampling,
-            "image_size_pixels": int(resolved_image_size_pixels(params)),
-            "bit_depth": int(param_value(params, 'bit_depth')),
+            "image_size_pixels": sampling.image_size_pixels,
+            "bit_depth": DetectorReadoutSettings.from_params(params).bit_depth,
         },
+        "response_function_shape_pixels": [int(shape[0]), int(shape[1])],
+        "response_function_shape_source": response_shape_source,
+        "response_function_parameter_overrides": response_parameter_overrides,
         "sample_environment_usage": {
-            "sample_environment_enabled": bool(param_value(params, 'sample_environment_enabled')),
-            "sample_environment_pattern_enabled": bool(
-                param_value(params, 'sample_environment_pattern_enabled')
-            ),
+            "sample_environment_enabled": sample_environment.enabled,
+            "sample_environment_pattern_enabled": sample_environment.pattern_enabled,
+            "sample_environment_pattern_active": sample_environment.pattern_active,
             "uses_sample_environment_pattern": bool(
                 getattr(imaging_model, "uses_sample_environment_pattern", False)
             ),
+            "active_for_model": sample_environment.pattern_active_for_model(imaging_model),
         },
         "uses_particle_material_sources": bool(getattr(imaging_model, "uses_particle_material_sources", False)),
         "requires_optical_scattered_field": bool(getattr(imaging_model, "requires_optical_scattered_field", True)),
         "requires_pre_crop_filtering": bool(getattr(imaging_model, "requires_pre_crop_optical_filtering", False)),
         "supports_spectral_channels": bool(getattr(imaging_model, "supports_spectral_channels", False)),
         "fidelity_label": fidelity_label,
-        "backend_fidelity_level": str(response.get("backend_fidelity_level", "proxy")),
+        "backend_fidelity_level": str(response.get("backend_fidelity_level", "unknown")),
         "reference_backend_metadata": json_safe_with_nonfinite_tags(response.get("reference_backend_metadata")),
         "validity_scope": str(
             response.get(
@@ -370,7 +429,7 @@ def profile_card_for_model(
 def canonical_profile_card(params: dict, modality_name: str | None = None) -> dict:
     profile_params = dict(params)
     if modality_name is not None:
-        profile_params["imaging_model"] = modality_name
+        configured_assign(profile_params, 'imaging_model', modality_name)
     return profile_card_for_model(
         profile_params,
         get_imaging_model(profile_params),
@@ -380,7 +439,7 @@ def canonical_profile_card(params: dict, modality_name: str | None = None) -> di
 
 def write_profile_cards(modality_params_list, output_path) -> list[dict]:
     cards = [
-        canonical_profile_card(params, param_value(params, "imaging_model"))
+        canonical_profile_card(params, ModalitySettings.from_params(params).modality)
         for params in modality_params_list
     ]
     path = Path(output_path)

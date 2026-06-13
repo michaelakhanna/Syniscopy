@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from config import AcquisitionProfile, MotionDynamicsSettings
 from trajectory import (
     stokes_einstein_diffusion_coefficient,
     resolve_translational_diameters_nm,
@@ -12,16 +13,19 @@ _TEMPORAL_SUPPORT_SIGMA_RADIUS = 3.0
 
 class TrackabilityModel:
     """
-    Computes temporal support for video supervision.
+    Computes per-frame temporal support for video supervision.
 
     This module is temporal-only. Detector-noise and signal-support
     calculations are handled by supervision_policy.py and camera_noise.py.
+    It does not own persistent track-drop state: temporal support is the
+    Brownian plausibility of the current frame-to-frame displacement.
     """
 
     def __init__(self, params: dict, num_particles: int):
         self.params = params
         self.num_particles = int(num_particles)
-        self.dt = 1.0 / float(params['fps'])
+        self.dt = AcquisitionProfile.from_params(params).frame_interval_s
+        dynamics = MotionDynamicsSettings.from_params(params)
 
         translational_diameters_nm = resolve_translational_diameters_nm(params)
         if translational_diameters_nm.shape[0] != self.num_particles:
@@ -31,34 +35,22 @@ class TrackabilityModel:
                 f'{translational_diameters_nm.shape[0]}.'
             )
 
-        temp_K = float(params['temperature_K'])
-        viscosity = float(params['viscosity_Pa_s'])
-
         self.diffusion_coefficients_m2_s = np.zeros(self.num_particles, dtype=float)
         self.r_sigma_nm = np.zeros(self.num_particles, dtype=float)
 
         for i in range(self.num_particles):
             D_m2_s = stokes_einstein_diffusion_coefficient(
-                translational_diameters_nm[i], temp_K, viscosity
+                translational_diameters_nm[i],
+                dynamics.temperature_K,
+                dynamics.viscosity_Pa_s,
             )
             self.diffusion_coefficients_m2_s[i] = D_m2_s
             self.r_sigma_nm[i] = np.sqrt(4.0 * D_m2_s * self.dt) * 1e9
 
         self.last_positions_nm = [None] * self.num_particles
-        self.lost = np.zeros(self.num_particles, dtype=bool)
 
     def reset(self) -> None:
         self.last_positions_nm = [None] * self.num_particles
-        self.lost[:] = False
-
-    def is_particle_lost(self, particle_index: int) -> bool:
-        return bool(self.lost[int(particle_index)])
-
-    def are_all_particles_lost(self) -> bool:
-        return bool(np.all(self.lost))
-
-    def mark_lost(self, particle_index: int) -> None:
-        self.lost[int(particle_index)] = True
 
     def update_and_compute(
         self,
@@ -69,8 +61,6 @@ class TrackabilityModel:
         """Update the stored position and return Brownian temporal support."""
         del frame_index
         particle_index = int(particle_index)
-        if self.lost[particle_index]:
-            return 0.0
 
         position_nm = np.asarray(position_nm, dtype=float)
         if position_nm.shape != (3,):

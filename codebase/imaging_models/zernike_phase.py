@@ -9,7 +9,7 @@ from ._shared import (
     np,
 )
 from .coherent_brightfield import CoherentBrightfieldImagingModel
-from config.runtime import SamplingGeometry, param_value
+from config.runtime import SamplingGeometry, ZernikePhaseSettings
 
 class ZernikePhaseContrastImagingModel(CoherentBrightfieldImagingModel):
     """Zernike phase contrast using a pupil-domain phase-ring transfer."""
@@ -18,15 +18,10 @@ class ZernikePhaseContrastImagingModel(CoherentBrightfieldImagingModel):
 
     @staticmethod
     def _phase_ring_field(field: np.ndarray, params: dict) -> np.ndarray:
-        model = str(param_value(params, "zernike_model")).strip().lower()
-        if model not in {"pupil_phase_ring", "fourier_phase_ring_proxy"}:
-            raise ValueError(
-                "PARAMS['zernike_model'] must be 'pupil_phase_ring', "
-                f"or 'fourier_phase_ring_proxy'; got {model!r}."
-            )
+        settings = ZernikePhaseSettings.from_params(params)
         arr = np.asarray(field, dtype=np.complex128)
         H, W = arr.shape[-2:]
-        if model == "pupil_phase_ring":
+        if settings.model == "pupil_phase_ring":
             pixel_size_px_nm = SamplingGeometry.from_params(params).model_canvas_pixel_size_nm
             _, _, rho, _ = _optical_pupil_frequency_grid((H, W), pixel_size_px_nm, params)
         else:
@@ -34,22 +29,16 @@ class ZernikePhaseContrastImagingModel(CoherentBrightfieldImagingModel):
             fx = np.fft.fftfreq(W)
             FX, FY = np.meshgrid(fx, fy, indexing="xy")
             rho = np.sqrt(FX * FX + FY * FY) / max(float(np.max(np.sqrt(FX * FX + FY * FY))), 1e-30)
-        inner = float(param_value(params, "zernike_phase_ring_inner_fraction"))
-        outer = float(param_value(params, "zernike_phase_ring_outer_fraction"))
-        shift = float(param_value(params, "zernike_phase_ring_shift_rad"))
-        amplitude = float(param_value(params, "zernike_phase_ring_amplitude"))
-        if inner < 0.0 or outer <= inner or outer > 1.0:
-            raise ValueError(
-                "Zernike phase ring fractions must satisfy 0 <= inner < outer <= 1."
-            )
         F = np.fft.fft2(arr, axes=(-2, -1))
-        ring = (rho >= inner) & (rho <= outer)
-        F_shifted = F.copy()
+        ring = (rho >= settings.inner_fraction) & (rho <= settings.outer_fraction)
+        transfer = np.ones_like(rho, dtype=np.complex128)
+        transfer[ring] = settings.amplitude * np.exp(1j * settings.shift_rad)
         if is_vectorial_field(arr):
-            F_shifted[:, ring] *= amplitude * np.exp(1j * shift)
+            F_shifted = F * transfer[np.newaxis, :, :]
         else:
-            F_shifted[ring] *= amplitude * np.exp(1j * shift)
-        return np.fft.ifft2(F_shifted, axes=(-2, -1))
+            F_shifted = F * transfer
+        shifted = np.fft.ifft2(F_shifted, axes=(-2, -1))
+        return settings.bias * arr + settings.gain * (shifted - arr)
 
     def _intensity_from_total_field(
         self,
@@ -66,7 +55,11 @@ class ZernikePhaseContrastImagingModel(CoherentBrightfieldImagingModel):
         background_field: np.ndarray,
         params: dict,
     ) -> np.ndarray:
-        E_inc = self._incident_field_for_scattered(E_sca_total, params)
+        E_inc = self._incident_field_for_scattered(
+            E_sca_total,
+            params,
+            base_field=background_field,
+        )
         return self._intensity_from_total_field(E_inc + E_sca_total, E_inc, params)
 
     def compute_per_particle_contrast(
@@ -75,7 +68,11 @@ class ZernikePhaseContrastImagingModel(CoherentBrightfieldImagingModel):
         background_field: np.ndarray,
         params: dict,
     ) -> np.ndarray:
-        E_inc = self._incident_field_for_scattered(E_sca_particle, params)
+        E_inc = self._incident_field_for_scattered(
+            E_sca_particle,
+            params,
+            base_field=background_field,
+        )
         return (
             self._intensity_from_total_field(E_inc + E_sca_particle, E_inc, params)
             - self._intensity_from_total_field(E_inc, E_inc, params)
@@ -83,18 +80,17 @@ class ZernikePhaseContrastImagingModel(CoherentBrightfieldImagingModel):
 
     def compute_response_function(self, shape: tuple[int, int], params: dict) -> dict:
         response = super().compute_response_function(shape, params)
+        settings = ZernikePhaseSettings.from_params(params)
         response.update(
             kind="zernike_phase_ring",
-            zernike_model=str(param_value(params, 'zernike_model')),
-            zernike_phase_ring_coordinate_system=(
-                "objective_pupil_na_over_wavelength"
-                if str(param_value(params, 'zernike_model')).strip().lower() == "pupil_phase_ring"
-                else "fft_nyquist_normalized"
-            ),
-            phase_ring_inner_fraction=float(param_value(params, 'zernike_phase_ring_inner_fraction')),
-            phase_ring_outer_fraction=float(param_value(params, 'zernike_phase_ring_outer_fraction')),
-            phase_shift_rad=float(param_value(params, "zernike_phase_ring_shift_rad")),
-            phase_ring_amplitude=float(param_value(params, 'zernike_phase_ring_amplitude')),
+            zernike_model=settings.model,
+            zernike_phase_ring_coordinate_system=settings.coordinate_system,
+            phase_ring_inner_fraction=settings.inner_fraction,
+            phase_ring_outer_fraction=settings.outer_fraction,
+            phase_shift_rad=settings.shift_rad,
+            phase_ring_amplitude=settings.amplitude,
+            phase_ring_gain=settings.gain,
+            phase_bias=settings.bias,
         )
         return response
 

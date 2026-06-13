@@ -9,16 +9,37 @@ directly from those submodules when needed.
 from __future__ import annotations
 
 from .axial import (
-    compare_modality_axial_information_content,
+    compute_fisher_information_3d,
     compute_localization_crlb_3d,
+)
+from .candidates import (
+    FisherCandidate,
+    FisherMatrixCandidate,
+)
+from .comparison import (
+    COMPARISON_TARGET_AXIAL_Z,
+    COMPARISON_TARGET_LATERAL_XY,
+    COMPARISON_TARGET_LOCALIZATION_XYZ,
+    COMPARISON_TARGET_ORIENTATION,
+    compare_fisher_candidates,
 )
 from .density import (
     compute_information_density_maps,
     compute_nuisance_adjusted_fisher,
 )
 from .detected_quanta import (
-    compare_modality_information_content_detected_quanta_normalized,
+    DetectedQuantaCandidate,
+    compare_detected_quanta_normalized_fisher_candidates,
     write_detected_quanta_derivative_convergence_csv,
+)
+from .dhm_demodulated import (
+    OFF_AXIS_DEMODULATED_COVARIANCE_KIND,
+    build_off_axis_demodulated_observation,
+    compute_off_axis_demodulated_fisher_information,
+    compute_off_axis_demodulated_localization_crlb,
+    compute_off_axis_demodulated_localization_crlb_from_field,
+    is_off_axis_demodulated_fisher_payload,
+    is_off_axis_holography_modality,
 )
 from .dynamic_bayesian import (
     build_brownian_process_covariance,
@@ -27,18 +48,27 @@ from .dynamic_bayesian import (
     summarize_fisher_sequence,
 )
 from .fusion import (
-    compute_registration_degradation_curve,
-    compute_modality_fusion_crlb,
-    compute_modality_fusion_crlb_from_fisher_matrices,
+    compute_candidate_registration_degradation_curve,
+    compute_fisher_candidate_fusion_crlb,
+    compute_candidate_fusion_crlb_from_fisher_matrices,
     sigma_xy_from_fisher,
 )
 from .lateral import (
-    adaptive_lateral_crlb_from_rerender_pairs,
-    compare_modality_information_content,
-    compare_modality_information_content_from_crlb_results,
     compute_fisher_information,
+    compute_likelihood_fisher_information,
     compute_localization_crlb,
-    compute_localization_crlb_from_lateral_rerenders,
+)
+from .lateral_derivative_contracts import (
+    ArrayOnlyFisherDerivativeContext,
+    LATERAL_DERIVATIVE_BASIS,
+    LateralDerivativePlan,
+    array_only_derivative_context_metadata,
+    lateral_derivative_plan_metadata,
+    normalize_array_only_fisher_derivative_context,
+    require_array_only_3d_fisher_derivative_basis_safe,
+    require_array_only_spectral_lateral_derivative_ready,
+    require_lateral_derivative_plan_supported,
+    spectral_lateral_derivative_plan,
 )
 from .scaling_laws import (
     compute_rayleigh_amplitude_scaling_control,
@@ -46,31 +76,53 @@ from .scaling_laws import (
 )
 from .se3 import (
     compute_localization_orientation_crlb,
-    predict_se3_rank_from_symmetry,
+    predict_se3_rank_from_contrast_stabilizer,
 )
 from .time_allocation import compute_optimal_time_allocation_crlb
 
 __all__ = [
-    "adaptive_lateral_crlb_from_rerender_pairs",
+    "COMPARISON_TARGET_AXIAL_Z",
+    "COMPARISON_TARGET_LATERAL_XY",
+    "COMPARISON_TARGET_LOCALIZATION_XYZ",
+    "COMPARISON_TARGET_ORIENTATION",
+    "FisherCandidate",
+    "FisherMatrixCandidate",
+    "DetectedQuantaCandidate",
+    "OFF_AXIS_DEMODULATED_COVARIANCE_KIND",
     "build_brownian_process_covariance",
-    "compare_modality_axial_information_content",
-    "compare_modality_information_content",
-    "compare_modality_information_content_detected_quanta_normalized",
-    "compare_modality_information_content_from_crlb_results",
+    "build_off_axis_demodulated_observation",
+    "compare_detected_quanta_normalized_fisher_candidates",
+    "compare_fisher_candidates",
     "compute_dynamic_bayesian_crlb_from_fisher_sequence",
     "compute_fisher_information",
+    "compute_fisher_information_3d",
+    "compute_off_axis_demodulated_fisher_information",
     "compute_information_density_maps",
+    "compute_likelihood_fisher_information",
+    "ArrayOnlyFisherDerivativeContext",
+    "LATERAL_DERIVATIVE_BASIS",
+    "LateralDerivativePlan",
+    "array_only_derivative_context_metadata",
+    "lateral_derivative_plan_metadata",
+    "normalize_array_only_fisher_derivative_context",
+    "require_array_only_3d_fisher_derivative_basis_safe",
+    "require_array_only_spectral_lateral_derivative_ready",
+    "require_lateral_derivative_plan_supported",
+    "spectral_lateral_derivative_plan",
     "compute_localization_crlb",
     "compute_localization_crlb_3d",
-    "compute_localization_crlb_from_lateral_rerenders",
+    "compute_off_axis_demodulated_localization_crlb",
+    "compute_off_axis_demodulated_localization_crlb_from_field",
     "compute_localization_orientation_crlb",
-    "compute_modality_fusion_crlb",
-    "compute_modality_fusion_crlb_from_fisher_matrices",
+    "compute_fisher_candidate_fusion_crlb",
+    "compute_candidate_fusion_crlb_from_fisher_matrices",
     "compute_nuisance_adjusted_fisher",
     "compute_optimal_time_allocation_crlb",
     "compute_rayleigh_amplitude_scaling_control",
-    "compute_registration_degradation_curve",
-    "predict_se3_rank_from_symmetry",
+    "compute_candidate_registration_degradation_curve",
+    "predict_se3_rank_from_contrast_stabilizer",
+    "is_off_axis_demodulated_fisher_payload",
+    "is_off_axis_holography_modality",
     "sequence_sum_fisher_to_crlb",
     "sigma_xy_from_fisher",
     "summarize_closed_form_scaling_checks",

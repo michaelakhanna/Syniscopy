@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from config.runtime import SemSettings, param_value
+from config.runtime import SemSettings
+from imaging_models.sem_source import SEMMaterialSourceCanvas
 
 from ._metadata import (
     Any,
@@ -10,6 +11,7 @@ from ._metadata import (
     Path,
     SEMTransportBackendError,
     SEM_REFERENCE_KERNEL_SCHEMA_VERSION,
+    _detector_takeoff_acceptance_gain,
     _electrons_from_beam_current,
     _finite_nonnegative,
     _gaussian_blur,
@@ -43,19 +45,20 @@ class ReferenceKernelSEMBackend:
         self.canvas_pitch_nm = _finite_nonnegative("canvas_pitch_nm", canvas_pitch_nm, minimum=1e-12)
         self.probe_sigma_px = _finite_nonnegative("sem_probe_sigma_px", probe_sigma_px, minimum=0.0)
         self.backend_mode = self.__class__.backend_mode
+        sem_settings = SemSettings.from_params(params)
 
-        raw_path = param_value(params, 'sem_reference_kernel_path')
+        raw_path = sem_settings.reference_kernel_path
         if not raw_path:
             raise SEMTransportBackendError(
-                "PARAMS['sem_backend']='reference_kernel_table' requires "
-                "PARAMS['sem_reference_kernel_path']."
+                "parameters['sem_backend']='reference_kernel_table' requires "
+                "parameters['sem_reference_kernel_path']."
             )
         self.path = Path(str(raw_path)).expanduser()
         if not self.path.exists():
             raise SEMTransportBackendError(f"SEM reference-kernel table not found: {self.path}")
         self.sha256 = _sha256_file(self.path)
 
-        expected = param_value(params, 'sem_reference_kernel_sha256')
+        expected = sem_settings.reference_kernel_sha256
         if expected and str(expected).lower() != self.sha256.lower():
             raise SEMTransportBackendError(
                 "SEM reference-kernel checksum mismatch: "
@@ -75,7 +78,7 @@ class ReferenceKernelSEMBackend:
         if self.reference_status == "reference_validated" and not expected:
             raise SEMTransportBackendError(
                 "SEM reference-kernel table declares reference_validated, but "
-                "PARAMS['sem_reference_kernel_sha256'] was not supplied."
+                "parameters['sem_reference_kernel_sha256'] was not supplied."
             )
         self.validation_status = (
             "external_artifact_required"
@@ -83,47 +86,20 @@ class ReferenceKernelSEMBackend:
             else "diagnostic_only"
         )
 
-        self._acceleration_kV = _finite_nonnegative("sem_acceleration_kV", param_value(params, 'sem_acceleration_kV'), minimum=1e-9)
-        self._baseline = _finite_nonnegative("sem_baseline_yield", param_value(params, 'sem_baseline_yield'), minimum=0.0)
-        self._detector_acceptance = _finite_nonnegative("sem_detector_acceptance", param_value(params, 'sem_detector_acceptance'), minimum=0.0)
-        self._topography_gain = _finite_nonnegative(
-            "sem_topography_contrast_gain",
-            param_value(params, 'sem_topography_contrast_gain'),
-            minimum=0.0,
-        )
-        self._takeoff_angle_deg = _finite_nonnegative(
-            "sem_detector_takeoff_angle_deg",
-            param_value(params, 'sem_detector_takeoff_angle_deg'),
-            minimum=0.0,
-        )
+        self._acceleration_kV = sem_settings.acceleration_kV
+        self._baseline = sem_settings.baseline_yield
+        self._detector_acceptance = sem_settings.detector_acceptance
+        self._topography_gain = sem_settings.topography_contrast_gain
+        self._takeoff_angle_deg = sem_settings.detector_takeoff_angle_deg
         _validate_takeoff_angle_deg(self._takeoff_angle_deg)
-        self._source_depth_nm = _finite_nonnegative(
-            "sem_reference_source_depth_nm",
-            param_value(params, 'sem_reference_source_depth_nm'),
-            minimum=0.0,
-        )
-        self._material_name = str(param_value(params, 'sem_reference_material')).strip().lower() or "default"
-        self._geometry_name = str(param_value(params, 'sem_reference_geometry')).strip().lower() or "normal"
-        self._beam_current_nA = _finite_nonnegative("sem_beam_current_nA", param_value(params, 'sem_beam_current_nA'), minimum=0.0)
-        self._dwell_time_us = _finite_nonnegative("sem_dwell_time_us", param_value(params, 'sem_dwell_time_us'), minimum=0.0)
-        self._electrons_per_pixel_reference = _finite_nonnegative(
-            "sem_electrons_per_pixel",
-            SemSettings.from_params(params).electrons_per_pixel,
-            minimum=0.0,
-        )
-        self._incident_angle_deg = _finite_nonnegative(
-            "sem_reference_incident_angle_deg",
-            param_value(params, 'sem_reference_incident_angle_deg'),
-            minimum=0.0,
-        )
-        direction_raw = param_value(params, 'sem_detector_direction_xy')
-        direction = np.asarray(direction_raw, dtype=float)
-        if direction.shape != (2,) or not np.all(np.isfinite(direction)):
-            raise SEMTransportBackendError("PARAMS['sem_detector_direction_xy'] must be a finite length-2 vector.")
-        norm = float(np.linalg.norm(direction))
-        if norm <= 0.0:
-            raise SEMTransportBackendError("PARAMS['sem_detector_direction_xy'] must have nonzero norm.")
-        self._detector_direction_xy = direction / norm
+        self._source_depth_nm = sem_settings.reference_source_depth_nm
+        self._material_name = sem_settings.reference_material
+        self._geometry_name = sem_settings.reference_geometry
+        self._beam_current_nA = sem_settings.beam_current_nA
+        self._dwell_time_us = sem_settings.dwell_time_us
+        self._electrons_per_pixel_reference = sem_settings.electrons_per_pixel
+        self._incident_angle_deg = sem_settings.reference_incident_angle_deg
+        self._detector_direction_xy = np.asarray(sem_settings.detector_direction_xy, dtype=float)
 
         rows = self.payload.get("kernel_rows")
         if rows is None:
@@ -212,15 +188,36 @@ class ReferenceKernelSEMBackend:
         return scales
 
     def _select_rows(self, material: str, geometry: str) -> list[dict[str, float]]:
-        key_candidates = []
+        exact_candidates = []
+        wildcard_candidates = []
+        default_candidates = []
         for row in self._rows:
-            material_match = row["material"] in {"*", "all", material, "default"} or material == "default"
-            if not material_match:
+            row_material = row["material"]
+            if row_material == material:
+                material_rank = "exact"
+            elif row_material in {"*", "all"}:
+                material_rank = "wildcard"
+            elif row_material == "default":
+                material_rank = "default"
+            else:
                 continue
-            geometry_match = row["geometry"] in {"*", "all", geometry, "default"} or geometry == "default"
-            if not geometry_match:
+            row_geometry = row["geometry"]
+            if row_geometry == geometry:
+                geometry_rank = "exact"
+            elif row_geometry in {"*", "all"}:
+                geometry_rank = "wildcard"
+            elif row_geometry == "default":
+                geometry_rank = "default"
+            else:
                 continue
-            key_candidates.append(row)
+            if material_rank == "exact" and geometry_rank == "exact":
+                exact_candidates.append(row)
+            elif material_rank != "default" and geometry_rank != "default":
+                wildcard_candidates.append(row)
+            else:
+                default_candidates.append(row)
+
+        key_candidates = exact_candidates or wildcard_candidates or default_candidates
 
         if not key_candidates:
             raise SEMTransportBackendError(
@@ -231,10 +228,21 @@ class ReferenceKernelSEMBackend:
         return key_candidates
 
     def _detector_gain(self) -> float:
-        return float(self._detector_acceptance)
+        return _detector_takeoff_acceptance_gain(
+            self._detector_acceptance,
+            self._takeoff_angle_deg,
+        )
 
-    def _interpolate_rows(self, source: np.ndarray) -> np.ndarray:
-        rows = self._select_rows(self._material_name, self._geometry_name)
+    def _interpolate_rows(
+        self,
+        source: np.ndarray,
+        *,
+        material: str | None = None,
+        geometry: str | None = None,
+    ) -> np.ndarray:
+        material_name = str(material or self._material_name).strip().lower() or "default"
+        geometry_name = str(geometry or self._geometry_name).strip().lower() or "normal"
+        rows = self._select_rows(material_name, geometry_name)
         if len(rows) == 0:
             return np.zeros_like(source, dtype=float)
 
@@ -269,13 +277,38 @@ class ReferenceKernelSEMBackend:
     def _topography_term(self, source: np.ndarray) -> np.ndarray:
         if self._topography_gain <= 0.0:
             return np.zeros_like(source)
-        gx, gy = _gradient_components(source)
+        gx, gy = _gradient_components(source, self.canvas_pitch_nm)
         directed = self._detector_direction_xy[0] * gx + self._detector_direction_xy[1] * gy
-        topo = np.abs(directed)
+        topo = np.maximum(directed, 0.0)
         return self._topography_gain * _gaussian_blur(topo, max(self.probe_sigma_px * 0.5, 0.0))
 
-    def yield_from_source(self, source: np.ndarray, *, baseline: float = 0.0) -> np.ndarray:
+    @staticmethod
+    def _project_source_for_table(source: np.ndarray) -> np.ndarray:
         source_query = np.asarray(source, dtype=float)
+        if source_query.ndim == 3:
+            source_query = np.sum(source_query, axis=0)
+        return source_query
+
+    def yield_from_source(self, source: np.ndarray, *, baseline: float = 0.0) -> np.ndarray:
+        if isinstance(source, SEMMaterialSourceCanvas):
+            output = np.zeros(source.shape[-2:], dtype=float)
+            for key, channel_source in source.channels.items():
+                channel_query = self._project_source_for_table(channel_source)
+                interpolated = self._interpolate_rows(
+                    key.se_yield_coefficient * channel_query,
+                    material=key.material_name,
+                    geometry=self._geometry_name,
+                )
+                if self._topography_gain > 0.0:
+                    interpolated = interpolated + self._topography_term(channel_query)
+                output += interpolated
+            output = np.maximum(float(baseline) + self._detector_gain() * output, 0.0)
+            output = _gaussian_blur(output, max(self.probe_sigma_px, 0.0))
+            if not np.all(np.isfinite(output)):
+                raise FloatingPointError("SEM reference-kernel backend produced non-finite yield map.")
+            return output
+
+        source_query = self._project_source_for_table(source)
         interpolated = self._interpolate_rows(source_query)
         if self._topography_gain > 0.0:
             interpolated = interpolated + self._topography_term(source_query)
@@ -286,15 +319,24 @@ class ReferenceKernelSEMBackend:
         return output
 
     def contrast_from_source(self, source: np.ndarray) -> np.ndarray:
-        src = np.asarray(source, dtype=float)
+        if isinstance(source, SEMMaterialSourceCanvas):
+            zero = SEMMaterialSourceCanvas(
+                shape=source.shape,
+                channels={key: np.zeros_like(value, dtype=float) for key, value in source.channels.items()},
+            )
+            return self.yield_from_source(source, baseline=0.0) - self.yield_from_source(
+                zero,
+                baseline=0.0,
+            )
+        src = self._project_source_for_table(source)
         return self.yield_from_source(src, baseline=0.0) - self.yield_from_source(
-            np.zeros_like(src),
+            np.zeros_like(src, dtype=float),
             baseline=0.0,
         )
 
     def metadata(self, params: dict | None = None) -> dict[str, Any]:
         raw = params or {}
-        fidelity = "high_fidelity"
+        fidelity = "high_fidelity" if self.reference_status == "reference_validated" else "physics_based"
         meta = {
             "kind": "sem_reference_kernel",
             "backend_mode": self.backend_mode,
@@ -309,7 +351,7 @@ class ReferenceKernelSEMBackend:
             "fidelity_label": (
                 "sem_reference_kernel_external_artifact_required"
                 if self.reference_status == "reference_validated"
-                else "sem_reference_kernel_high_fidelity"
+                else "sem_reference_kernel_diagnostic_only"
             ),
             "validation_status": self.validation_status,
             "forward_observable": "interpolated SEM secondary-electron yield table",

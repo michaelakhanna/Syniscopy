@@ -1,0 +1,22 @@
+[
+  {
+    "law": "TIRF-EVANESCENT",
+    "ok": true,
+    "detail": "total signal ratio(z=2d)/(z=d) = 0.307, expect exp(-1)=0.368 (physical-height evanescent decay; d=120 nm)"
+  },
+  {
+    "law": "TEM-PROJECTED-Z",
+    "ok": true,
+    "detail": "SKIP: profile resolved to slice-resolved TEM (uses physical world z by design); drift=3.54e-14"
+  },
+  {
+    "law": "SOURCE-Z-BASIS[sem_secondary_electron]",
+    "ok": true,
+    "detail": "runtime source_density_z_basis='projected_no_z' (must be physical/material/projected, never 'focus_relative')"
+  },
+  {
+    "law": "SOURCE-Z-BASIS[tem_phase_contrast]",
+    "ok": true,
+    "detail": "runtime source_density_z_basis='physical_sample_world' (must be physical/material/projected, never 'focus_relative')"
+  }
+]

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import argparse
 
-from config import PARAMS
+from config import default_params
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run one Syniscopy simulation using config.PARAMS.",
+        description="Run one Syniscopy simulation using concept-owned defaults.",
     )
     parser.add_argument(
         "--return-frames",
@@ -23,7 +23,7 @@ def main(argv: list[str] | None = None):
     args = parse_args(argv)
     from simulation import run_simulation
 
-    return run_simulation(PARAMS, return_frames=bool(args.return_frames))
+    return run_simulation(default_params(), return_frames=bool(args.return_frames))
 
 
 if __name__ == "__main__":

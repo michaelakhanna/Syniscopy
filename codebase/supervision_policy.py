@@ -24,20 +24,27 @@ simulator knows an object exists but supervision is unsupported.
 """
 
 from __future__ import annotations
-from config import param_value
-from config.runtime import resolved_pixel_size_nm
+from config.runtime import (
+    ModalitySettings,
+    SamplingGeometry,
+    SupervisionGeometryThresholds,
+    SupervisionSettings,
+)
 
 from dataclasses import dataclass, field
 from typing import Any
 
 import numpy as np
 
-from dataset_schema import SUPPORTED_MASK_TARGETS, build_annotation_schema
+from dataset_schema import build_annotation_schema
 from dataset_schema import ANNOTATION_SCHEMA_VERSION, MASK_LABEL_ENCODING
-from fisher import compute_localization_crlb
+from fisher import (
+    compute_localization_crlb,
+    require_array_only_spectral_lateral_derivative_ready,
+)
+from noise_contracts import AnalysisNoiseModel, IndependentPixelNoiseModel, independent_pixel_noise_model
 from supervision_calibration import apply_score_calibration, calibration_contract
 from trackability import TrackabilityModel
-SUPPORTED_TARGETS = SUPPORTED_MASK_TARGETS
 SUPPORTED_FACTORS = ("temporal", "signal", "information", "ambiguity")
 
 
@@ -49,70 +56,13 @@ def _bounded_support(value: float) -> float:
     return max(0.0, min(1.0, value))
 
 
-def _normalise_target_and_factors(
-    params: dict[str, Any],
-) -> tuple[str, tuple[str, ...]]:
-    raw_target = str(param_value(params, 'supervision_target')).strip()
-
-    if raw_target not in SUPPORTED_TARGETS:
-        raise ValueError(
-            "PARAMS['supervision_target'] must be one of "
-            f"{SUPPORTED_TARGETS}; got {raw_target!r}."
-        )
-
-    explicit_factors = param_value(params, "supervision_support_factors")
-    if explicit_factors is None:
-        if raw_target == "mask_geometry":
-            factors: tuple[str, ...] = ()
-        else:
-            factors = tuple(
-                factor for factor in SUPPORTED_FACTORS
-                if bool(param_value(params, f"supervision_{factor}_support_enabled"))
-            )
-    elif isinstance(explicit_factors, str):
-        factors = tuple(
-            factor.strip()
-            for factor in explicit_factors.split(",")
-            if factor.strip()
-        )
-    else:
-        factors = tuple(str(factor).strip() for factor in explicit_factors)
-
-    invalid = [factor for factor in factors if factor not in SUPPORTED_FACTORS]
-    if invalid:
-        raise ValueError(
-            "PARAMS['supervision_support_factors'] contains unsupported "
-            f"factor(s) {invalid}; supported factors are {SUPPORTED_FACTORS}."
-        )
-    seen = set()
-    duplicates = []
-    for factor in factors:
-        if factor in seen and factor not in duplicates:
-            duplicates.append(factor)
-        seen.add(factor)
-    if duplicates:
-        raise ValueError(
-            "PARAMS['supervision_support_factors'] contains duplicate factor(s) "
-            f"{duplicates}. Each support factor may be listed at most once."
-        )
-    if explicit_factors is not None:
-        disabled = [
-            factor for factor in factors
-            if not bool(param_value(params, f"supervision_{factor}_support_enabled"))
-        ]
-        if disabled:
-            raise ValueError(
-                "PARAMS['supervision_support_factors'] explicitly includes disabled "
-                f"factor(s) {disabled}. Remove the factor(s) or enable their "
-                "corresponding supervision_*_support_enabled flag."
-            )
-    return raw_target, factors
-
-
 def build_policy_annotation_schema(params: dict[str, Any]) -> dict[str, Any]:
     """Build the annotation schema using the supervision policy contract."""
-    target, factors = _normalise_target_and_factors(params)
-    return build_annotation_schema(selected_target=target, support_factors=factors)
+    settings = SupervisionSettings.from_params(params)
+    return build_annotation_schema(
+        selected_target=settings.target,
+        support_factors=settings.support_factors,
+    )
 
 
 def resolve_policy_contract(params: dict[str, Any]) -> dict[str, Any]:
@@ -122,22 +72,22 @@ def resolve_policy_contract(params: dict[str, Any]) -> dict[str, Any]:
     probabilities. Downstream outputs can gate probability language on the
     emitted ``calibration_status``.
     """
-    target, factors = _normalise_target_and_factors(params)
-    calibration = dict(param_value(params, "supervision_score_calibration_parameters") or {})
-    mode = str(param_value(params, 'supervision_score_calibration_mode')).strip().lower()
+    settings = SupervisionSettings.from_params(params)
+    calibration = dict(settings.score_calibration_parameters)
+    mode = settings.score_calibration_mode
     if calibration and "mode" not in calibration:
         calibration["mode"] = mode
     contract = calibration_contract(calibration if mode != "uncalibrated_support" else None)
     return {
-        "target": target,
-        "support_factors": list(factors),
+        "target": settings.target,
+        "support_factors": list(settings.support_factors),
         "support_score_type": "heuristic_bounded_score",
         **contract,
         "threshold_provenance": {
-            "support_threshold": param_value(params, "supervision_supported_threshold"),
+            "support_threshold": settings.supported_threshold,
         },
         "factor_definitions": {
-            "temporal": "trajectory/window support factor",
+            "temporal": "per-frame Brownian-step plausibility support factor",
             "signal": "contrast/noise support factor",
             "information": "CRLB/information support factor",
             "ambiguity": "ambiguity/competitor support factor",
@@ -205,16 +155,19 @@ def compute_information_support(
     contrast_image: np.ndarray,
     params: dict[str, Any],
     noise_std: float,
-    noise_variance_map: np.ndarray | float | None = None,
+    noise_variance_map: np.ndarray | float | AnalysisNoiseModel | None = None,
     *,
     signal_units: str = "detector_count",
     measurement_domain: str = "detector_count",
     noise_variance_units: str = "detector_count_squared",
+    lateral_derivative_num_particles: int | None = None,
+    structured_environment_active: bool | None = None,
 ) -> tuple[float, dict[str, Any]]:
     """
     Compute CRLB metadata and a bounded information-support factor.
     """
-    if not bool(param_value(params, 'supervision_information_support_enabled')):
+    settings = SupervisionSettings.from_params(params)
+    if not settings.information_support_enabled:
         return 1.0, {
             "sigma_xy_nm": None,
             "singular": False,
@@ -222,13 +175,47 @@ def compute_information_support(
             "support_evaluated": False,
         }
 
-    pixel_size_nm = float(params["pixel_size_nm"])
+    pixel_size_nm = SamplingGeometry.from_params(params).detector_pixel_size_nm
     variance = (
         noise_variance_map
         if noise_variance_map is not None
         else max(float(noise_std) ** 2, 1e-30)
     )
+    if not isinstance(variance, (AnalysisNoiseModel, IndependentPixelNoiseModel)):
+        # Supervision support uses a diagonal, independent-pixel approximation
+        # only when it is explicitly declared. This keeps mask support metadata
+        # from becoming a hidden path that treats a covariance summary as a full
+        # CRLB likelihood.
+        variance = independent_pixel_noise_model(
+            variance,
+            measurement_domain=measurement_domain,
+            signal_units=signal_units,
+            noise_variance_units=noise_variance_units,
+            context="supervision information-support noise",
+        )
     try:
+        # Information-support masks are array-only; the lateral derivative basis
+        # is the single spectral band-limited gradient, with provenance carried
+        # in the emitted metadata rather than a rerender-mode gate.
+        require_array_only_spectral_lateral_derivative_ready(
+            modality=ModalitySettings.from_params(params).modality,
+            params=params,
+            num_particles=lateral_derivative_num_particles,
+            structured_environment_active=structured_environment_active,
+            context="supervision information support",
+        )
+    except Exception as exc:  # noqa: BLE001 - unsupported supervision metadata
+        return 0.0, {
+            "sigma_xy_nm": float("inf"),
+            "singular": True,
+            "error": repr(exc),
+            "support_evaluated": True,
+        }
+    try:
+        # Fisher support must receive the same likelihood basis as the image.
+        # Passing params keeps scalar/diagonal callers from silently
+        # erasing detector covariance; passing an AnalysisNoiseModel preserves
+        # explicit row-correlated likelihoods built by the renderer.
         crlb = compute_localization_crlb(
             np.asarray(contrast_image, dtype=float),
             variance,
@@ -236,6 +223,7 @@ def compute_information_support(
             signal_units=signal_units,
             measurement_domain=measurement_domain,
             noise_variance_units=noise_variance_units,
+            params=params,
         )
     except Exception as exc:  # noqa: BLE001 - downgrade to unsupported metadata
         return 0.0, {
@@ -246,10 +234,11 @@ def compute_information_support(
         }
 
     sigma_xy_nm = float(crlb.get("sigma_xy_nm", float("inf")))
+    thresholds = settings.geometry_thresholds
     support = _crlb_support_from_sigma(
         sigma_xy_nm=sigma_xy_nm,
         pixel_size_nm=pixel_size_nm,
-        max_sigma_nm=_resolved_crlb_xy_max_nm(params),
+        max_sigma_nm=thresholds.crlb_xy_max_nm,
     )
     return support, {
         "sigma_xy_nm": sigma_xy_nm,
@@ -271,6 +260,7 @@ def _neutral_information_support() -> tuple[float, dict[str, Any]]:
         "sigma_xy_nm": None,
         "singular": False,
         "support_evaluated": False,
+        "assignment_position_distance_basis": "lateral_xy_nm",
     }
 
 
@@ -287,7 +277,10 @@ def compute_assignment_ambiguity_support(
 
     When no frame-level competitor state is supplied, this returns the
     uniform-assignment special case: no competitor is preferred, so ambiguity
-    contributes a multiplicative support factor of one.
+    contributes a multiplicative support factor of one. Position-only
+    competition is evaluated in the projected lateral image plane; axial
+    separation is not a pixel-assignment distance unless it changes the rendered
+    mask or supplied geometry support.
     """
     params = params or {}
     particle_index = int(particle_index)
@@ -306,9 +299,9 @@ def compute_assignment_ambiguity_support(
             own = np.asarray(position_nm, dtype=float).reshape(-1)
             if own.size == 0:
                 own = positions[particle_index].reshape(-1)
-            dim = min(3, own.size, positions.shape[1])
-            scale = _resolved_ambiguity_distance_scale_nm(params)
-            if scale > 0.0 and np.isfinite(scale):
+            dim = min(2, own.size, positions.shape[1])
+            scale = SupervisionGeometryThresholds.from_params(params).ambiguity_distance_scale_nm
+            if dim > 0 and scale > 0.0 and np.isfinite(scale):
                 for idx, candidate in enumerate(positions):
                     if idx == particle_index:
                         continue
@@ -351,6 +344,7 @@ def compute_assignment_ambiguity_support(
         "ambiguity_support": support,
         "uniform_ambiguity_special_case": uniform_special_case,
         "assignment_competition": assignment_competition,
+        "assignment_position_distance_basis": "lateral_xy_nm",
         "support_evaluated": True,
     }
     return support, meta
@@ -365,21 +359,8 @@ def _neutral_ambiguity_support() -> tuple[float, dict[str, Any]]:
         "uniform_ambiguity_special_case": True,
         "assignment_competition": 0.0,
         "support_evaluated": False,
+        "assignment_position_distance_basis": "lateral_xy_nm",
     }
-
-
-def _resolved_ambiguity_distance_scale_nm(params: dict) -> float:
-    value = param_value(params, 'supervision_ambiguity_distance_scale_nm')
-    if value is None:
-        value = 2.0 * resolved_pixel_size_nm(params)
-    return float(value)
-
-
-def _resolved_crlb_xy_max_nm(params: dict) -> float:
-    value = param_value(params, 'supervision_crlb_xy_max_nm')
-    if value is None:
-        value = resolved_pixel_size_nm(params)
-    return float(value)
 
 
 def compute_supervision_log_odds_components(
@@ -545,46 +526,25 @@ class SupervisionPolicy:
     def __init__(self, params: dict[str, Any], num_particles: int):
         self.params = params
         self.num_particles = int(num_particles)
-        self.target, self.support_factors = _normalise_target_and_factors(params)
+        self.settings = SupervisionSettings.from_params(params)
+        self.target = self.settings.target
+        self.support_factors = self.settings.support_factors
 
-        self.temporal_enabled = bool(
-            param_value(params, 'supervision_temporal_support_enabled')
-        )
-        self.signal_enabled = bool(
-            param_value(params, 'supervision_signal_support_enabled')
-        )
-        self.support_threshold = float(
-            param_value(params, 'supervision_supported_threshold')
-        )
-        if not (0.0 <= self.support_threshold <= 1.0):
-            raise ValueError("supervision_supported_threshold must be in [0, 1].")
-        self.decision_rule = str(
-            param_value(params, 'supervision_decision_rule')
-        ).strip().lower()
-        if self.decision_rule not in {"log_odds", "product"}:
-            raise ValueError(
-                "supervision_decision_rule must be 'log_odds' or 'product'."
-            )
-        self.log_odds_threshold = float(param_value(params, 'supervision_log_odds_threshold'))
-        self.log_odds_clip_epsilon = float(
-            param_value(params, 'supervision_log_odds_clip_epsilon')
-        )
-        if not (0.0 < self.log_odds_clip_epsilon < 0.5):
-            raise ValueError(
-                "supervision_log_odds_clip_epsilon must lie in (0, 0.5)."
-            )
+        self.temporal_enabled = self.settings.temporal_support_enabled
+        self.signal_enabled = self.settings.signal_support_enabled
+        self.support_threshold = self.settings.supported_threshold
+        self.decision_rule = self.settings.decision_rule
+        self.log_odds_threshold = self.settings.log_odds_threshold
+        self.log_odds_clip_epsilon = self.settings.log_odds_clip_epsilon
+        self.prior_log_odds = self.settings.prior_log_odds
 
         self.temporal_model = (
             TrackabilityModel(params, self.num_particles)
             if self.temporal_enabled else None
         )
         self.noise_std = estimate_contrast_noise_std(params)
-        self.calibration_mode = str(
-            param_value(params, 'supervision_score_calibration_mode')
-        ).strip().lower()
-        self.calibration_parameters = dict(
-            param_value(params, "supervision_score_calibration_parameters") or {}
-        )
+        self.calibration_mode = self.settings.score_calibration_mode
+        self.calibration_parameters = dict(self.settings.score_calibration_parameters)
         if self.calibration_mode != "uncalibrated_support" and "mode" not in self.calibration_parameters:
             self.calibration_parameters["mode"] = self.calibration_mode
         self.calibration_contract = calibration_contract(
@@ -602,10 +562,12 @@ class SupervisionPolicy:
         all_positions_nm: np.ndarray | list[np.ndarray] | None = None,
         all_geometry_masks: list[np.ndarray] | tuple[np.ndarray, ...] | None = None,
         noise_std: float | None = None,
-        noise_variance_map: np.ndarray | float | None = None,
+        noise_variance_map: np.ndarray | float | AnalysisNoiseModel | None = None,
         signal_units: str = "detector_count",
         measurement_domain: str = "detector_count",
         noise_variance_units: str = "detector_count_squared",
+        lateral_derivative_num_particles: int | None = None,
+        structured_environment_active: bool | None = None,
     ) -> dict[str, Any]:
         geom = (np.asarray(geometry_mask) > 0).astype(np.uint8) * 255
         geom_bool = geom > 0
@@ -648,6 +610,8 @@ class SupervisionPolicy:
                 signal_units=signal_units,
                 measurement_domain=measurement_domain,
                 noise_variance_units=noise_variance_units,
+                lateral_derivative_num_particles=lateral_derivative_num_particles,
+                structured_environment_active=structured_environment_active,
             )
         else:
             information_support, crlb_meta = _neutral_information_support()
@@ -683,7 +647,7 @@ class SupervisionPolicy:
             temporal_support=temporal_support,
             ambiguity_support=ambiguity_support,
             included_factors=self.support_factors,
-            prior_log_odds=float(param_value(self.params, "supervision_prior_log_odds")),
+            prior_log_odds=self.prior_log_odds,
             eps=self.log_odds_clip_epsilon,
         )
 
@@ -716,7 +680,7 @@ class SupervisionPolicy:
         eps = self.log_odds_clip_epsilon
         log_odds_map = np.full(
             geom.shape,
-            float(param_value(self.params, "supervision_prior_log_odds")),
+            self.prior_log_odds,
             dtype=float,
         )
         for factor in self.support_factors:
@@ -820,12 +784,7 @@ class SupervisionPolicy:
             loss_weight_value = 0.0
             supported_pixel_fraction = 0.0
 
-        if self.temporal_model is not None and (
-            "temporal" in self.support_factors
-            and temporal_support < self.support_threshold
-        ):
-            self.temporal_model.mark_lost(particle_index)
-
+        thresholds = self.settings.geometry_thresholds
         return {
             "masks": {
                 "mask_geometry": mask_geometry,
@@ -849,12 +808,10 @@ class SupervisionPolicy:
                     "decision_rule": self.decision_rule,
                     "product_threshold": float(self.support_threshold),
                     "log_odds_threshold": float(self.log_odds_threshold),
-                    "prior_log_odds": float(
-                        param_value(self.params, "supervision_prior_log_odds")
-                    ),
+                    "prior_log_odds": float(self.prior_log_odds),
                     "log_odds_clip_epsilon": float(self.log_odds_clip_epsilon),
-                    "crlb_xy_max_nm": _resolved_crlb_xy_max_nm(self.params),
-                    "ambiguity_distance_scale_nm": _resolved_ambiguity_distance_scale_nm(self.params),
+                    "crlb_xy_max_nm": thresholds.crlb_xy_max_nm,
+                    "ambiguity_distance_scale_nm": thresholds.ambiguity_distance_scale_nm,
                     "temporal_scale_factor": 3.0,
                 },
                 "temporal_support": float(temporal_support),

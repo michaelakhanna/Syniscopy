@@ -10,7 +10,7 @@ from ._shared import (
     np,
     reference_vector_for_scattered,
 )
-from config.runtime import RicmSettings, param_value
+from config.runtime import OpticalInstrumentSettings, RicmSettings
 from thinfilm import normal_incidence_thinfilm_reflection
 
 class ReflectionInterferenceContrastImagingModel(ImagingModel):
@@ -56,6 +56,7 @@ class ReflectionInterferenceContrastImagingModel(ImagingModel):
 
     output_type = "intensity"
     uses_sample_environment_pattern = True  # RICM contrast directly depends on substrate reflection structure.
+    sample_environment_reference_field_only = True
     supports_spectral_channels = True
 
     def __init__(self, params: dict) -> None:
@@ -63,7 +64,7 @@ class ReflectionInterferenceContrastImagingModel(ImagingModel):
         E_ref_amplitude = settings.reference_field_amplitude
         if E_ref_amplitude <= 0.0:
             raise ValueError(
-                "PARAMS['reference_field_amplitude'] must be positive for "
+                "parameters['reference_field_amplitude'] must be positive for "
                 "ReflectionInterferenceContrastImagingModel (imaging_model='ricm')."
             )
         self._interface_reflection_model = settings.interface_reflection_model
@@ -85,7 +86,7 @@ class ReflectionInterferenceContrastImagingModel(ImagingModel):
             self._r_s = complex(settings.interface_reflection_coefficient)
         else:
             raise ValueError(
-                "PARAMS['ricm_interface_reflection_model'] must be 'param', 'fresnel', "
+                "parameters['ricm_interface_reflection_model'] must be 'param', 'fresnel', "
                 "or 'thin_film_stack'; "
                 f"got {self._interface_reflection_model!r}."
             )
@@ -99,7 +100,7 @@ class ReflectionInterferenceContrastImagingModel(ImagingModel):
             self._r_p = complex(settings.particle_reflection_coefficient)
         else:
             raise ValueError(
-                "PARAMS['ricm_particle_reflection_model'] must be 'param' or 'fresnel'; "
+                "parameters['ricm_particle_reflection_model'] must be 'param' or 'fresnel'; "
                 f"got {self._particle_reflection_model!r}."
             )
         self._phi = settings.interface_phase_shift_rad
@@ -113,17 +114,31 @@ class ReflectionInterferenceContrastImagingModel(ImagingModel):
 
     def _gap_phase_rad(self, gap_nm: float, params: dict) -> float:
         """Round-trip optical-path phase for a particle/interface gap."""
-        wavelength_nm = self.probe_wavelength_nm(params)
-        n_medium = float(param_value(params, "refractive_index_medium"))
+        instrument = OpticalInstrumentSettings.from_params(params)
+        wavelength_nm = instrument.probe_wavelength_nm
+        n_medium = instrument.refractive_index_medium
         gap = max(float(gap_nm), 0.0)
         return float(4.0 * np.pi * n_medium * gap / wavelength_nm)
 
-    def _effective_gap_nm(self, params: dict, rendered_position_nm: np.ndarray | None = None) -> float:
+    def _effective_gap_nm(
+        self,
+        params: dict,
+        rendered_position_nm: np.ndarray | None = None,
+        *,
+        diameter_nm: float | None = None,
+        lower_surface_gap_nm: float | None = None,
+    ) -> float:
         gap_nm = float(self._gap_nm)
-        if self._use_particle_z_as_gap and rendered_position_nm is not None:
-            position = np.asarray(rendered_position_nm, dtype=float).reshape(-1)
-            if position.size >= 3 and np.isfinite(position[2]):
-                gap_nm += float(position[2])
+        if self._use_particle_z_as_gap:
+            if lower_surface_gap_nm is not None and np.isfinite(lower_surface_gap_nm):
+                gap_nm += float(lower_surface_gap_nm)
+            elif rendered_position_nm is not None:
+                position = np.asarray(rendered_position_nm, dtype=float).reshape(-1)
+                if position.size >= 3 and np.isfinite(position[2]):
+                    if diameter_nm is not None and np.isfinite(diameter_nm):
+                        gap_nm += float(position[2]) - 0.5 * float(diameter_nm)
+                    else:
+                        gap_nm += float(position[2])
         return max(gap_nm, 0.0)
 
     def _sca_prefactor(self, params: dict, *, gap_nm: float | None = None) -> complex:
@@ -133,7 +148,7 @@ class ReflectionInterferenceContrastImagingModel(ImagingModel):
         return self._r_p * np.exp(1j * phase)
 
     def probe_wavelength_nm(self, params: dict) -> float:
-        return float(param_value(params, "ricm_wavelength_nm"))
+        return float(OpticalInstrumentSettings.from_params(params).probe_wavelength_nm)
 
     def compute_intensity(
         self,
@@ -142,7 +157,8 @@ class ReflectionInterferenceContrastImagingModel(ImagingModel):
         params: dict,
     ) -> np.ndarray:
         """
-        RICM intensity: |r_s · E_ref + r_p · e^{i φ} · E_sca_total|².
+        RICM intensity from raw, unprefactored scattered fields:
+        |r_s · E_ref + r_p · e^{i φ} · E_sca_total|².
         """
         pref = self._sca_prefactor(params)
         E_ref = reference_vector_for_scattered(
@@ -152,6 +168,35 @@ class ReflectionInterferenceContrastImagingModel(ImagingModel):
             scale=self._r_s,
         )
         return field_intensity(E_ref + pref * E_sca_total)
+
+    def scattered_field_render_multiplier(
+        self,
+        params: dict,
+        *,
+        world_position_nm: np.ndarray,
+        diameter_nm: float,
+        material_properties=None,
+        frame_index: int = 0,
+        component_geometry=None,
+        orientation_matrix: np.ndarray | None = None,
+    ) -> complex:
+        del material_properties, frame_index
+        position = np.asarray(world_position_nm, dtype=float).reshape(-1)
+        lower_surface_gap_nm = None
+        if position.size >= 3 and np.isfinite(position[2]) and np.isfinite(diameter_nm):
+            half_extent_nm = (
+                float(component_geometry.axial_half_extent_nm(orientation_matrix))
+                if component_geometry is not None
+                else 0.5 * float(diameter_nm)
+            )
+            lower_surface_gap_nm = float(position[2]) - half_extent_nm
+        gap_nm = self._effective_gap_nm(
+            params,
+            position,
+            diameter_nm=float(diameter_nm),
+            lower_surface_gap_nm=lower_surface_gap_nm,
+        )
+        return self._sca_prefactor(params, gap_nm=gap_nm)
 
     def compute_scene_intensity_from_render_states(
         self,
@@ -165,7 +210,11 @@ class ReflectionInterferenceContrastImagingModel(ImagingModel):
         frame_index: int = 0,
     ) -> np.ndarray:
         """
-        RICM scene intensity with per-particle gap-dependent round-trip phase.
+        RICM scene intensity for renderer-domain fields.
+
+        ``E_sca_total`` has already been multiplied by
+        scattered_field_render_multiplier() during stamping, so this method must
+        not apply _sca_prefactor() again.
         """
         del particle_source_maps, frame_index
         E_ref = reference_vector_for_scattered(
@@ -176,12 +225,11 @@ class ReflectionInterferenceContrastImagingModel(ImagingModel):
         )
         if not E_sca_particles:
             return field_intensity(E_ref)
-        E_sca_weighted = np.zeros_like(E_sca_total, dtype=np.complex128)
-        for field, state in zip(E_sca_particles, render_states, strict=False):
-            rendered_position = state.rendered_position_nm(np.zeros(3, dtype=float))
-            gap_nm = self._effective_gap_nm(params, rendered_position)
-            E_sca_weighted = E_sca_weighted + self._sca_prefactor(params, gap_nm=gap_nm) * field
-        return field_intensity(E_ref + E_sca_weighted)
+        # The renderer applies scattered_field_render_multiplier per rendered
+        # sub-component so composite particles receive the correct gap phase for
+        # each lower surface before fields are summed.
+        del render_states
+        return field_intensity(E_ref + E_sca_total)
 
     def compute_per_particle_contrast(
         self,
@@ -190,10 +238,46 @@ class ReflectionInterferenceContrastImagingModel(ImagingModel):
         params: dict,
     ) -> np.ndarray:
         """
-        RICM per-particle contrast: subtract the substrate-only baseline
-        so the returned array is zero where the particle contributes nothing.
+        RICM per-particle contrast from raw, unprefactored scattered fields.
+
+        The substrate-only baseline is subtracted so the returned array is zero
+        where the particle contributes nothing.
         """
         pref = self._sca_prefactor(params)
+        E_ref = reference_vector_for_scattered(
+            background_field,
+            E_sca_particle,
+            params,
+            scale=self._r_s,
+        )
+        baseline_intensity = field_intensity(E_ref)
+        with_particle = field_intensity(E_ref + pref * E_sca_particle)
+        return with_particle - baseline_intensity
+
+    def compute_particle_contrast(
+        self,
+        E_sca_particle: np.ndarray,
+        background_field: np.ndarray,
+        params: dict,
+        particle_instance=None,
+        *,
+        frame_index: int = 0,
+    ) -> np.ndarray:
+        """RICM per-particle contrast with particle-z gap phase when available."""
+        if particle_instance is None:
+            return self.compute_per_particle_contrast(E_sca_particle, background_field, params)
+        trajectory = np.asarray(getattr(particle_instance, "trajectory_nm", ()), dtype=float)
+        if trajectory.ndim < 2 or trajectory.shape[0] == 0:
+            return self.compute_per_particle_contrast(E_sca_particle, background_field, params)
+        idx = int(np.clip(int(frame_index), 0, trajectory.shape[0] - 1))
+        position = trajectory[idx]
+        diameter_nm = float(getattr(getattr(particle_instance, "particle_type", None), "diameter_nm", np.nan))
+        gap_nm = self._effective_gap_nm(
+            params,
+            position,
+            diameter_nm=diameter_nm,
+        )
+        pref = self._sca_prefactor(params, gap_nm=gap_nm)
         E_ref = reference_vector_for_scattered(
             background_field,
             E_sca_particle,
@@ -218,7 +302,7 @@ class ReflectionInterferenceContrastImagingModel(ImagingModel):
             r_p_real=float(np.real(self._r_p)),
             r_p_imag=float(np.imag(self._r_p)),
             r_p_abs=float(abs(self._r_p)),
-            thinfilm_layers=list(param_value(params, 'ricm_thinfilm_layers')),
+            thinfilm_layers=list(RicmSettings.from_params(params).thinfilm_layers),
             scatter_prefactor_real=float(np.real(pref)),
             scatter_prefactor_imag=float(np.imag(pref)),
             scatter_prefactor_abs=float(abs(pref)),
@@ -228,6 +312,14 @@ class ReflectionInterferenceContrastImagingModel(ImagingModel):
             gap_phase_model="round_trip_normal_incidence_4pi_n_gap_over_lambda",
             gap_phase_rad_at_baseline=float(self._gap_phase_rad(self._gap_nm, params)),
             count_scaling_mode="incident_background_counts_scaled_by_reflection_intensity",
+            raw_scattered_field_domain=(
+                "direct RICM intensity/contrast APIs expect raw optical scattered "
+                "fields and apply the reflection/gap prefactor internally"
+            ),
+            rendered_scattered_field_domain=(
+                "renderer-domain RICM fields already include "
+                "scattered_field_render_multiplier() per stamped particle"
+            ),
         )
         return response
 

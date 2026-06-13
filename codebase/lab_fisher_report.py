@@ -41,13 +41,30 @@ def _load_cli_parser():
     return _load_cli_module()._parse_args
 
 
-def main() -> int:
-    cli_module = _load_cli_module()
-    args = cli_module._parse_args()
-    if args.write_template:
-        path = cli_module._write_template(args.write_template)
-        print(f"Wrote lab Fisher template: {path}")
-        return 0
+def _validated_microscope_set_for_cli(args, path):
+    from lab_fisher_report.microscopes import load_microscope_set, resolve_microscope_params
+    from lab_fisher_report.params_assembly import _make_microscope_base_and_shared_params
+
+    microscope_set = load_microscope_set(path)
+    base_params, shared_params = _make_microscope_base_and_shared_params(
+        args,
+        microscope_shared_params=microscope_set.shared_params,
+    )
+    resolved = {
+        scope.name: resolve_microscope_params(
+            scope,
+            base_params,
+            shared_params=shared_params,
+        )
+        for scope in microscope_set.microscopes
+    }
+    return microscope_set, resolved
+
+
+def _handle_lightweight_cli() -> int | None:
+    cli = _load_cli_module()
+    args = cli._parse_args()
+
     if args.list_modalities:
         from modality_registry import SUPPORTED_MODALITIES
 
@@ -60,6 +77,45 @@ def main() -> int:
         for name in sorted(get_instrument_preset_names()):
             print(name)
         return 0
+    if args.write_template:
+        path = cli._write_microscope_set_template(
+            args.write_template,
+            modality=args.template_modality,
+        )
+        print(f"Wrote lab Fisher microscope template: {path}")
+        return 0
+    if args.validate_microscopes:
+        microscope_set, resolved = _validated_microscope_set_for_cli(
+            args,
+            args.validate_microscopes,
+        )
+        print(
+            "Validated resolved microscope set: "
+            f"{len(microscope_set.microscopes)} microscope(s), "
+            f"{len(microscope_set.shared_params)} shared param(s), "
+            f"{len(resolved)} resolved parameters record(s)."
+        )
+        return 0
+    if args.list_microscopes:
+        microscope_set, _validated = _validated_microscope_set_for_cli(
+            args,
+            args.list_microscopes,
+        )
+        for scope in microscope_set.microscopes:
+            instrument = scope.instrument or "-"
+            print(f"{scope.name}\t{scope.modality}\t{instrument}")
+        return 0
+    return None
+
+
+def main() -> int:
+    lightweight_result = _handle_lightweight_cli()
+    if lightweight_result is not None:
+        return lightweight_result
+    # Keep every public CLI path in the package coordinator. The coordinator owns
+    # report generation and generated modality sweeps. CLI-only paths above call
+    # the same parser/template/microscope modules without importing the render
+    # stack, so source inspection and template generation stay lightweight.
     package_main, _run_report = _load_package_entrypoints()
     return package_main()
 

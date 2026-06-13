@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from config.runtime import SemSettings, param_value
+from config.runtime import SemSettings
 
 from ._metadata import (
     Any,
@@ -39,70 +39,24 @@ class SyniscopyTransportSEMBackend:
         self.canvas_pitch_nm = _finite_nonnegative("canvas_pitch_nm", canvas_pitch_nm, minimum=1e-12)
         self.probe_sigma_px = _finite_nonnegative("sem probe sigma", probe_sigma_px, minimum=0.0)
         self.backend_mode = self.__class__.backend_mode
-        self._acceleration_kV = _finite_nonnegative("sem_acceleration_kV", param_value(params, 'sem_acceleration_kV'), minimum=1e-9)
-        self._baseline = _finite_nonnegative("sem_baseline_yield", param_value(params, 'sem_baseline_yield'), minimum=0.0)
-        self._edge_gain = _finite_nonnegative("sem_edge_contrast_gain", param_value(params, 'sem_edge_contrast_gain'), minimum=0.0)
-        self._bulk_gain = _finite_nonnegative("sem_bulk_contrast_gain", param_value(params, 'sem_bulk_contrast_gain'), minimum=0.0)
-        self._topography_gain = _finite_nonnegative(
-            "sem_topography_contrast_gain",
-            param_value(params, 'sem_topography_contrast_gain'),
-            minimum=0.0,
-        )
-        self._detector_acceptance = _finite_nonnegative(
-            "sem_detector_acceptance",
-            param_value(params, 'sem_detector_acceptance'),
-            minimum=0.0,
-        )
-        self._takeoff_angle_deg = _finite_nonnegative(
-            "sem_detector_takeoff_angle_deg",
-            param_value(params, 'sem_detector_takeoff_angle_deg'),
-            minimum=0.0,
-        )
-        self._escape_depth_nm = _finite_nonnegative(
-            "sem_escape_depth_nm",
-            param_value(params, 'sem_escape_depth_nm'),
-            minimum=0.0,
-        )
-        self._backscatter_fraction = _finite_nonnegative(
-            "sem_backscatter_fraction",
-            param_value(params, 'sem_backscatter_fraction'),
-            minimum=0.0,
-        )
-        self._material_scale = _finite_nonnegative(
-            "sem_transport_material_scale",
-            param_value(params, 'sem_transport_material_scale'),
-            minimum=0.0,
-        )
-        self._source_exponent = _finite_nonnegative(
-            "sem_transport_source_exponent",
-            param_value(params, 'sem_transport_source_exponent'),
-            minimum=0.05,
-        )
-        self._topography_source_exponent = _finite_nonnegative(
-            "sem_transport_topography_exponent",
-            param_value(params, 'sem_transport_topography_exponent'),
-            minimum=0.05,
-        )
-        self._beam_current_nA = _finite_nonnegative("sem_beam_current_nA", param_value(params, 'sem_beam_current_nA'), minimum=0.0)
-        self._dwell_time_us = _finite_nonnegative(
-            "sem_dwell_time_us",
-            param_value(params, 'sem_dwell_time_us'),
-            minimum=0.0,
-        )
-        self._electrons_per_pixel_reference = _finite_nonnegative(
-            "sem_electrons_per_pixel",
-            SemSettings.from_params(params).electrons_per_pixel,
-            minimum=0.0,
-        )
+        sem_settings = SemSettings.from_params(params)
+        self._acceleration_kV = sem_settings.acceleration_kV
+        self._baseline = sem_settings.baseline_yield
+        self._edge_gain = sem_settings.edge_contrast_gain
+        self._bulk_gain = sem_settings.bulk_contrast_gain
+        self._topography_gain = sem_settings.topography_contrast_gain
+        self._detector_acceptance = sem_settings.detector_acceptance
+        self._takeoff_angle_deg = sem_settings.detector_takeoff_angle_deg
+        self._escape_depth_nm = sem_settings.escape_depth_nm
+        self._backscatter_fraction = sem_settings.backscatter_fraction
+        self._material_scale = sem_settings.transport_material_scale
+        self._source_exponent = sem_settings.transport_source_exponent
+        self._topography_source_exponent = sem_settings.transport_topography_exponent
+        self._beam_current_nA = sem_settings.beam_current_nA
+        self._dwell_time_us = sem_settings.dwell_time_us
+        self._electrons_per_pixel_reference = sem_settings.electrons_per_pixel
         self._beam_energy_gain = float(np.sqrt(self._acceleration_kV / 5.0))
-        direction_raw = param_value(params, 'sem_detector_direction_xy')
-        direction = np.asarray(direction_raw, dtype=float)
-        if direction.shape != (2,) or not np.all(np.isfinite(direction)):
-            raise SEMTransportBackendError("PARAMS['sem_detector_direction_xy'] must be a finite length-2 vector.")
-        norm = float(np.linalg.norm(direction))
-        if norm <= 0.0:
-            raise SEMTransportBackendError("PARAMS['sem_detector_direction_xy'] must have nonzero norm.")
-        self._detector_direction_xy = direction / norm
+        self._detector_direction_xy = np.asarray(sem_settings.detector_direction_xy, dtype=float)
 
     def _electrons_from_beam_current(self) -> float | None:
         return _electrons_from_beam_current(self._beam_current_nA, self._dwell_time_us)
@@ -131,14 +85,14 @@ class SyniscopyTransportSEMBackend:
         return source * material_scale
 
     def _topography_term(self, source: np.ndarray) -> np.ndarray:
-        gx, gy = _gradient_components(source)
+        gx, gy = _gradient_components(source, self.canvas_pitch_nm)
         if self._topography_gain <= 0.0:
             return np.zeros_like(source)
         directed = gy * self._detector_direction_xy[1] + gx * self._detector_direction_xy[0]
-        topo = np.abs(directed)
+        topo = np.maximum(directed, 0.0)
         if self._topography_source_exponent != 1.0:
             topo = np.power(topo, self._topography_source_exponent)
-        topo_blur = _gaussian_blur(topo, self._probe_sigma_px)
+        topo_blur = _gaussian_blur(topo, self._effective_probe_sigma_px())
         return self._topography_gain * topo_blur
 
     def yield_from_source(self, source: np.ndarray, *, baseline: float = 0.0) -> np.ndarray:
@@ -153,7 +107,7 @@ class SyniscopyTransportSEMBackend:
         source_model = self._material_response(source_model)
         blur_sigma = self._effective_probe_sigma_px()
         source_blur = _gaussian_blur(source_model, blur_sigma)
-        edge = _gradient_magnitude(source_model)
+        edge = _gradient_magnitude(source_model, self.canvas_pitch_nm)
         edge_blur = _gaussian_blur(edge, blur_sigma)
         backscatter = _gaussian_blur(source_model, max(0.5 * blur_sigma, 0.0))
 

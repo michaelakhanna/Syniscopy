@@ -5,16 +5,14 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
-import json
 from pathlib import Path
-from typing import Any
 
 from bootstrap import REPO_ROOT, ensure_codebase_on_path
 
 DEFAULT_RECIPE = "recipes/default.py:DEFAULT"
 ensure_codebase_on_path()
 
-from json_utils import json_safe, load_typed_json
+from json_utils import load_typed_json
 
 
 def _parse_args() -> argparse.Namespace:
@@ -57,7 +55,7 @@ def _parse_args() -> argparse.Namespace:
         "--params_json",
         dest="params_json",
         default=None,
-        help="Optional JSON object with PARAMS overrides.",
+        help="Optional JSON object with parameters overrides.",
     )
     parser.add_argument(
         "--recipe",
@@ -78,9 +76,7 @@ def _parse_args() -> argparse.Namespace:
         dest="write_params_template",
         default=None,
         help=(
-            "Write the public editable recipe parameters to JSON and exit. "
-            "This writes recipe-facing dataset keys rather than every "
-            "simulator runtime parameter."
+            "Write the current public dataset parameter template to JSON and exit."
         ),
     )
     parser.add_argument(
@@ -104,16 +100,6 @@ def _parse_args() -> argparse.Namespace:
         dest="no_resume",
         action="store_true",
         help="Regenerate requested videos even if matching outputs exist.",
-    )
-    parser.add_argument(
-        "--append-on-config-change",
-        "--append_on_config_change",
-        dest="append_on_config_change",
-        action="store_true",
-        help=(
-            "Legacy flag retained for compatibility. Any generation-request "
-            "change rewrites the existing dataset."
-        ),
     )
     parser.add_argument(
         "--verbose",
@@ -169,13 +155,9 @@ def main() -> int:
         _list_recipes()
         return 0
     if args.write_params_template:
-        template = _load_recipe(args.recipe or DEFAULT_RECIPE)
-        out = Path(args.write_params_template).expanduser()
-        if not out.is_absolute():
-            out = REPO_ROOT / out
-        out.parent.mkdir(parents=True, exist_ok=True)
-        with open(out, "w", encoding="utf-8") as fh:
-            json.dump(json_safe(template), fh, indent=2, sort_keys=True)
+        from dataset import write_default_params_template
+
+        out = write_default_params_template(args.write_params_template)
         print(f"Wrote public dataset parameter template: {out}")
         return 0
 
@@ -210,7 +192,6 @@ def main() -> int:
         composition=composition,
         resume_existing=not args.no_resume,
         reset_existing=args.reset,
-        append_on_config_change=args.append_on_config_change,
         verbose=args.verbose,
     )
     print(f"Dataset ready: {dataset_dir}")

@@ -38,7 +38,19 @@ import subprocess
 from typing import Any, Dict, List
 
 from common_utils import relative_path
-from config.runtime import param_value, resolved_modality
+from config.runtime import (
+    AcquisitionProfile,
+    BackgroundSubtractionSettings,
+    FluorescenceSettings,
+    MaskGenerationSettings,
+    ModalitySettings,
+    MotionDynamicsSettings,
+    OpticalInstrumentSettings,
+    SampleEnvironmentSettings,
+    SamplingGeometry,
+    SimulationOutputSettings,
+    SupervisionSettings,
+)
 from supervision_policy import build_policy_annotation_schema, resolve_policy_contract
 
 SIMULATOR_VERSION = "1.0.5"
@@ -49,7 +61,6 @@ from particle_material_resolution import (
     resolve_component_material_properties,
     resolve_particle_material_properties,
 )
-from optical_params import resolve_probe_wavelength_nm
 from particle_specs import get_particle_specs, particle_specs_to_public_dicts
 from experiment_contracts import (
     ArtifactNode,
@@ -70,7 +81,7 @@ def _safe_float(value: Any) -> float:
     return float(value)
 
 
-def _resolved_noise_metadata(params: Dict[str, Any]) -> Dict[str, Any]:
+def _noise_metadata_for_manifest(params: Dict[str, Any]) -> Dict[str, Any]:
     """Return the canonical resolved camera-noise metadata for manifests."""
     try:
         from camera_noise import camera_noise_metadata
@@ -80,23 +91,105 @@ def _resolved_noise_metadata(params: Dict[str, Any]) -> Dict[str, Any]:
         return {"metadata_error": repr(exc)}
 
 
-def _resolved_num_frames_or_none(params: Dict[str, Any]) -> int | None:
+def _num_frames_for_manifest_or_none(params: Dict[str, Any]) -> int | None:
     """Return the effective frame count when timing parameters are complete."""
     try:
-        from trajectory import resolve_num_frames
-
-        return int(resolve_num_frames(params))
+        return AcquisitionProfile.from_params(params).num_frames
     except Exception:
-        try:
-            raw_num_frames = param_value(params, "num_frames")
-        except KeyError:
-            return None
-        if raw_num_frames is None:
-            return None
-        try:
-            return int(raw_num_frames)
-        except (TypeError, ValueError):
-            return None
+        return None
+
+
+def _spectral_item_wavelength_metadata(item_params: Dict[str, Any]) -> Dict[str, Any]:
+    """Return per-channel wavelength metadata through runtime owners."""
+
+    out: Dict[str, Any] = {
+        "wavelength_nm": None,
+        "probe_wavelength_nm": None,
+        "fluorescence_excitation_wavelength_nm": None,
+        "fluorescence_emission_wavelength_nm": None,
+    }
+    try:
+        instrument = OpticalInstrumentSettings.from_params(item_params)
+        out["wavelength_nm"] = instrument.wavelength_nm
+        out["probe_wavelength_nm"] = instrument.probe_wavelength_nm
+    except Exception:
+        pass
+    try:
+        fluorescence = FluorescenceSettings.from_params(item_params)
+        out["fluorescence_excitation_wavelength_nm"] = fluorescence.excitation_wavelength_nm
+        out["fluorescence_emission_wavelength_nm"] = fluorescence.emission_wavelength_nm
+    except Exception:
+        pass
+    return out
+
+
+def _trajectory_parameters_metadata(params: Dict[str, Any]) -> Dict[str, Any]:
+    """Return manifest trajectory settings through their runtime owners."""
+    acquisition = AcquisitionProfile.from_params(params)
+    dynamics = MotionDynamicsSettings.from_params(params)
+    sample_environment = SampleEnvironmentSettings.from_params(params)
+    return json_safe({
+        "fps": acquisition.fps,
+        "duration_seconds": acquisition.duration_seconds,
+        "num_frames": _num_frames_for_manifest_or_none(params),
+        "temperature_K": dynamics.temperature_K,
+        "viscosity_Pa_s": dynamics.viscosity_Pa_s,
+        "initial_z_span_nm": dynamics.initial_z_span_nm,
+        "z_motion_constraint_model": dynamics.z_motion_constraint_model,
+        "rotational_diffusion_enabled": dynamics.rotational_diffusion_enabled,
+        "rotational_diffusion_mode": dynamics.rotational_diffusion_mode,
+        "rotational_step_std_deg": dynamics.rotational_step_std_deg,
+        "sample_environment_exclusion_method": sample_environment.exclusion_method,
+    }, flexible_numpy=True)
+
+
+def _sample_environment_parameters_metadata(params: Dict[str, Any]) -> Dict[str, Any]:
+    settings = SampleEnvironmentSettings.from_params(params)
+    roughness = settings.roughness
+    empirical = settings.empirical_background
+    return {
+        "enabled": settings.enabled,
+        "pattern_enabled": settings.pattern_enabled,
+        "pattern_active": settings.pattern_active,
+        "pattern": settings.pattern,
+        "pattern_preset": settings.pattern_preset,
+        "pattern_material": settings.pattern_material,
+        "pattern_dimensions": settings.pattern_dimensions,
+        "roughness": {
+            "model": roughness.model,
+            "source_basis": roughness.source_basis,
+            "source_coupling": roughness.source_coupling,
+            "amplitude": roughness.amplitude,
+            "correlation_pixels": roughness.correlation_pixels,
+            "phase_std": roughness.phase_std,
+            "active": roughness.active,
+        },
+        "empirical_background": {
+            "enabled": empirical.enabled,
+            "model": empirical.model,
+            "relative_std": empirical.relative_std,
+            "gradient_relative_strength": empirical.gradient_relative_strength,
+            "scales_px": empirical.scales_px,
+            "scale_weights": empirical.scale_weights,
+            "active": empirical.active,
+        },
+    }
+
+
+def _supervision_policy_metadata(params: Dict[str, Any]) -> Dict[str, Any]:
+    settings = SupervisionSettings.from_params(params)
+    thresholds = settings.geometry_thresholds
+    return {
+        **resolve_policy_contract(params),
+        "supported_threshold": settings.supported_threshold,
+        "temporal_support_enabled": settings.temporal_support_enabled,
+        "signal_support_enabled": settings.signal_support_enabled,
+        "information_support_enabled": settings.information_support_enabled,
+        "ambiguity_support_enabled": settings.ambiguity_support_enabled,
+        "crlb_xy_max_nm": thresholds.crlb_xy_max_nm,
+        "ambiguity_distance_scale_nm": thresholds.ambiguity_distance_scale_nm,
+        "prior_log_odds": settings.prior_log_odds,
+    }
 
 
 def _git_commit_or_none(repo_root: str) -> str | None:
@@ -185,7 +278,6 @@ def build_source_provenance(repo_root: str | None = None) -> Dict[str, Any]:
     tracked_roots = [
         "codebase",
         "recipes",
-        "scripts",
         "supplemental",
         "sam2_starter",
     ]
@@ -211,6 +303,8 @@ def build_source_provenance(repo_root: str | None = None) -> Dict[str, Any]:
                 continue
             for filename in sorted(filenames):
                 if filename.startswith("."):
+                    continue
+                if filename.startswith("test_") and os.path.splitext(filename)[1] == ".py":
                     continue
                 path = os.path.join(dirpath, filename)
                 rel = os.path.relpath(path, repo_root)
@@ -265,27 +359,26 @@ def build_video_manifest(
 
     This function assumes:
         - run_simulation(params) has already been called for this video.
-        - params["particles"] describes the canonical particle objects.
-        - params["output_filename"] and params["mask_output_directory"] are
+        - configured parameters["particles"] describes the canonical particle objects.
+        - configured parameters["output_filename"] and configured parameters["mask_output_directory"] are
           set to the paths used by the simulation.
 
     The returned dictionary is fully JSON-serializable and is intended to
     be written by save_video_manifest().
     """
     # Basic video-level properties
-    fps = _safe_float(params["fps"])
-    duration_seconds = _safe_float(params["duration_seconds"])
-    raw_num_frames = param_value(params, 'num_frames')
-    num_frames = (
-        int(raw_num_frames)
-        if raw_num_frames is not None
-        else int(fps * duration_seconds)
-    )
-    image_size_pixels = int(params["image_size_pixels"])
-    pixel_size_nm = _safe_float(params["pixel_size_nm"])
+    acquisition = AcquisitionProfile.from_params(params)
+    fps = acquisition.fps
+    duration_seconds = acquisition.duration_seconds
+    num_frames = acquisition.num_frames
+    sampling = SamplingGeometry.from_params(params)
+    image_size_pixels = sampling.image_size_pixels
+    pixel_size_nm = sampling.detector_pixel_size_nm
 
-    output_filename = params["output_filename"]
-    mask_output_directory = params["mask_output_directory"]
+    output_settings = SimulationOutputSettings.from_params(params)
+    mask_settings = MaskGenerationSettings.from_params(params)
+    output_filename = output_settings.output_filename
+    mask_output_directory = mask_settings.output_directory
 
     manifest: Dict[str, Any] = {
         "video_index": int(video_index),
@@ -313,21 +406,18 @@ def build_video_manifest(
     }
 
     # Substrate-pattern and background-related configuration.
-    _sub_enabled = bool(param_value(params, 'sample_environment_pattern_enabled'))
-    _sub_model = param_value(params, "sample_environment_pattern")
-    _sub_preset = param_value(params, "sample_environment_pattern_preset")
-
-    manifest["sample_environment_pattern_enabled"] = _sub_enabled
-    manifest["sample_environment_pattern"] = str(_sub_model) if _sub_model is not None else None
-    manifest["sample_environment_pattern_preset"] = str(_sub_preset) if _sub_preset is not None else None
+    sample_environment = SampleEnvironmentSettings.from_params(params)
+    manifest["sample_environment_pattern_enabled"] = sample_environment.pattern_enabled
+    manifest["sample_environment_pattern"] = sample_environment.pattern
+    manifest["sample_environment_pattern_preset"] = sample_environment.pattern_preset
 
     render_metadata = dict((result_metadata or {}).get("render_metadata") or {})
     response_function = dict(render_metadata.get("response_function") or {})
 
     # Canonical counts-domain noise metadata resolved through camera_noise.py.
-    noise_metadata = _resolved_noise_metadata(params)
+    noise_metadata = _noise_metadata_for_manifest(params)
     manifest["camera_noise"] = noise_metadata
-    modality_name = resolved_modality(params)
+    modality_name = ModalitySettings.from_params(params).modality
     backend_contract = backend_contract_for_modality(modality_name, response_function).to_dict()
     manifest["backend_contract"] = backend_contract
     manifest["detector_model"] = detector_model_from_params(params).to_dict()
@@ -345,17 +435,49 @@ def build_video_manifest(
             manifest["analysis_video_semantics"] = result_metadata.get("analysis_video_semantics")
         if render_metadata is not None:
             manifest["render_metadata"] = json_safe(render_metadata, flexible_numpy=True)
+        if result_metadata.get("spectral_channel_count") is not None:
+            spectral_items_summary = []
+            for item in result_metadata.get("spectral_items", []) or []:
+                item_params = dict(item.get("params", {}) or {})
+                wavelengths = _spectral_item_wavelength_metadata(item_params)
+                spectral_items_summary.append(
+                    {
+                        "name": item.get("name"),
+                        "wavelength_nm": wavelengths["wavelength_nm"],
+                        "probe_wavelength_nm": wavelengths["probe_wavelength_nm"],
+                        "fluorescence_excitation_wavelength_nm": wavelengths["fluorescence_excitation_wavelength_nm"],
+                        "fluorescence_emission_wavelength_nm": wavelengths["fluorescence_emission_wavelength_nm"],
+                        "detector_weights_rgb": item.get("detector_weights_rgb"),
+                        "spectral_weight": item.get("spectral_weight"),
+                    }
+                )
+            manifest["spectral_integration"] = json_safe(
+                {
+                    "spectral_channel_count": result_metadata.get("spectral_channel_count"),
+                    "spectral_channels": result_metadata.get("spectral_channels"),
+                    "spectral_integration_model": result_metadata.get(
+                        "spectral_integration_model"
+                    ),
+                    "generated_spectral_channels": result_metadata.get(
+                        "generated_spectral_channels"
+                    ),
+                    "multichannel_output_mode": result_metadata.get(
+                        "multichannel_output_mode"
+                    ),
+                    "spectral_items": spectral_items_summary,
+                },
+                flexible_numpy=True,
+            )
         source_map_provenance = result_metadata.get("source_map_provenance")
         if source_map_provenance is not None:
             manifest["source_map_provenance"] = json_safe(source_map_provenance, flexible_numpy=True)
         if result_metadata.get("clip_diagnostics") is not None:
             manifest["clip_diagnostics"] = json_safe(result_metadata.get("clip_diagnostics"), flexible_numpy=True)
 
-    manifest["background_subtraction_method"] = str(
-        param_value(params, 'background_subtraction_method')
-    )
-    manifest["mask_generation_enabled"] = bool(param_value(params, "mask_generation_enabled"))
-    manifest["mask_outer_ring_count"] = int(param_value(params, 'mask_outer_ring_count'))
+    mask_settings = MaskGenerationSettings.from_params(params)
+    manifest["background_subtraction_method"] = BackgroundSubtractionSettings.from_params(params).method
+    manifest["mask_generation_enabled"] = mask_settings.enabled
+    manifest["mask_outer_ring_count"] = mask_settings.outer_ring_count
     if composition_leaf_index is not None:
         manifest["composition_leaf_index"] = int(composition_leaf_index)
     if composition_leaf_name is not None:
@@ -365,42 +487,14 @@ def build_video_manifest(
     if composition_local_index is not None:
         manifest["composition_local_index"] = int(composition_local_index)
     manifest["annotation_schema"] = build_policy_annotation_schema(params)
-    policy_contract = resolve_policy_contract(params)
-    manifest["supervision_policy"] = {
-        "target": policy_contract["target"],
-        "support_factors": policy_contract["support_factors"],
-        "supported_threshold": _safe_float(
-            param_value(params, 'supervision_supported_threshold')
-        ),
-        "temporal_support_enabled": bool(
-            param_value(params, 'supervision_temporal_support_enabled')
-        ),
-        "signal_support_enabled": bool(
-            param_value(params, 'supervision_signal_support_enabled')
-        ),
-        "information_support_enabled": bool(
-            param_value(params, 'supervision_information_support_enabled')
-        ),
-        "ambiguity_support_enabled": bool(
-            param_value(params, 'supervision_ambiguity_support_enabled')
-        ),
-        "crlb_xy_max_nm": param_value(params, 'supervision_crlb_xy_max_nm'),
-        "ambiguity_distance_scale_nm": param_value(params, 'supervision_ambiguity_distance_scale_nm'),
-        "prior_log_odds": _safe_float(
-            param_value(params, 'supervision_prior_log_odds')
-        ),
-    }
+    manifest["supervision_policy"] = _supervision_policy_metadata(params)
     manifest["crlb_policy"] = {
         "lateral_crlb_metadata": True,
         "axial_crlb_metadata": False,
         "orientation_crlb_metadata": False,
     }
-    manifest["empirical_background_enabled"] = bool(
-        param_value(params, 'empirical_background_enabled')
-    )
-    manifest["empirical_background_model"] = str(
-        param_value(params, 'empirical_background_model')
-    )
+    manifest["empirical_background_enabled"] = sample_environment.empirical_background.enabled
+    manifest["empirical_background_model"] = sample_environment.empirical_background.model
 
     particle_specs = get_particle_specs(params)
     try:
@@ -412,7 +506,7 @@ def build_video_manifest(
         require_optical_refractive_index=require_optical,
     )
     particles_meta = particle_specs_to_public_dicts(particle_specs)
-    material_wavelength_nm = resolve_probe_wavelength_nm(params)
+    material_wavelength_nm = OpticalInstrumentSettings.from_params(params).probe_wavelength_nm
     for i, entry in enumerate(particles_meta):
         entry["particle_index"] = int(i)
         entry["primary_material_properties"] = material_properties_to_dict(
@@ -502,9 +596,12 @@ def build_dataset_index_entry(
         entry["composition_local_index"] = manifest.get("composition_local_index")
     if manifest.get("channel_sidecar_videos"):
         entry["channel_sidecar_videos"] = list(manifest["channel_sidecar_videos"])
-    if manifest.get("matched_modality_packet_npz"):
-        entry["matched_modality_packet_npz"] = manifest["matched_modality_packet_npz"]
-        entry["matched_modalities"] = list(manifest.get("matched_modalities", []))
+    if manifest.get("matched_microscope_packet_npz"):
+        entry["matched_microscope_packet_npz"] = manifest["matched_microscope_packet_npz"]
+        entry["matched_microscopes"] = list(manifest.get("matched_microscopes", []))
+        entry["modality_by_matched_microscope"] = dict(
+            manifest.get("modality_by_matched_microscope", {})
+        )
     if manifest.get("source_provenance"):
         entry["source_provenance_fingerprint"] = manifest["source_provenance"].get("fingerprint")
         entry["source_git_commit"] = manifest["source_provenance"].get("git_commit")
@@ -578,7 +675,7 @@ def build_simulation_manifest(
     """
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
     noise_metadata = (
-        None if params_template is None else _resolved_noise_metadata(params_template)
+        None if params_template is None else _noise_metadata_for_manifest(params_template)
     )
     return {
         "schema_version": "syniscopy-simulation-manifest-v1",
@@ -593,56 +690,32 @@ def build_simulation_manifest(
         "videos": dataset_entries,
         "modality": (
             None if params_template is None
-            else str(param_value(params_template, "imaging_model"))
+            else ModalitySettings.from_params(params_template).modality
         ),
         "particle_geometry": (
             None if params_template is None
-            else json_safe({
-                "particles": (
-                    params_template["_resolved_particles"]
-                    if "_resolved_particles" in params_template
-                    else param_value(params_template, "particles")
-                ),
-            }, flexible_numpy=True)
+            else json_safe(
+                {"particles": particle_specs_to_public_dicts(get_particle_specs(params_template))},
+                flexible_numpy=True,
+            )
         ),
         "trajectory_parameters": (
             None if params_template is None
-            else json_safe({
-                "fps": param_value(params_template, "fps"),
-                "duration_seconds": param_value(params_template, "duration_seconds"),
-                "num_frames": _resolved_num_frames_or_none(params_template),
-                "temperature_K": param_value(params_template, "temperature_K"),
-                "viscosity_Pa_s": param_value(params_template, "viscosity_Pa_s"),
-                "initial_z_span_nm": param_value(params_template, "initial_z_span_nm"),
-                "z_motion_constraint_model": param_value(params_template, "z_motion_constraint_model"),
-                "rotational_diffusion_enabled": param_value(params_template, "rotational_diffusion_enabled"),
-                "rotational_diffusion_mode": param_value(params_template, "rotational_diffusion_mode"),
-                "rotational_step_std_deg": param_value(params_template, "rotational_step_std_deg"),
-                "sample_environment_exclusion_method": param_value(params_template, "sample_environment_exclusion_method"),
-            }, flexible_numpy=True)
+            else _trajectory_parameters_metadata(params_template)
         ),
         "sample_environment_parameters": (
-            None if params_template is None
-            else json_safe({
-                key: params_template[key]
-                for key in params_template
-                if str(key).startswith("sample_environment_pattern")
-                or str(key).startswith("empirical_background")
-            }, flexible_numpy=True)
+            None
+            if params_template is None
+            else json_safe(
+                _sample_environment_parameters_metadata(params_template),
+                flexible_numpy=True,
+            )
         ),
         "camera_noise": noise_metadata,
         "supervision_policy": (
-            None if params_template is None
-            else json_safe({
-                **resolve_policy_contract(params_template),
-                "supported_threshold": param_value(params_template, "supervision_supported_threshold"),
-                "temporal_support_enabled": param_value(params_template, "supervision_temporal_support_enabled"),
-                "signal_support_enabled": param_value(params_template, "supervision_signal_support_enabled"),
-                "information_support_enabled": param_value(params_template, "supervision_information_support_enabled"),
-                "ambiguity_support_enabled": param_value(params_template, "supervision_ambiguity_support_enabled"),
-                "ambiguity_distance_scale_nm": param_value(params_template, "supervision_ambiguity_distance_scale_nm"),
-                "prior_log_odds": param_value(params_template, "supervision_prior_log_odds"),
-            }, flexible_numpy=True)
+            None
+            if params_template is None
+            else json_safe(_supervision_policy_metadata(params_template), flexible_numpy=True)
         ),
         "crlb_policy": {
             "lateral_crlb_metadata": True,

@@ -11,7 +11,7 @@ import numpy as np
 from backend_fidelity import attach_backend_fidelity_metadata
 # Single-source the elementary charge from the one electron-optics constants
 # import the canonical value directly from shared constants to avoid duplication.
-from imaging_models.electron_constants import (
+from electron_optics import (
     _ELEMENTARY_CHARGE_C as _E_CHARGE_C,
 )
 
@@ -118,6 +118,16 @@ def _gaussian_kernel_1d(sigma_px: float) -> np.ndarray:
     return kernel / kernel_sum
 
 
+def _convolve1d_reflect_same(values: np.ndarray, kernel: np.ndarray) -> np.ndarray:
+    row = np.asarray(values, dtype=float)
+    ker = np.asarray(kernel, dtype=float)
+    if row.size <= 1 or ker.size <= 1:
+        return row * float(np.sum(ker))
+    radius = ker.size // 2
+    padded = np.pad(row, radius, mode="reflect")
+    return np.convolve(padded, ker, mode="valid")
+
+
 def _gaussian_blur(arr: np.ndarray, sigma_px: float) -> np.ndarray:
     if sigma_px <= 0.0:
         return np.asarray(arr, dtype=float)
@@ -128,30 +138,44 @@ def _gaussian_blur(arr: np.ndarray, sigma_px: float) -> np.ndarray:
     except ImportError:
         kernel = _gaussian_kernel_1d(sigma_px)
         out = np.asarray(arr, dtype=float, copy=True)
-        out = np.apply_along_axis(lambda row: np.convolve(row, kernel, mode="same"), axis=0, arr=out)
-        out = np.apply_along_axis(lambda row: np.convolve(row, kernel, mode="same"), axis=1, arr=out)
+        out = np.apply_along_axis(_convolve1d_reflect_same, axis=0, arr=out, kernel=kernel)
+        out = np.apply_along_axis(_convolve1d_reflect_same, axis=1, arr=out, kernel=kernel)
         return out
 
 
 def _fft_convolve_centered(arr: np.ndarray, kernel: np.ndarray) -> np.ndarray:
-    """Circular same-size convolution for centered, normalized kernels."""
+    """Linear same-size convolution for centered, normalized kernels."""
     src = np.asarray(arr, dtype=float)
     ker = np.asarray(kernel, dtype=float)
-    if ker.shape != src.shape:
-        padded = np.zeros_like(src, dtype=float)
-        h = min(src.shape[0], ker.shape[0])
-        w = min(src.shape[1], ker.shape[1])
-        sy = (ker.shape[0] - h) // 2
-        sx = (ker.shape[1] - w) // 2
-        dy = (src.shape[0] - h) // 2
-        dx = (src.shape[1] - w) // 2
-        padded[dy:dy + h, dx:dx + w] = ker[sy:sy + h, sx:sx + w]
-        ker = padded
-    centered_kernel = np.fft.ifftshift(ker)
-    return np.real(np.fft.ifft2(np.fft.fft2(src) * np.fft.fft2(centered_kernel)))
+    if src.ndim != 2 or ker.ndim != 2:
+        raise SEMTransportBackendError(
+            f"SEM convolution expects 2D arrays; got source={src.shape}, kernel={ker.shape}."
+        )
+    if ker.shape[0] > src.shape[0] or ker.shape[1] > src.shape[1]:
+        raise SEMTransportBackendError(
+            "SEM convolution kernel is larger than the guarded render canvas "
+            f"(kernel={ker.shape}, canvas={src.shape}). Increase the SEM filter "
+            "guard/canvas size instead of silently cropping the kernel."
+        )
+    try:
+        from scipy.signal import fftconvolve
+
+        return np.asarray(fftconvolve(src, ker, mode="same"), dtype=float)
+    except ImportError:
+        full_shape = (src.shape[0] + ker.shape[0] - 1, src.shape[1] + ker.shape[1] - 1)
+        conv = np.fft.irfftn(
+            np.fft.rfftn(src, full_shape) * np.fft.rfftn(ker, full_shape),
+            full_shape,
+        )
+        y0 = (ker.shape[0] - 1) // 2
+        x0 = (ker.shape[1] - 1) // 2
+        return np.asarray(conv[y0:y0 + src.shape[0], x0:x0 + src.shape[1]], dtype=float)
 
 
-def _gradient_components(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def _gradient_components(arr: np.ndarray, spacing_nm: float = 1.0) -> tuple[np.ndarray, np.ndarray]:
+    spacing = float(spacing_nm)
+    if not np.isfinite(spacing) or spacing <= 0.0:
+        raise SEMTransportBackendError(f"Gradient spacing must be positive and finite; got {spacing_nm!r}.")
     if min(arr.shape) < 2:
         zeros = np.zeros_like(arr, dtype=float)
         return zeros, zeros
@@ -163,11 +187,11 @@ def _gradient_components(arr: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     gx[:, 1:-1] = 0.5 * (arr[:, 2:] - arr[:, :-2])
     gx[:, 0] = arr[:, 1] - arr[:, 0]
     gx[:, -1] = arr[:, -1] - arr[:, -2]
-    return gx, gy
+    return gx / spacing, gy / spacing
 
 
-def _gradient_magnitude(arr: np.ndarray) -> np.ndarray:
-    gx, gy = _gradient_components(arr)
+def _gradient_magnitude(arr: np.ndarray, spacing_nm: float = 1.0) -> np.ndarray:
+    gx, gy = _gradient_components(arr, spacing_nm=spacing_nm)
     return np.sqrt(gx ** 2 + gy ** 2)
 
 

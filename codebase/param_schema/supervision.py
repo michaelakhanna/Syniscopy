@@ -8,24 +8,50 @@ from ._spec import ParamSpec
 SUPERVISION_SCHEMA: dict[str, ParamSpec] = {
 "mask_generation_enabled": ParamSpec(
     key="mask_generation_enabled",
-    type="bool",
     default=True,
+    type="bool",
     ui_label="Enable mask generation",
     group="Workflow",
     description="Enable/disable mask generation and mask writing.",
 ),
+"mask_exact_leave_one_out_max_work_units": ParamSpec(
+    key="mask_exact_leave_one_out_max_work_units",
+    default=20000,
+    type="int",
+    min=1,
+    max=10**12,
+    ui_label="Mask exact render cap",
+    group="Workflow",
+    description=(
+        "Maximum exact leave-one-out mask render work units before requiring "
+        "mask_exact_leave_one_out_allow_expensive=True. Work units are "
+        "frames × particles × motion-blur subsamples, multiplied by TEM "
+        "multislice slice count for physical multislice TEM."
+    ),
+),
+"mask_exact_leave_one_out_allow_expensive": ParamSpec(
+    key="mask_exact_leave_one_out_allow_expensive",
+    default=False,
+    type="bool",
+    ui_label="Allow expensive masks",
+    group="Workflow",
+    description=(
+        "Allow exact leave-one-out mask generation even when the estimated "
+        "full-render work exceeds mask_exact_leave_one_out_max_work_units."
+    ),
+),
 "mask_output_directory": ParamSpec(
     key="mask_output_directory",
+    default='outputs/syniscopy_masks',
     type="string",
-    default=None,
     ui_label="Mask output directory",
     group="Workflow",
     description="Directory for generated mask outputs when mask generation is enabled.",
 ),
 "mask_max_area_fraction": ParamSpec(
     key="mask_max_area_fraction",
-    type="float",
     default=0.25,
+    type="float",
     min=0.0,
     max=1.0,
     ui_label="Mask max area fraction",
@@ -34,8 +60,8 @@ SUPERVISION_SCHEMA: dict[str, ParamSpec] = {
 ),
 "mask_outer_ring_count": ParamSpec(
     key="mask_outer_ring_count",
-    type="int",
     default=0,
+    type="int",
     min=0,
     max=6,
     ui_label="Mask outer rings",
@@ -44,8 +70,8 @@ SUPERVISION_SCHEMA: dict[str, ParamSpec] = {
 ),
 "supervision_log_odds_clip_epsilon": ParamSpec(
     key="supervision_log_odds_clip_epsilon",
-    type="float",
     default=1e-12,
+    type="float",
     min=1e-15,
     max=0.499999,
     ui_label="Log-odds clip epsilon",
@@ -57,8 +83,8 @@ SUPERVISION_SCHEMA: dict[str, ParamSpec] = {
 ),
 "supervision_target": ParamSpec(
     key="supervision_target",
+    default='mask_supported',
     type="enum",
-    default="mask_supported",
     choices=["mask_supported", "mask_geometry"],
     ui_label="Supervision target",
     group="Advanced supervision",
@@ -69,8 +95,8 @@ SUPERVISION_SCHEMA: dict[str, ParamSpec] = {
 ),
 "supervision_support_factors": ParamSpec(
     key="supervision_support_factors",
-    type="string",
     default=None,
+    type="string",
     ui_label="Supervision support factors",
     group="Advanced supervision",
     description=(
@@ -80,8 +106,8 @@ SUPERVISION_SCHEMA: dict[str, ParamSpec] = {
 ),
 "supervision_supported_threshold": ParamSpec(
     key="supervision_supported_threshold",
-    type="float",
     default=0.2,
+    type="float",
     min=0.0,
     max=1.0,
     ui_label="Supervision supported threshold",
@@ -90,40 +116,40 @@ SUPERVISION_SCHEMA: dict[str, ParamSpec] = {
 ),
 "supervision_temporal_support_enabled": ParamSpec(
     key="supervision_temporal_support_enabled",
-    type="bool",
     default=True,
+    type="bool",
     ui_label="Enable temporal support",
     group="Advanced supervision",
     description="Include Brownian-trajectory plausibility in supervision.",
 ),
 "supervision_signal_support_enabled": ParamSpec(
     key="supervision_signal_support_enabled",
-    type="bool",
     default=True,
+    type="bool",
     ui_label="Enable signal support",
     group="Advanced supervision",
     description="Include per-frame signal evidence in supervision.",
 ),
 "supervision_information_support_enabled": ParamSpec(
     key="supervision_information_support_enabled",
-    type="bool",
     default=True,
+    type="bool",
     ui_label="Enable information support",
     group="Advanced supervision",
     description="Include CRLB-based information support in supervision.",
 ),
 "supervision_ambiguity_support_enabled": ParamSpec(
     key="supervision_ambiguity_support_enabled",
-    type="bool",
     default=True,
+    type="bool",
     ui_label="Enable ambiguity support",
     group="Advanced supervision",
     description="Include competitor-overlap ambiguity support in supervision.",
 ),
 "supervision_crlb_xy_max_nm": ParamSpec(
     key="supervision_crlb_xy_max_nm",
-    type="float",
     default=None,
+    type="float",
     min=0.0,
     max=1e12,
     ui_label="Supervision CRLB XY max (nm)",
@@ -132,16 +158,16 @@ SUPERVISION_SCHEMA: dict[str, ParamSpec] = {
 ),
 "supervision_stop_when_all_temporally_unsupported": ParamSpec(
     key="supervision_stop_when_all_temporally_unsupported",
-    type="bool",
     default=False,
+    type="bool",
     ui_label="Stop track on temporal failure",
     group="Advanced supervision",
     description="Drop frames when temporal support stays unsupported for all particles.",
 ),
 "supervision_ambiguity_distance_scale_nm": ParamSpec(
     key="supervision_ambiguity_distance_scale_nm",
-    type="float",
     default=None,
+    type="float",
     min=0.0,
     max=1e12,
     ui_label="Ambiguity distance scale (nm)",
@@ -150,8 +176,8 @@ SUPERVISION_SCHEMA: dict[str, ParamSpec] = {
 ),
 "supervision_prior_log_odds": ParamSpec(
     key="supervision_prior_log_odds",
-    type="float",
     default=0.0,
+    type="float",
     min=-100.0,
     max=100.0,
     ui_label="Supervision prior log-odds",
@@ -160,8 +186,8 @@ SUPERVISION_SCHEMA: dict[str, ParamSpec] = {
 ),
 "supervision_decision_rule": ParamSpec(
     key="supervision_decision_rule",
+    default='log_odds',
     type="enum",
-    default="log_odds",
     choices=["log_odds", "product"],
     ui_label="Supervision decision rule",
     group="Advanced supervision",
@@ -169,8 +195,8 @@ SUPERVISION_SCHEMA: dict[str, ParamSpec] = {
 ),
 "supervision_log_odds_threshold": ParamSpec(
     key="supervision_log_odds_threshold",
-    type="float",
     default=0.0,
+    type="float",
     min=-100.0,
     max=100.0,
     ui_label="Supervision log-odds threshold",
@@ -179,8 +205,8 @@ SUPERVISION_SCHEMA: dict[str, ParamSpec] = {
 ),
 "supervision_score_calibration_mode": ParamSpec(
     key="supervision_score_calibration_mode",
+    default='uncalibrated_support',
     type="enum",
-    default="uncalibrated_support",
     choices=["uncalibrated_support", "platt_logistic", "isotonic"],
     ui_label="Support calibration",
     group="Advanced supervision",
@@ -188,8 +214,8 @@ SUPERVISION_SCHEMA: dict[str, ParamSpec] = {
 ),
 "supervision_score_calibration_parameters": ParamSpec(
     key="supervision_score_calibration_parameters",
-    type="json",
     default=None,
+    type="json",
     ui_label="Calibration parameters",
     group="Advanced supervision",
     description="Platt or isotonic calibration parameters used only when calibration mode is enabled.",

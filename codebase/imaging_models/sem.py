@@ -5,11 +5,35 @@ from __future__ import annotations
 from ._shared import (
     ImagingModel,
     SampleEnvironment,
+    SourceCoordinateContext,
     np,
 )
 from backend_fidelity import attach_backend_fidelity_metadata
-from config.runtime import SemSettings, param_value
-from .electron_constants import electron_wavelength_m
+from detector_frame_conversion import (
+    DETECTOR_OUTPUT_DOMAIN_ELECTRON_COUNT,
+    MODEL_OUTPUT_DOMAIN_ELECTRON_YIELD,
+    REFERENCE_BASIS_NONE,
+    VALUE_FORM_ABSOLUTE,
+    DetectorFrameConversion,
+    convert_model_output_to_detector_frame,
+)
+from source_volume_support import (
+    SOURCE_Z_BASIS_ENTRY_SURFACE_DEPTH,
+    SOURCE_Z_BASIS_PROJECTED_NO_Z,
+    SOURCE_Z_FRAME_CONTRACT_VERSION,
+    require_source_density_z_basis,
+)
+from config.runtime import (
+    FocusPlaneState,
+    SampleEnvironmentSettings,
+    SemSettings,
+)
+from electron_optics import electron_wavelength_m
+from direct_signal_contracts import (
+    DirectParticleSignalProduct,
+    electron_count_delta_representation,
+    sem_secondary_electron_source_representation,
+)
 from .sem_source import (
     SEMMaterialSourceCanvas,
     source_like_numeric_array,
@@ -23,6 +47,16 @@ from .sem_backends import (
     ReferenceKernelSEMBackend,
     SyniscopyTransportSEMBackend,
 )
+from .sem_depth_grid import (
+    sem_depth_grid_from_params,
+    sem_source_volume_support_from_params,
+)
+from simulation_runtime_state import (
+    config_without_runtime_state,
+    get_source_volume_support,
+    set_source_volume_support,
+)
+from .source_rasterization import primitive_footprint_patch
 
 class ScanningElectronMicroscopyImagingModel(ImagingModel):
     """
@@ -54,12 +88,12 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
     Legacy projected-source proxy, transport-lite, and reference-kernel routes
     remain selectable and report their projection policy in metadata.
 
-    Parameters (PARAMS keys, optional, nominal defaults)
+    Parameters (parameters keys, optional, nominal defaults)
     ----------------------------------------------------
     The defaults set a stable moderate-contrast synthetic SEM regime; use
     calibrated values for instrument-specific studies.
 
-    - ``sem_probe_sigma_pixels``    (default 1.0) Gaussian probe spot size
+    - ``sem_probe_sigma_nm``        Gaussian probe spot size
     - ``sem_edge_contrast_gain``    (default 10.0) weight on the gradient-
                                     magnitude term (secondary-emission edge
                                     enhancement).
@@ -67,8 +101,8 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
                                     source term (bulk/Z-like contribution).
     - ``sem_baseline_yield``        (default 0.05) yield from the substrate
                                     with no particle present.
-    - ``sem_electrons_per_pixel``   (default 1000.0) dose scale used by
-                                    scale_intensity_to_counts.
+    - ``sem_electrons_per_pixel``   (default 1000.0) dose scale used by the
+                                    model-output detector-frame conversion.
     """
 
     output_type = "intensity"
@@ -78,95 +112,50 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
     requires_optical_scattered_field = False
     requires_pre_crop_optical_filtering = True
     supports_spectral_channels = False
+    counts_are_exposure_integrated = True
+
+    @staticmethod
+    def _configured_incident_electrons_per_pixel(params: dict) -> tuple[float, str]:
+        return SemSettings.from_params(params).configured_incident_electrons_per_pixel()
 
     def __init__(self, params: dict) -> None:
         settings = SemSettings.from_params(params)
-        _sem_model_raw = str(
-            param_value(params, "sem_model")
-        ).strip().lower()
-        self._sem_model = _sem_model_raw
-        if self._sem_model not in {
-            "gaussian_probe_secondary_yield",
-            "interaction_volume_proxy",
-            "physical_electron_transport",
-        }:
-            raise ValueError(
-                "PARAMS['sem_model'] must be 'gaussian_probe_secondary_yield' "
-                "'interaction_volume_proxy', or 'physical_electron_transport'; "
-                f"got {self._sem_model!r}."
-            )
-        self._sem_backend = str(param_value(params, "sem_backend")).strip().lower()
-        if self._sem_backend not in {
-            "gaussian_probe_proxy",
-            "interaction_volume_proxy",
-            "monte_carlo_transport",
-            "monte_carlo_physical",
-            "syniscopy_transport_lite",
-            "reference_kernel_table",
-        }:
-            raise ValueError(
-                "PARAMS['sem_backend'] must be 'gaussian_probe_proxy', "
-                f"'interaction_volume_proxy', 'monte_carlo_transport', 'monte_carlo_physical', "
-                "'syniscopy_transport_lite', or 'reference_kernel_table'; got "
-                f"{self._sem_backend!r}."
-            )
+        self._sem_settings = settings
+        self._sem_model = settings.model
+        self._sem_backend = settings.backend
         self._sem_transport_backend = None
         self._sem_reference_kernel_backend = None
         self._sem_reference_backend = None
         self._sem_proxy_backend = None
-        if self._sem_model == "interaction_volume_proxy" and self._sem_backend != "interaction_volume_proxy":
-            raise ValueError(
-                "PARAMS['sem_model']='interaction_volume_proxy' requires "
-                "PARAMS['sem_backend']='interaction_volume_proxy'."
-            )
-        if self._sem_backend == "interaction_volume_proxy" and self._sem_model != "interaction_volume_proxy":
-            raise ValueError(
-                "PARAMS['sem_backend']='interaction_volume_proxy' requires "
-                "PARAMS['sem_model']='interaction_volume_proxy'."
-            )
-        if self._sem_model == "physical_electron_transport" and self._sem_backend != "monte_carlo_physical":
-            raise ValueError(
-                "PARAMS['sem_model']='physical_electron_transport' requires "
-                "PARAMS['sem_backend']='monte_carlo_physical'."
-            )
-        if self._sem_backend == "monte_carlo_physical" and self._sem_model != "physical_electron_transport":
-            raise ValueError(
-                "PARAMS['sem_backend']='monte_carlo_physical' requires "
-                "PARAMS['sem_model']='physical_electron_transport'."
-            )
-        self._sem_source_representation = str(param_value(params, "sem_source_representation")).strip().lower()
-        if self._sem_source_representation not in {"projected", "volume"}:
-            raise ValueError(
-                "PARAMS['sem_source_representation'] must be 'projected' or "
-                f"'volume'; got {self._sem_source_representation!r}."
-            )
-        self._sem_effective_source_representation = (
-            "volume"
-            if self._sem_backend in {"monte_carlo_transport", "monte_carlo_physical"}
-            and self._sem_source_representation == "volume"
-            else "projected"
-        )
-        self._sem_source_projection_policy = (
-            "backend_native_volume_transport"
-            if self._sem_effective_source_representation == "volume"
-            else (
-                "user_selected_projected_source"
-                if self._sem_source_representation == "projected"
-                else "projected_for_backend_without_volume_transport"
-            )
-        )
+        physical_backends = {
+            "monte_carlo_physical",
+            "monte_carlo_transport",
+            "syniscopy_transport_lite",
+            "reference_kernel_table",
+        }
+        self._sem_source_resolution = settings.source_resolution
+        self._sem_source_representation = self._sem_source_resolution.requested
+        self._sem_effective_source_representation = self._sem_source_resolution.effective
+        self._sem_source_projection_policy = self._sem_source_resolution.source_projection_policy
         self._sem_source_z_origin = settings.source_z_origin
-        if self._sem_source_z_origin not in {"entry_surface_depth", "focus_plane_relative"}:
-            raise ValueError(
-                "PARAMS['sem_source_z_origin'] must be 'entry_surface_depth' or "
-                "'focus_plane_relative'."
-            )
         self._sem_source_z_offset_nm = settings.source_z_offset_nm
         self._sem_volume_slices = settings.volume_slices
+        if self._sem_effective_source_representation == "volume":
+            self._sem_depth_grid = sem_depth_grid_from_params(params, backend_name=self._sem_backend)
+            # The depth grid may be widened at run scope by the shared SEM
+            # source-support resolver.  Store the effective values here so
+            # response metadata, source canvases, and backend kernels report and
+            # consume one physical z interval instead of the public defaults.
+            self._sem_volume_slices = self._sem_depth_grid.slice_count
+            self._sem_volume_slice_thickness_nm = self._sem_depth_grid.slice_thickness_nm
+            self._sem_source_z_offset_nm = self._sem_depth_grid.offset_nm
+        else:
+            self._sem_depth_grid = None
+            self._sem_volume_slice_thickness_nm = settings.volume_slice_thickness_for_backend(self._sem_backend)
         canvas_pitch_nm = settings.sampling.model_canvas_pixel_size_nm
         if not np.isfinite(canvas_pitch_nm) or canvas_pitch_nm <= 0.0:
             raise ValueError(
-                "PARAMS['pixel_size_nm'] / PARAMS['psf_oversampling_factor'] "
+                "parameters['pixel_size_nm'] / parameters['psf_oversampling_factor'] "
                 f"must resolve to a positive SEM canvas pitch; got {canvas_pitch_nm} nm."
             )
         self._probe_sigma_source = "pixels"
@@ -203,28 +192,22 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
                 probe_sigma_px=self._probe_sigma_px,
             )
             self._sem_reference_backend = self._sem_reference_kernel_backend
-        self._interaction_volume_nm = float(param_value(params, "sem_interaction_volume_nm"))
-        if not np.isfinite(self._interaction_volume_nm) or self._interaction_volume_nm < 0.0:
-            raise ValueError(
-                "PARAMS['sem_interaction_volume_nm'] must be finite and non-negative; "
-                f"got {self._interaction_volume_nm}."
+        if (
+            self._sem_backend == "monte_carlo_physical"
+            and self._sem_transport_backend is not None
+            and hasattr(self._sem_transport_backend, "precompute_material_kernels_from_params")
+        ):
+            self._sem_transport_backend.precompute_material_kernels_from_params(
+                params,
+                require_volume=self._sem_effective_source_representation == "volume",
             )
-        direction = np.asarray(param_value(params, "sem_detector_direction_xy"), dtype=float)
-        if direction.shape != (2,) or not np.all(np.isfinite(direction)):
-            raise ValueError("PARAMS['sem_detector_direction_xy'] must be a finite length-2 vector.")
-        norm = float(np.linalg.norm(direction))
-        if norm <= 0.0:
-            raise ValueError("PARAMS['sem_detector_direction_xy'] must have nonzero norm.")
-        self._detector_direction_xy = direction / norm
-        self._edge_gain = float(param_value(params, "sem_edge_contrast_gain"))
-        self._bulk_gain = float(param_value(params, "sem_bulk_contrast_gain"))
-        self._topography_gain = float(param_value(params, "sem_topography_contrast_gain"))
-        self._baseline = float(param_value(params, "sem_baseline_yield"))
-        if self._baseline < 0.0:
-            raise ValueError(
-                f"PARAMS['sem_baseline_yield'] must be non-negative; "
-                f"got {self._baseline}."
-            )
+        self._interaction_volume_nm = settings.interaction_volume_nm
+        self._detector_direction_xy = np.asarray(settings.detector_direction_xy, dtype=float)
+        self._edge_gain = settings.edge_contrast_gain
+        self._bulk_gain = settings.bulk_contrast_gain
+        self._topography_gain = settings.topography_contrast_gain
+        self._baseline = settings.baseline_yield
+        self._acceleration_kV = settings.acceleration_kV
         if self._sem_transport_backend is None and self._sem_reference_kernel_backend is None:
             if self._sem_model == "interaction_volume_proxy":
                 self._sem_proxy_backend = InteractionVolumeSEMProxyBackend(
@@ -240,44 +223,28 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
             else:
                 self._sem_proxy_backend = GaussianProbeSEMProxyBackend(
                     probe_sigma_px=self._probe_sigma_px,
+                    canvas_pitch_nm=self._canvas_pitch_nm,
                     edge_gain=self._edge_gain,
                     bulk_gain=self._bulk_gain,
                     baseline=self._baseline,
                 )
-        slice_raw = param_value(params, "sem_volume_slice_thickness_nm")
-        if slice_raw is None:
-            interaction_depth = float(param_value(params, "sem_interaction_volume_nm"))
-            self._sem_volume_slice_thickness_nm = max(
-                interaction_depth / float(self._sem_volume_slices),
-                1e-9,
-            )
-        else:
-            self._sem_volume_slice_thickness_nm = float(slice_raw)
-            if (
-                not np.isfinite(self._sem_volume_slice_thickness_nm)
-                or self._sem_volume_slice_thickness_nm <= 0.0
-            ):
-                raise ValueError(
-                    "PARAMS['sem_volume_slice_thickness_nm'] must be positive when supplied."
-                )
-
     def _backend_response_contract(self) -> dict:
         if self._sem_backend == "gaussian_probe_proxy":
-            edge_convention = "gradient_magnitude"
+            edge_convention = "gradient_magnitude_per_nm"
             topography_convention = "not_supported"
             detector_direction_role = "not_used"
             topography_supported = False
             detector_direction_used = False
         elif self._sem_backend == "interaction_volume_proxy":
-            edge_convention = "positive_directed_detector_gradient"
-            topography_convention = "gradient_magnitude"
+            edge_convention = "positive_directed_detector_gradient_per_nm"
+            topography_convention = "gradient_magnitude_per_nm"
             detector_direction_role = "edge_term_positive_projection"
             topography_supported = True
             detector_direction_used = self._edge_gain > 0.0
         else:
-            edge_convention = "gradient_magnitude"
-            topography_convention = "absolute_directed_detector_gradient"
-            detector_direction_role = "topography_term_absolute_projection"
+            edge_convention = "gradient_magnitude_per_nm"
+            topography_convention = "positive_directed_detector_gradient_per_nm"
+            detector_direction_role = "topography_term_positive_projection"
             topography_supported = True
             detector_direction_used = self._topography_gain > 0.0
 
@@ -303,8 +270,17 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
         
     def compute_response_function(self, shape: tuple[int, int], params: dict) -> dict:
         response = super().compute_response_function(shape, params)
+        sem_support = get_source_volume_support(params, "sem")
         response.update({
-            "kind": "sem_interaction_volume_proxy" if self._sem_model == "interaction_volume_proxy" else "sem_gaussian_probe",
+            "kind": (
+                "sem_interaction_volume_proxy"
+                if self._sem_model == "interaction_volume_proxy"
+                else (
+                    "sem_physical_electron_transport"
+                    if self._sem_model == "physical_electron_transport"
+                    else "sem_gaussian_probe"
+                )
+            ),
             "sem_model": self._sem_model,
             "sem_backend": self._sem_backend,
             "measurement_domain": "electron_count",
@@ -325,7 +301,7 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
                     else "Gaussian-probe blurred secondary-electron yield proxy"
                 )
             ),
-            "acceleration_kV": float(param_value(params, "sem_acceleration_kV")),
+            "acceleration_kV": self._acceleration_kV,
             "probe_sigma_canvas_pixels": self._probe_sigma_px,
             "probe_sigma_nm": self._probe_sigma_nm,
             "interaction_volume_nm": self._interaction_volume_nm,
@@ -344,34 +320,78 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
             ),
             "source_map_ndim": 3 if self._sem_effective_source_representation == "volume" else 2,
             "source_axis_order": "zyx" if self._sem_effective_source_representation == "volume" else "yx",
+            "source_z_frame_contract_version": SOURCE_Z_FRAME_CONTRACT_VERSION,
+            "source_z_basis": self.particle_source_z_basis(params),
+            "material_source_z_frame": self.particle_source_z_basis(params),
+            "sem_material_source_z_contract": (
+                "entry_surface_depth_required_for_volume_transport"
+                if self._sem_effective_source_representation == "volume"
+                else "projected_no_z_source"
+            ),
             "source_z_origin": (
                 self._sem_source_z_origin
                 if self._sem_effective_source_representation == "volume"
                 else None
             ),
+            "source_depth_grid_contract_version": (
+                self._sem_depth_grid.contract_version
+                if self._sem_effective_source_representation == "volume"
+                else None
+            ),
+            "source_depth_grid_offset_policy": (
+                self._sem_depth_grid.offset_policy
+                if self._sem_effective_source_representation == "volume"
+                else None
+            ),
             "source_z_offset_nm": self._sem_source_z_offset_nm,
             "source_slice_thickness_nm": (
-                self._sem_volume_slice_thickness_nm
+                self._sem_depth_grid.slice_thickness_nm
+                if self._sem_effective_source_representation == "volume"
+                else None
+            ),
+            "source_z_edges_nm": (
+                self._sem_depth_grid.edges_nm
                 if self._sem_effective_source_representation == "volume"
                 else None
             ),
             "source_z_planes_nm": (
-                [
-                    (idx + 0.5) * self._sem_volume_slice_thickness_nm
-                    + self._sem_source_z_offset_nm
-                    for idx in range(self._sem_volume_slices)
-                ]
+                self._sem_depth_grid.centers_nm
                 if self._sem_effective_source_representation == "volume"
                 else None
             ),
-            "source_z_uses_particle_world_z": (
-                self._sem_source_z_origin == "focus_plane_relative"
-                and self._sem_effective_source_representation == "volume"
+            # Volume SEM converts particle world z to entry-surface material
+            # depth through SourceCoordinateContext; projected SEM intentionally
+            # discards particle z at the source-map seam.
+            "source_z_uses_particle_world_z": self._sem_effective_source_representation == "volume",
+            "source_z_particle_world_to_entry_surface_policy": (
+                "world_z_nm_is_entry_surface_depth_nm"
+                if self._sem_effective_source_representation == "volume"
+                else "projected_source_discards_particle_z"
             ),
-            "source_representation_request_satisfied": (
-                self._sem_source_representation == self._sem_effective_source_representation
-            ),
+            # The shared SEM source resolver owns requested-vs-effective basis
+            # semantics.  An explicit volume request can no longer be silently
+            # projected by a backend that consumes only 2D source maps.
+            "source_representation_request_satisfied": self._sem_source_resolution.request_satisfied,
             "source_projection_policy": self._sem_source_projection_policy,
+            "sem_source_backend_capability": self._sem_source_resolution.backend_source_capability,
+            "sem_effective_source_representation": self._sem_effective_source_representation,
+            "sem_source_representation_resolution_mode": (
+                "explicit" if self._sem_source_resolution.requested_is_explicit else "auto"
+            ),
+            "sem_source_units": (
+                "geometry_reference_normalized_slice_overlap_fraction"
+                if self._sem_effective_source_representation == "volume"
+                else "geometry_reference_normalized_projected_chord_fraction"
+            ),
+            "sem_source_normalization": (
+                "per_slice_overlap_nm_divided_by_component_reference_length_nm"
+                if self._sem_effective_source_representation == "volume"
+                else "projected_chord_nm_divided_by_component_reference_length_nm"
+            ),
+            "sem_source_absolute_occupancy": False,
+            "sem_source_physical_extent_claim": (
+                "proxy_normalized_material_source_not_absolute_sphere_volume"
+            ),
             "sem_sample_environment_source_dimensionality": (
                 "sliced_volume_surface_layer"
                 if self._sem_effective_source_representation == "volume"
@@ -382,17 +402,46 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
                 if self._sem_effective_source_representation == "volume"
                 else "projected_2d_yield_topography"
             ),
-            "backend_consumes_volume_source": self._sem_effective_source_representation == "volume",
+            "backend_consumes_volume_source": self._sem_source_resolution.backend_consumes_volume_source,
             "volume_transport_model": (
                 "3d_monte_carlo_interaction_kernel"
                 if self._sem_effective_source_representation == "volume"
                 else "none_projected_2d"
             ),
-            "sem_source_representation": self._sem_effective_source_representation,
             "sem_requested_source_representation": self._sem_source_representation,
             "sem_volume_slices": self._sem_volume_slices,
             "sem_volume_slice_thickness_nm": self._sem_volume_slice_thickness_nm,
             "sem_volume_depth_nm": self._sem_volume_slices * self._sem_volume_slice_thickness_nm,
+            "sem_source_volume_configured_slices": (
+                int(sem_support.configured_slice_count)
+                if self._sem_effective_source_representation == "volume" and sem_support is not None
+                else None
+            ),
+            "sem_source_volume_required_slices_for_rendered_z": (
+                int(sem_support.required_slice_count)
+                if self._sem_effective_source_representation == "volume" and sem_support is not None
+                else None
+            ),
+            "sem_source_z_envelope_min_nm": (
+                float(sem_support.envelope_min_nm)
+                if self._sem_effective_source_representation == "volume" and sem_support is not None
+                else None
+            ),
+            "sem_source_z_envelope_max_nm": (
+                float(sem_support.envelope_max_nm)
+                if self._sem_effective_source_representation == "volume" and sem_support is not None
+                else None
+            ),
+            "sem_source_z_support_policy": (
+                str(sem_support.policy)
+                if self._sem_effective_source_representation == "volume" and sem_support is not None
+                else None
+            ),
+            "sem_source_z_preserved_configured_center": (
+                bool(sem_support.preserved_configured_center)
+                if self._sem_effective_source_representation == "volume" and sem_support is not None
+                else None
+            ),
             "fidelity_label": (
                 "syniscopy_monte_carlo_sem_volume_transport"
                 if self._sem_effective_source_representation == "volume"
@@ -426,39 +475,39 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
                 comparison_contract_id=response.get("comparison_contract_id", "Contract-NR"),
                 artifact_provenance_id=response.get("artifact_provenance_id"),
             )
-        beam_current_nA = float(param_value(params, "sem_beam_current_nA"))
-        dwell_time_us = float(param_value(params, "sem_dwell_time_us"))
+        # Backend metadata can report its raw requested value; the top-level
+        # SEM model is the public owner of the effective numeric source basis.
+        # Reapply the resolver metadata after backend metadata so downstream
+        # reports cannot mistake auto/projected backends for z-y-x volume output.
+        response.update(self._sem_source_resolution.metadata())
+        settings = SemSettings.from_params(params)
         if self._sem_transport_backend is not None:
             response["electrons_per_pixel"] = self._sem_transport_backend.electrons_per_pixel()
+            electron_source = "transport_backend"
         elif self._sem_reference_kernel_backend is not None:
             response["electrons_per_pixel"] = self._sem_reference_kernel_backend.electrons_per_pixel()
+            electron_source = "reference_kernel_backend"
         else:
-            response["electrons_per_pixel"] = SemSettings.from_params(params).electrons_per_pixel
-        if beam_current_nA > 0.0 and dwell_time_us > 0.0:
+            response["electrons_per_pixel"], electron_source = self._configured_incident_electrons_per_pixel(params)
+        if settings.beam_current_nA > 0.0 and settings.dwell_time_us > 0.0:
             response["count_scaling_mode"] = "sem_beam_current_nA_times_sem_dwell_time_us"
-            response["incident_primary_electrons_source"] = "beam_current_and_dwell_time"
+            response["incident_primary_electrons_source"] = electron_source
         else:
             response["count_scaling_mode"] = "sem_electrons_per_pixel"
-            response["incident_primary_electrons_source"] = "sem_electrons_per_pixel"
+            response["incident_primary_electrons_source"] = electron_source
         return response
 
     def probe_wavelength_nm(self, params: dict) -> float:
-        acceleration_kV = float(param_value(params, 'sem_acceleration_kV'))
-        return float(electron_wavelength_m(acceleration_kV) * 1.0e9)
+        return float(electron_wavelength_m(SemSettings.from_params(params).acceleration_kV) * 1.0e9)
 
     def filter_guard_radius_pixels(self, params: dict) -> int | None:
-        raw = param_value(params, 'sem_filter_guard_pixels')
-        if raw is None:
-            raw = max(4.0 * self._probe_sigma_px, 2.0)
-            if self._sem_transport_backend is not None and hasattr(self._sem_transport_backend, "guard_radius_pixels"):
-                raw = max(raw, float(self._sem_transport_backend.guard_radius_pixels()))
-        guard = float(raw)
-        if not np.isfinite(guard) or guard < 0.0:
-            raise ValueError(
-                "PARAMS['sem_filter_guard_pixels'] must be non-negative and finite; "
-                f"got {raw!r}."
-            )
-        return int(np.ceil(guard))
+        backend_guard = None
+        if self._sem_transport_backend is not None and hasattr(self._sem_transport_backend, "guard_radius_pixels"):
+            backend_guard = float(self._sem_transport_backend.guard_radius_pixels())
+        return SemSettings.from_params(params).filter_guard_radius_pixels(
+            probe_sigma_px=self._probe_sigma_px,
+            backend_guard_radius=backend_guard,
+        )
 
     # -- Contract methods -------------------------------------------------
 
@@ -490,15 +539,9 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
             )
             return self._sem_transport_backend.yield_from_source(transport_source, baseline=self._baseline)
         if self._sem_reference_kernel_backend is not None:
-            return self._sem_reference_kernel_backend.yield_from_source(
-                self._proxy_numeric_source(source),
-                baseline=self._baseline,
-            )
+            return self._sem_reference_kernel_backend.yield_from_source(source, baseline=self._baseline)
         if self._sem_reference_backend is not None:
-            return self._sem_reference_backend.yield_from_source(
-                self._proxy_numeric_source(source),
-                baseline=self._baseline,
-            )
+            return self._sem_reference_backend.yield_from_source(source, baseline=self._baseline)
         if self._sem_proxy_backend is None:
             raise RuntimeError("SEM proxy backend was not initialized.")
         return self._sem_proxy_backend.yield_from_source(
@@ -514,9 +557,9 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
             )
             return self._sem_transport_backend.contrast_from_source(transport_source)
         if self._sem_reference_kernel_backend is not None:
-            return self._sem_reference_kernel_backend.contrast_from_source(self._proxy_numeric_source(source))
+            return self._sem_reference_kernel_backend.contrast_from_source(source)
         if self._sem_reference_backend is not None:
-            return self._sem_reference_backend.contrast_from_source(self._proxy_numeric_source(source))
+            return self._sem_reference_backend.contrast_from_source(source)
         if self._sem_proxy_backend is None:
             raise RuntimeError("SEM proxy backend was not initialized.")
         return self._sem_proxy_backend.contrast_from_source(self._proxy_numeric_source(source))
@@ -533,6 +576,22 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
         if src.ndim == 3 and self._sem_effective_source_representation != "volume":
             return np.sum(src, axis=0)
         return src
+
+    def particle_source_z_basis(self, params: dict) -> str:
+        del params
+        if self._sem_effective_source_representation != "volume":
+            return SOURCE_Z_BASIS_PROJECTED_NO_Z
+        # SEM z-y-x source volumes are material-density/yield volumes. Focus-relative
+        # z belongs to the imaging response/probe-defocus contract, so allowing it
+        # here would translate static material density through transport-depth kernels.
+        require_source_density_z_basis(
+            SOURCE_Z_BASIS_ENTRY_SURFACE_DEPTH,
+            allowed_bases={SOURCE_Z_BASIS_ENTRY_SURFACE_DEPTH},
+            source_input_kind="sliced_sem_source_volume",
+            modality_name="sem_secondary_electron",
+            backend_name=self._sem_backend,
+        )
+        return SOURCE_Z_BASIS_ENTRY_SURFACE_DEPTH
 
     def initialize_particle_source_canvas(self, shape: tuple[int, int], params: dict):
         del params
@@ -552,12 +611,18 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
         material_properties,
         params: dict,
         particle_z_nm: float | None = None,
+        source_coordinate_context: SourceCoordinateContext | None = None,
         source_multiplier: float = 1.0,
+        component_geometry=None,
+        orientation_matrix=None,
     ) -> None:
         del params
+        if component_geometry is None:
+            raise ValueError("SEM source accumulation requires component_geometry.")
+        if source_coordinate_context is not None:
+            particle_z_nm = source_coordinate_context.source_density_z_nm
         if source_canvas is None:
             return
-        radius_px = max(0.5, 0.5 * float(diameter_nm) / float(pixel_size_nm) * float(os_factor))
         if isinstance(source_canvas, SEMMaterialSourceCanvas):
             target_canvas = source_canvas.channel_for(material_properties)
         else:
@@ -566,59 +631,81 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
             _, h, w = target_canvas.shape
         else:
             h, w = target_canvas.shape
-        x0 = max(0, int(np.floor(center_x_canvas - radius_px - 2)))
-        x1 = min(w, int(np.ceil(center_x_canvas + radius_px + 3)))
-        y0 = max(0, int(np.floor(center_y_canvas - radius_px - 2)))
-        y1 = min(h, int(np.ceil(center_y_canvas + radius_px + 3)))
-        if x0 >= x1 or y0 >= y1:
+        footprint = primitive_footprint_patch(
+            component_geometry=component_geometry,
+            center_x_canvas=float(center_x_canvas),
+            center_y_canvas=float(center_y_canvas),
+            pixel_size_nm=float(pixel_size_nm),
+            os_factor=int(os_factor),
+            canvas_shape=(h, w),
+            orientation_matrix=orientation_matrix,
+        )
+        if footprint is None:
             return
-        yy, xx = np.indices((y1 - y0, x1 - x0), dtype=float)
-        dx = xx + x0 - float(center_x_canvas)
-        dy = yy + y0 - float(center_y_canvas)
-        r = np.sqrt(dx * dx + dy * dy)
-        inside = r <= radius_px
-        thickness_px = np.zeros_like(r, dtype=float)
-        thickness_px[inside] = 2.0 * np.sqrt(np.maximum(radius_px ** 2 - r[inside] ** 2, 0.0))
-        edge_width = max(0.75, 0.5 * float(os_factor))
-        taper = np.clip((radius_px + edge_width - r) / max(edge_width, 1e-9), 0.0, 1.0)
-        # Normalize by diameter so ``se_yield_coefficient`` remains the main
-        # material-scale control rather than growing quadratically with size.
-        diameter_px = max(2.0 * radius_px, 1.0)
+        projected_chord_nm = footprint.projected_chord_nm()
+        reference_length_nm = float(component_geometry.source_normalization_length_nm)
         multiplier = float(source_multiplier)
         if not np.isfinite(multiplier) or multiplier < 0.0:
             raise ValueError(f"source_multiplier must be finite and non-negative; got {source_multiplier!r}.")
         if np.asarray(target_canvas).ndim == 3:
-            radius_nm = 0.5 * float(diameter_nm)
-            lateral_nm = r * (float(pixel_size_nm) / float(os_factor))
-            chord_half_nm = np.zeros_like(lateral_nm, dtype=float)
-            inside_nm = lateral_nm <= radius_nm
-            chord_half_nm[inside_nm] = np.sqrt(
-                np.maximum(radius_nm * radius_nm - lateral_nm[inside_nm] ** 2, 0.0)
+            context_basis = (
+                source_coordinate_context.source_density_z_basis
+                if source_coordinate_context is not None
+                else self.particle_source_z_basis({})
             )
-            if self._sem_source_z_origin == "focus_plane_relative":
-                z_center_nm = (
-                    float(particle_z_nm) if particle_z_nm is not None else 0.0
-                ) + self._sem_source_z_offset_nm
-                z_top_nm = z_center_nm - chord_half_nm
-                z_bottom_nm = z_center_nm + chord_half_nm
-            else:
-                z_top_nm = radius_nm - chord_half_nm + self._sem_source_z_offset_nm
-                z_bottom_nm = radius_nm + chord_half_nm + self._sem_source_z_offset_nm
-            for slice_idx in range(target_canvas.shape[0]):
-                slice_z0 = slice_idx * self._sem_volume_slice_thickness_nm
-                slice_z1 = slice_z0 + self._sem_volume_slice_thickness_nm
-                overlap_nm = np.maximum(
-                    np.minimum(z_bottom_nm, slice_z1) - np.maximum(z_top_nm, slice_z0),
+            require_source_density_z_basis(
+                context_basis,
+                allowed_bases={SOURCE_Z_BASIS_ENTRY_SURFACE_DEPTH},
+                source_input_kind="sliced_sem_source_volume",
+                modality_name="sem_secondary_electron",
+                backend_name=self._sem_backend,
+            )
+
+            if particle_z_nm is None:
+                raise ValueError(
+                    "SEM volume source accumulation requires resolved entry-surface "
+                    "particle depth; projected SEM sources are the only SEM source "
+                    "basis allowed to discard particle z."
+                )
+            entry_surface_depth_center_nm = float(particle_z_nm)
+            if not np.isfinite(entry_surface_depth_center_nm):
+                raise ValueError(
+                    "SEM volume entry-surface particle depth must be finite; "
+                    f"got {particle_z_nm!r}."
+                )
+
+            def overlap_with_slice(z_lower_rel_nm, z_upper_rel_nm, slice_z0, slice_z1):
+                # The source stack uses physical entry-surface depth.  The sphere
+                # cross-section generalized here is an oriented primitive interval
+                # in world/source z, not a diameter-derived symmetric chord.
+                return np.maximum(
+                    np.minimum(entry_surface_depth_center_nm + z_upper_rel_nm, slice_z1)
+                    - np.maximum(entry_surface_depth_center_nm + z_lower_rel_nm, slice_z0),
                     0.0,
                 )
+            for slice_idx in range(target_canvas.shape[0]):
+                # SEMDepthGrid owns sem_source_z_offset_nm.  Particle/source bounds
+                # stay in physical entry-surface depth, while slice_bounds_nm()
+                # returns the same shifted interval reported in metadata and used
+                # by transport kernels.  Do not add the offset to both quantities.
+                slice_z0, slice_z1 = self._sem_depth_grid.slice_bounds_nm(slice_idx)
+                overlap_nm = footprint.average_over_samples(
+                    lambda z_lower_rel_nm, z_upper_rel_nm: overlap_with_slice(
+                        z_lower_rel_nm,
+                        z_upper_rel_nm,
+                        slice_z0,
+                        slice_z1,
+                    )
+                )
                 if np.any(overlap_nm > 0.0):
-                    target_canvas[slice_idx, y0:y1, x0:x1] += (
+                    target_canvas[slice_idx, footprint.y0:footprint.y1, footprint.x0:footprint.x1] += (
                         multiplier
-                        * (overlap_nm / max(float(diameter_nm), 1e-12))
-                        * taper
+                        * (overlap_nm / max(reference_length_nm, 1e-12))
                     )
             return
-        target_canvas[y0:y1, x0:x1] += multiplier * (thickness_px / diameter_px) * taper
+        target_canvas[footprint.y0:footprint.y1, footprint.x0:footprint.x1] += (
+            multiplier * (projected_chord_nm / max(reference_length_nm, 1e-12))
+        )
 
     def _merged_source_from_particles(self, particle_source_maps, E_sca_total):
         if particle_source_maps is None or len(particle_source_maps) == 0:
@@ -659,7 +746,7 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
                 "SEM sample-environment maps must match the SEM source image shape; "
                 f"got topography {topo.shape}, material fraction {frac.shape}, expected {tuple(image_shape)}."
             )
-        edge_gain = float(param_value(params, "sem_sample_environment_edge_gain"))
+        edge_gain = SampleEnvironmentSettings.from_params(params).sem_edge_gain
         frac = np.where(height > 0.0, frac, 0.0)
         layer_source = frac + edge_gain * topo
         substrate_source = 1.0 - frac
@@ -669,8 +756,12 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
             source.channel_for(sample_environment.substrate.material_substrate)[:, :] += substrate_source
             return source
         source = SEMMaterialSourceCanvas(shape=(self._sem_volume_slices, *tuple(image_shape)))
-        source.channel_for(sample_environment.substrate.material_layer)[0] += layer_source
-        source.channel_for(sample_environment.substrate.material_substrate)[0] += substrate_source
+        # Sample-environment topography is a surface source at physical z=0 nm;
+        # route it through SEMDepthGrid so a nonzero source slice-grid offset
+        # cannot silently relabel a surface layer as a deeper material slice.
+        surface_slice_idx = self._sem_depth_grid.surface_slice_index()
+        source.channel_for(sample_environment.substrate.material_layer)[surface_slice_idx] += layer_source
+        source.channel_for(sample_environment.substrate.material_substrate)[surface_slice_idx] += substrate_source
         return source
 
     def compute_scene_intensity_with_sample_environment(
@@ -727,6 +818,47 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
         rho = np.abs(E_sca_particle) ** 2
         return self._contrast_from_source(rho)
 
+    def _sem_direct_detector_scale(self, params: dict) -> tuple[float, str]:
+        if self._sem_transport_backend is not None:
+            return float(self._sem_transport_backend.electrons_per_pixel()), "transport_backend_electrons_per_pixel"
+        if self._sem_reference_kernel_backend is not None:
+            return float(self._sem_reference_kernel_backend.electrons_per_pixel()), "reference_kernel_electrons_per_pixel"
+        electrons_per_pixel, source = self._configured_incident_electrons_per_pixel(params)
+        return float(electrons_per_pixel), source
+
+    def _direct_signal_product_from_source(
+        self,
+        source,
+        params: dict,
+        *,
+        producer: str,
+        frame_index: int = 0,
+    ) -> DirectParticleSignalProduct:
+        # The fix-site invariant is detector-transfer ownership: SEM source
+        # responses are secondary-electron yield/contrast, while count-domain
+        # Fisher derivatives must use the primary-electron dose multiplied by
+        # that yield.  Keeping this transfer in a typed product prevents the
+        # same source map from being interpreted as both yield and electrons.
+        yield_delta = self._contrast_from_source(source)
+        scale, scale_source = self._sem_direct_detector_scale(params)
+        electron_delta = scale * np.asarray(yield_delta, dtype=float)
+        return DirectParticleSignalProduct(
+            values=electron_delta,
+            representation=electron_count_delta_representation(),
+            modality="sem_secondary_electron",
+            producer=producer,
+            safe_for_fisher=True,
+            detector_scale_applied=True,
+            background_included=False,
+            source_representation=sem_secondary_electron_source_representation(),
+            detector_scale_factor=float(scale),
+            conversion_note=(
+                "Converted SEM secondary-electron yield response to electron-count "
+                "contribution using the active beam-dose owner."
+            ),
+            provenance={"frame_index": int(frame_index), "detector_scale_source": scale_source},
+        )
+
     def compute_particle_contrast(
         self,
         E_sca_particle: np.ndarray,
@@ -736,15 +868,70 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
         *,
         frame_index: int = 0,
     ) -> np.ndarray:
+        del E_sca_particle, background_field, params, particle_instance, frame_index
+        raise RuntimeError(
+            "SEM direct particle contrast no longer returns a bare array. Use "
+            "compute_particle_signal_product(); its metadata records the "
+            "secondary-yield to electron-count transfer before Fisher use."
+        )
+
+    def _params_with_direct_sem_source_support(
+        self,
+        params: dict,
+        *,
+        particle_z_nm: float,
+        component_geometry,
+    ) -> tuple[dict, bool]:
+        if self._sem_effective_source_representation != "volume":
+            return params, False
+        if get_source_volume_support(params, "sem") is not None:
+            return params, False
+        radius_nm = float(component_geometry.axial_half_extent_nm(None))
+        center_nm = float(particle_z_nm)
+        if not np.isfinite(radius_nm) or radius_nm < 0.0 or not np.isfinite(center_nm):
+            raise ValueError(
+                "Direct SEM source support requires finite non-negative radius and "
+                f"finite entry-surface center depth; got radius={radius_nm!r}, z={center_nm!r}."
+            )
+        support = sem_source_volume_support_from_params(
+            params,
+            backend_name=self._sem_backend,
+            envelope_min_nm=center_nm - radius_nm,
+            envelope_max_nm=center_nm + radius_nm,
+            policy="auto_from_direct_sem_particle_envelope",
+        )
+        resolved = config_without_runtime_state(params)
+        # Direct single-particle SEM signal products do not pass through the
+        # frame-loop run-scope resolver.  Recreate the same internal support
+        # contract here before allocating the source canvas or backend kernels;
+        # otherwise diagnostics/Fisher products can clip material even though
+        # video rendering is correct.
+        set_source_volume_support(resolved, "sem", support)
+        return resolved, True
+
+
+    def compute_particle_signal_product(
+        self,
+        E_sca_particle: np.ndarray,
+        background_field: np.ndarray,
+        params: dict,
+        particle_instance=None,
+        *,
+        frame_index: int = 0,
+    ) -> DirectParticleSignalProduct:
         if particle_instance is None:
-            return self.compute_per_particle_contrast(E_sca_particle, background_field, params)
+            rho = np.abs(E_sca_particle) ** 2
+            return self._direct_signal_product_from_source(
+                rho,
+                params,
+                producer="ScanningElectronMicroscopyImagingModel.compute_particle_signal_product",
+                frame_index=frame_index,
+            )
         if bool(getattr(getattr(particle_instance, "particle_type", None), "is_composite", False)):
             raise ValueError(
-                "Direct SEM particle contrast for composite particles requires a "
-                "rendered source map; use compute_particle_contrast_from_source_map()."
+                "Direct SEM particle signal for composite particles requires a "
+                "rendered source map; use compute_particle_signal_product_from_source_map()."
             )
-        del background_field
-        source = self.initialize_particle_source_canvas(E_sca_particle.shape[-2:], params)
         material = getattr(particle_instance, "material_properties", None)
         traj = np.asarray(particle_instance.trajectory_nm, dtype=float)
         frame_idx = int(np.clip(int(frame_index), 0, traj.shape[0] - 1))
@@ -752,6 +939,30 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
         px = float(traj[frame_idx, 0]) / sampling.detector_pixel_size_nm * float(sampling.psf_oversampling_factor)
         py = float(traj[frame_idx, 1]) / sampling.detector_pixel_size_nm * float(sampling.psf_oversampling_factor)
         pz = float(traj[frame_idx, 2]) if traj.shape[1] >= 3 else 0.0
+        params, rebound_required = self._params_with_direct_sem_source_support(
+            params,
+            particle_z_nm=pz,
+            component_geometry=particle_instance.component_geometry,
+        )
+        if rebound_required:
+            resolved_model = type(self)(params)
+            return resolved_model.compute_particle_signal_product(
+                E_sca_particle,
+                background_field,
+                params,
+                particle_instance=particle_instance,
+                frame_index=frame_idx,
+            )
+        source = self.initialize_particle_source_canvas(E_sca_particle.shape[-2:], params)
+        # Direct single-particle SEM source rendering must use the same
+        # entry-surface material-depth resolver as the frame-loop path; otherwise
+        # response diagnostics and rendered scenes would disagree on z placement.
+        source_coordinate_context = SourceCoordinateContext.from_particle_z(
+            particle_world_z_nm=pz,
+            focus_plane_z_nm=FocusPlaneState.from_params(params).z_nm,
+            source_density_z_basis=self.particle_source_z_basis(params),
+            optical_response_z_basis="projected_no_z",
+        )
         self.accumulate_particle_source(
             source,
             center_x_canvas=px,
@@ -761,9 +972,17 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
             os_factor=sampling.psf_oversampling_factor,
             material_properties=material,
             params=params,
-            particle_z_nm=pz,
+            particle_z_nm=source_coordinate_context.source_density_z_nm,
+            source_coordinate_context=source_coordinate_context,
+            component_geometry=particle_instance.component_geometry,
+            orientation_matrix=None,
         )
-        return self._contrast_from_source(source)
+        return self._direct_signal_product_from_source(
+            source,
+            params,
+            producer="ScanningElectronMicroscopyImagingModel.compute_particle_signal_product",
+            frame_index=frame_idx,
+        )
 
     def compute_particle_contrast_from_source_map(
         self,
@@ -773,12 +992,32 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
         *,
         frame_index: int = 0,
     ) -> np.ndarray:
-        del background_field, params, frame_index
-        return self._contrast_from_source(np.asarray(particle_source_map, dtype=float))
+        del particle_source_map, background_field, params, frame_index
+        raise RuntimeError(
+            "SEM source-map contrast no longer returns a bare array. Use "
+            "compute_particle_signal_product_from_source_map(); it converts "
+            "secondary-electron yield to electron-count contribution exactly once."
+        )
 
-    def scale_intensity_to_counts(
+    def compute_particle_signal_product_from_source_map(
         self,
-        intensity: np.ndarray,
+        particle_source_map,
+        background_field: np.ndarray,
+        params: dict,
+        *,
+        frame_index: int = 0,
+    ) -> DirectParticleSignalProduct:
+        del background_field
+        return self._direct_signal_product_from_source(
+            particle_source_map,
+            params,
+            producer="ScanningElectronMicroscopyImagingModel.compute_particle_signal_product_from_source_map",
+            frame_index=frame_index,
+        )
+
+    def convert_model_output_to_detector_frame(
+        self,
+        model_output: np.ndarray,
         background_final: np.ndarray,
         E_ref_intensity_final: np.ndarray,
         params: dict,
@@ -790,9 +1029,26 @@ class ScanningElectronMicroscopyImagingModel(ImagingModel):
         reference-beam division is involved (no E_ref in SEM).
         """
         if self._sem_transport_backend is not None:
-            return self._sem_transport_backend.electrons_per_pixel() * intensity
-        if self._sem_reference_kernel_backend is not None:
-            return self._sem_reference_kernel_backend.electrons_per_pixel() * intensity
-        return SemSettings.from_params(params).electrons_per_pixel * intensity
+            electrons_per_pixel = self._sem_transport_backend.electrons_per_pixel()
+        elif self._sem_reference_kernel_backend is not None:
+            electrons_per_pixel = self._sem_reference_kernel_backend.electrons_per_pixel()
+        else:
+            electrons_per_pixel, _ = self._configured_incident_electrons_per_pixel(params)
+        return convert_model_output_to_detector_frame(
+            model_output=model_output,
+            background_frame=background_final,
+            reference_intensity_frame=E_ref_intensity_final,
+            conversion=DetectorFrameConversion(
+                model_output_domain=MODEL_OUTPUT_DOMAIN_ELECTRON_YIELD,
+                detector_output_domain=DETECTOR_OUTPUT_DOMAIN_ELECTRON_COUNT,
+                value_form=VALUE_FORM_ABSOLUTE,
+                reference_basis=REFERENCE_BASIS_NONE,
+                scale=electrons_per_pixel,
+                measurement_domain="electron_count",
+                signal_units="electron_count",
+            ),
+            params=params,
+            context="ScanningElectronMicroscopyImagingModel.convert_model_output_to_detector_frame",
+        )
 
 __all__ = ['ScanningElectronMicroscopyImagingModel']

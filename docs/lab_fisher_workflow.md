@@ -3,7 +3,7 @@
 This workflow is for a lab that wants to ask a practical question:
 
 > For this particle, pixel pitch, objective, wavelength, and detector-noise
-> model, which configured modality profiles carry the most localization
+> model, which configured microscope candidates carry the most localization
 > information?
 
 It uses the same shared-scene Fisher/CRLB layer as the manuscript, but it is not
@@ -60,10 +60,12 @@ For fluorescence checks, use a material with fluorescence metadata, such as
 `fluorescent_polystyrene`, or provide `material_properties` with
 `fluorophore_density`, `excitation_peak_nm`, and `emission_peak_nm`.
 
-## 3. Pick Modalities
+## 3. Pick Microscopes
 
-The default lab set covers the full local default list (optical, fluorescence, TEM,
-and SEM):
+The default lab set is a fixed-instrument modality sweep: it emits one
+microscope candidate per selected contrast modality under the same shared lab
+instrument settings. The default list covers optical, fluorescence, TEM, and
+SEM:
 
 ```bash
 python codebase/lab_fisher_report.py --params-json lab_params.json --output lab_reports/my_setup
@@ -76,22 +78,22 @@ python codebase/lab_fisher_report.py --list-modalities
 python codebase/lab_fisher_report.py --list-instruments
 ```
 
-For a smaller run:
+For a smaller fixed-instrument sweep:
 
 ```bash
 python codebase/lab_fisher_report.py \
   --params-json lab_params.json \
-  --modalities bright_field,interferometric,fluorescence_widefield \
-  --output lab_reports/three_modalities
+  --modality-sweep bright_field,interferometric,fluorescence_widefield \
+  --output lab_reports/three_microscopes
 ```
 
-The default command below now includes TEM/SEM; use `--modalities optical` for an
-optical/fluorescence-only run.
+The default command below now includes TEM/SEM; use `--modality-sweep optical`
+for an optical/fluorescence-only fixed-instrument microscope set.
 
 ```bash
 python codebase/lab_fisher_report.py \
   --params-json lab_params.json \
-  --output lab_reports/with_electron_modalities
+  --output lab_reports/with_electron_microscopes
 ```
 
 ## 4. Inspect Outputs
@@ -100,15 +102,15 @@ Open `lab_reports/my_setup/report.md` first.
 
 The report directory contains:
 
-- `modality_ranking.csv`: lateral Fisher matrices and Cramér-Rao bounds.
-- `sequence_fisher_summary.csv`: per-frame and cumulative lateral CRLB progression for each modality.
+- `microscope_ranking.csv`: lateral Fisher matrices and Cramér-Rao bounds by microscope.
+- `sequence_fisher_summary.csv`: per-frame and cumulative lateral CRLB progression for each microscope.
 - `fusion_crlb.csv`: best-k Fisher-fusion diagnostics. Add
   `--include-full-fusion` when a full-library algebraic fusion row is useful.
-- `manifest.json`: requested, reported, and failed modalities.
-- `params_base.json`: base configuration before per-modality imaging-model overrides.
-- `dynamic_modality_summary.json`: dynamic Bayesian CRLB summary when `--dynamic-bayesian` is enabled.
-- `params_resolved_by_modality/`: resolved configuration for each reported modality.
-- `previews/`: display-normalized first-frame contrast previews for each modality sequence.
+- `manifest.json`: requested, reported, and failed microscopes, with modality metadata.
+- `params_base.json`: base configuration before per-microscope imaging-model overrides.
+- `dynamic_microscope_summary.json`: dynamic Bayesian CRLB summary when `--dynamic-bayesian` is enabled.
+- `params_resolved_by_microscope/`: resolved configuration for each reported microscope.
+- `previews/`: display-normalized first-frame contrast previews for each microscope sequence.
 - `fisher_density/`: per-pixel lateral Fisher-density maps and arrays.
 
 To run a multi-frame, dynamic-Bayesian pass:
@@ -146,5 +148,5 @@ If the report will be used for a real experimental decision, start by matching:
 - any substrate or patterned-background assumptions.
 
 If those quantities are unknown, run the report as a sensitivity check by
-varying one parameter at a time and watching whether the modality ranking
+varying one parameter at a time and watching whether the microscope ranking
 changes.

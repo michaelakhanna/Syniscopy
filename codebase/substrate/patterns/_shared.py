@@ -6,11 +6,25 @@ import numpy as np
 from threading import RLock
 from typing import Dict, Tuple, Optional
 
-from config import param_value
-from config.runtime import (
-    resolved_sample_environment_pattern_dimension,
-    resolved_sample_environment_pattern_dimensions,
-)
+
+class _MissingCV2:
+    """Sentinel returned when ``cv2`` is unavailable."""
+
+    def __init__(self, context: str):
+        self._context = context
+
+    def __getattr__(self, name: str):
+        raise ImportError(
+            f"OpenCV (cv2) is required for {self._context} operation {name!r}."
+        )
+
+
+try:
+    import cv2
+except ImportError:  # pragma: no cover - exercised via runtime dependency checks
+    cv2 = _MissingCV2("substrate roughness/image IO")
+
+from config import SampleEnvironmentSettings
 from param_schema.sample_environment import BAR_ORIENTATION_CHOICES, PATTERN_DEFAULT_PRESETS
 
 _MAX_SHAPE_AXIS_DISTORTION_FRAC = 0.25
@@ -23,26 +37,11 @@ _BAR_MATERIAL_PATTERNS = {"grid_bars", "microfluidic_walls"}
 _LAYOUT_CACHE: Dict[Tuple, object] = {}
 _LAYOUT_CACHE_LOCK = RLock()
 
-try:
-    import cv2 as cv2
-except ImportError:
-    class _MissingCV2:
-        def __getattr__(self, name: str):
-            raise ImportError(
-                "OpenCV (cv2) is required for substrate roughness/image IO "
-                f"operation {name!r}."
-            )
-
-    cv2 = _MissingCV2()
-
 def _pattern_dimensions(params: dict) -> dict:
-    return resolved_sample_environment_pattern_dimensions(params)
+    return SampleEnvironmentSettings.from_params(params).pattern_dimensions
 
 def _substrate_pattern_is_enabled(params: dict) -> bool:
-    return (
-        bool(param_value(params, 'sample_environment_enabled'))
-        and bool(param_value(params, 'sample_environment_pattern_enabled'))
-    )
+    return sample_environment_pattern_is_active(params)
 
 def canonical_sample_environment_pattern_and_preset(pattern: object, preset: object) -> tuple[str, str]:
     """Return stripped canonical sample-environment pattern and preset values."""
@@ -50,9 +49,27 @@ def canonical_sample_environment_pattern_and_preset(pattern: object, preset: obj
     q = str(preset).strip().lower()
     return p, q
 
+def sample_environment_pattern_is_active(params: dict, model: object | None = None) -> bool:
+    """
+    Return whether a structured sample-environment pattern is physically active.
+
+    A staged pattern name is inert until the explicit pattern-enable switch is
+    true.  Empty presets and the canonical ``none`` pattern are also uniform
+    scenes.  When ``model`` is supplied, active means the model actually
+    consumes sample-environment pattern maps.
+    """
+    settings = SampleEnvironmentSettings.from_params(params)
+    pattern_model, substrate_preset = canonical_sample_environment_pattern_and_preset(
+        settings.pattern,
+        settings.pattern_preset,
+    )
+    if (pattern_model, substrate_preset) != (settings.pattern, settings.pattern_preset):
+        raise RuntimeError("SampleEnvironmentSettings returned inconsistent pattern identity.")
+    return settings.pattern_active_for_model(model)
+
 def _read_positive_pattern_dimension(params: dict, key: str, default: float | None = None) -> float:
     if default is None:
-        value = resolved_sample_environment_pattern_dimension(params, key)
+        value = SampleEnvironmentSettings.from_params(params).dimension(key)
     else:
         dims = _pattern_dimensions(params)
         value = dims[key] if key in dims and dims[key] is not None else default
@@ -166,4 +183,5 @@ __all__ = [
     "math",
     "np",
     "os",
+    "sample_environment_pattern_is_active",
 ]

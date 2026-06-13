@@ -1,8 +1,13 @@
-"""Cross-modality Fisher fusion and registration diagnostics."""
+"""Candidate Fisher fusion and registration diagnostics.
+
+The algebra in this module is keyed by comparison candidate. A candidate may be
+a microscope, acquisition profile, or virtual information object. Physical
+modality identity is metadata consumed only by compatibility checks.
+"""
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -14,15 +19,52 @@ from ._constants import (
     _FISHER_RANGE_RESIDUAL_TOL,
     _RELATIVE_DET_SINGULAR_TOL,
 )
-from ._metadata_helpers import _variance_units
+from .candidates import (
+    FisherCandidate,
+    FisherMatrixCandidate,
+    candidate_metadata_records,
+    matrix_candidate_metadata_records,
+)
+from .comparison import (
+    COMPARISON_TARGET_LATERAL_XY,
+    COMPARISON_TARGET_LOCALIZATION_XYZ,
+    fisher_derivative_basis_for_candidate,
+    resolve_fisher_candidate_noise_inputs,
+)
 
-def _fisher_for_modality(
+
+def _matrix_candidate_list(
+    candidates: Sequence[FisherMatrixCandidate],
+    *,
+    context: str,
+) -> list[FisherMatrixCandidate]:
+    candidate_list = list(candidates)
+    if not candidate_list:
+        raise ValueError(f"{context} requires at least one FisherMatrixCandidate.")
+    keys = [candidate.key for candidate in candidate_list]
+    duplicates = sorted({key for key in keys if keys.count(key) > 1})
+    if duplicates:
+        raise ValueError(f"{context} candidate keys must be unique; duplicates: {duplicates!r}.")
+    return candidate_list
+
+
+def _parent_metadata_from_matrix_candidates(
+    candidates: Sequence[FisherMatrixCandidate],
+) -> dict[str, dict[str, Any]] | None:
+    metadata = {
+        candidate.key: dict(candidate.parent_result_metadata)
+        for candidate in candidates
+        if candidate.parent_result_metadata
+    }
+    return metadata or None
+
+def _fisher_for_candidate(
     contrast: np.ndarray,
-    noise_variance: np.ndarray | float,
+    noise_variance: Any,
     pixel_size_nm: float,
     z_step_nm: float | None,
 ) -> np.ndarray:
-    """Compute the per-modality Fisher matrix in 2D or 3D mode.
+    """Compute one candidate's Fisher matrix in 2D or 3D mode.
 
     Returns a (2, 2) or (3, 3) symmetric Fisher matrix. The 2D path mirrors
     compute_fisher_information; the 3D path mirrors compute_fisher_information_3d.
@@ -201,14 +243,16 @@ def _axis_sigmas_from_fisher(F: np.ndarray) -> tuple[list[float], list[bool]]:
             singular_axes.append(False)
     return sigmas, singular_axes
 
-def compute_registration_degradation_curve(
-    per_modality_fisher: dict[str, np.ndarray],
+def compute_candidate_registration_degradation_curve(
+    candidates: Sequence[FisherMatrixCandidate],
     registration_covariances: list[np.ndarray] | tuple[np.ndarray, ...],
-    *,
-    parent_result_metadata_by_modality: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Evaluate the monotone fusion penalty from registration covariance.
+
+    ``candidates`` carries Fisher matrices and parent metadata as
+    ``FisherMatrixCandidate`` objects; this API does not accept parallel
+    candidate-keyed matrix/metadata columns.
 
     The clean theorem assumes positive-definite Fisher matrices. This diagnostic
     uses the same validation and pseudoinverse convention as fusion, so singular
@@ -216,14 +260,17 @@ def compute_registration_degradation_curve(
     """
     from .convergence import _parent_convergence_statuses, _parent_validation_statuses
 
-    if not isinstance(per_modality_fisher, dict) or not per_modality_fisher:
-        raise ValueError("per_modality_fisher must be a non-empty dict.")
+    candidate_list = _matrix_candidate_list(
+        candidates,
+        context="compute_candidate_registration_degradation_curve",
+    )
     if not registration_covariances:
         raise ValueError("registration_covariances must contain at least one covariance.")
 
-    modalities = list(per_modality_fisher.keys())
-    raw = {name: np.asarray(F, dtype=float) for name, F in per_modality_fisher.items()}
-    ref_shape = raw[modalities[0]].shape
+    candidates = [candidate.key for candidate in candidate_list]
+    raw = {candidate.key: np.asarray(candidate.fisher_matrix, dtype=float) for candidate in candidate_list}
+    candidate_parent_metadata = _parent_metadata_from_matrix_candidates(candidate_list)
+    ref_shape = raw[candidates[0]].shape
     if len(ref_shape) != 2 or ref_shape[0] != ref_shape[1] or ref_shape[0] < 2:
         raise ValueError(f"Fisher matrices must be square with at least 2 axes; got {ref_shape}.")
     for name, F in raw.items():
@@ -277,9 +324,9 @@ def compute_registration_degradation_curve(
         for i in range(len(sigma_by_registration) - 1)
     )
 
-    status_metadata = combine_parent_statuses(parent_result_metadata_by_modality)
-    parent_convergence_statuses = _parent_convergence_statuses(parent_result_metadata_by_modality)
-    parent_validation_statuses = _parent_validation_statuses(parent_result_metadata_by_modality)
+    status_metadata = combine_parent_statuses(candidate_parent_metadata)
+    parent_convergence_statuses = _parent_convergence_statuses(candidate_parent_metadata)
+    parent_validation_statuses = _parent_validation_statuses(candidate_parent_metadata)
     return {
         "registration_covariance_grid": covariance_grid,
         "fusion_sigma_xy_nm_by_registration": sigma_by_registration,
@@ -287,7 +334,7 @@ def compute_registration_degradation_curve(
         "monotone_degradation_verified": bool(monotone),
         "perfect_registration_fisher": perfect_fisher,
         "registration_degradation_fraction": degradation_fraction,
-        "registration_adjusted_per_modality_fisher_by_registration": adjusted_by_registration,
+        "registration_adjusted_per_candidate_fisher_by_registration": adjusted_by_registration,
         "parent_status_metadata": status_metadata,
         "parent_convergence_statuses": parent_convergence_statuses,
         "parent_validation_statuses": parent_validation_statuses,
@@ -298,7 +345,7 @@ def compute_registration_degradation_curve(
     }
 
 def _fusion_complementarity_metrics(
-    per_modality_fisher: dict[str, np.ndarray],
+    per_candidate_fisher: dict[str, np.ndarray],
     subset: list[str],
 ) -> dict[str, Any]:
     """
@@ -306,7 +353,7 @@ def _fusion_complementarity_metrics(
 
     These metrics are descriptive, not part of the CRLB itself. They help
     distinguish "best pair is just the two strongest scalar contributors" from
-    "modalities inform different parameter directions."
+    "candidates inform different parameter directions."
     """
     if len(subset) < 2:
         return {
@@ -316,7 +363,7 @@ def _fusion_complementarity_metrics(
             "fused_condition_number": None,
         }
 
-    matrices = [np.asarray(per_modality_fisher[m], dtype=float) for m in subset]
+    matrices = [np.asarray(per_candidate_fisher[m], dtype=float) for m in subset]
     F_sum = np.sum(matrices, axis=0)
     det_sum = float(np.linalg.det(F_sum))
     det_best = max(float(np.linalg.det(F)) for F in matrices)
@@ -353,58 +400,43 @@ def _fusion_complementarity_metrics(
         "fused_condition_number": condition,
     }
 
-def compute_modality_fusion_crlb(
-    contrast_by_modality: dict[str, np.ndarray],
-    noise_variance_by_modality: dict[str, np.ndarray | float],
-    pixel_size_nm: float | dict[str, float],
+def compute_fisher_candidate_fusion_crlb(
+    candidates: Sequence[FisherCandidate],
     *,
-    pixel_size_nm_by_modality: dict[str, float] | None = None,
     z_step_nm: float | None = None,
     subset_size: int | None = None,
     registration_covariance: np.ndarray | None = None,
-    modality_profile_cards: dict[str, dict[str, Any]] | None = None,
-    parent_result_metadata_by_modality: dict[str, dict[str, Any]] | None = None,
-    measurement_domain_by_modality: str | dict[str, str] | None = None,
-    signal_units_by_modality: str | dict[str, str] | None = None,
-    noise_variance_units_by_modality: str | dict[str, str] | None = None,
+    candidate_profile_cards: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     r"""
-    Multi-modality fusion Cramér-Rao lower bound.
+    Candidate fusion Cramér-Rao lower bound.
 
-    Given per-modality contrast images and noise-variance maps for the SAME
-    particle coordinate frame, return:
-      - the joint Fisher information matrix obtained by summing per-modality
+    Given complete ``FisherCandidate`` objects for the same particle coordinate
+    frame, return:
+      - the joint Fisher information matrix obtained by summing per-candidate
         Fisher matrices under the independent-noise assumption,
       - the fusion CRLB on (x, y) (and optionally z),
-      - the fusion gain against the best single modality.
+      - the fusion gain against the best single candidate.
 
     Parameters
     ----------
-    contrast_by_modality : dict[str, ndarray]
-        Mapping ``modality_name -> per-particle contrast``. 2D mode expects
-        ``(H, W)`` arrays; 3D mode (``z_step_nm`` supplied) expects
-        ``(3, H, W)`` three-plane stacks. Shapes may differ across modalities
-        when their pixel-size metadata puts the resulting Fisher matrices in
-        the same physical coordinate frame.
-    noise_variance_by_modality : dict[str, ndarray or float]
-        Mapping ``modality_name -> per-pixel variance map (or scalar)``. Must
-        cover the same keys as ``contrast_by_modality``.
-    pixel_size_nm : float or dict
-        Detector pixel pitch in nanometres. A scalar keeps the historical
-        shared-pitch behavior; a mapping supplies one pitch per modality.
+    candidates : sequence[FisherCandidate]
+        Complete rendered analysis candidates. 2D mode expects each candidate
+        signal to be an ``(H, W)`` array; 3D mode (``z_step_nm`` supplied)
+        expects each signal to be a ``(3, H, W)`` three-plane stack.
     z_step_nm : float or None, default None
-        If None: 2D fusion (2x2 Fisher per modality, 2x2 fused). If a
-        positive float: 3D fusion (3x3 Fisher per modality, 3x3 fused).
+        If None: 2D fusion (2x2 Fisher per candidate, 2x2 fused). If a
+        positive float: 3D fusion (3x3 Fisher per candidate, 3x3 fused).
     subset_size : int or None, default None
-        If None: report the full N-modality fusion bound. If a positive
+        If None: report the full N-candidate fusion bound. If a positive
         integer k with 1 <= k <= N: enumerate all C(N, k) subsets of
-        modalities of size k, compute each subset's fusion CRLB, and return
+        candidates of size k, compute each subset's fusion CRLB, and return
         the BEST subset (smallest fusion_sigma_xy_nm in 2D mode, smallest
         fusion_sigma_xyz_nm in 3D mode). The best-subset enumeration is
-        intended for small modality sets.
+        intended for small candidate sets.
     registration_covariance : ndarray or None, default None
         Optional 2x2 lateral registration-error covariance in nm^2. When
-        supplied, each modality's contribution is corrected as
+        supplied, each candidate's contribution is corrected as
         ``F' = inv(inv(F) + Sigma_reg)`` before fusion.
 
     Returns
@@ -412,19 +444,19 @@ def compute_modality_fusion_crlb(
     result : dict
         A dictionary with the following keys:
 
-        - ``per_modality_fisher`` : dict[str, ndarray]
-            Per-modality Fisher matrix.
-        - ``registration_adjusted_per_modality_fisher`` : dict[str, ndarray]
-            Per-modality Fisher matrices after registration covariance.
-        - ``per_modality_crlb`` : dict[str, dict]
-            Per-modality CRLB result (output of compute_localization_crlb
-            or compute_localization_crlb_3d). Modalities whose per-modality
+        - ``per_candidate_fisher`` : dict[str, ndarray]
+            Per-candidate Fisher matrix.
+        - ``registration_adjusted_per_candidate_fisher`` : dict[str, ndarray]
+            Per-candidate Fisher matrices after registration covariance.
+        - ``per_candidate_crlb`` : dict[str, dict]
+            Per-candidate CRLB result (output of compute_localization_crlb
+            or compute_localization_crlb_3d). Candidates whose per-candidate
             Fisher is singular have ``singular = True``.
-        - ``registration_adjusted_per_modality_crlb`` : dict[str, dict]
-            Single-modality baseline CRLBs after applying registration covariance;
+        - ``registration_adjusted_per_candidate_crlb`` : dict[str, dict]
+            Single-candidate baseline CRLBs after applying registration covariance;
             fusion gains are computed against these adjusted baselines.
         - ``fusion_fisher`` : ndarray
-            The joint Fisher matrix (sum of per-modality F_M).
+            The joint Fisher matrix (sum of per-candidate F_i).
         - ``fusion_sigma_x_nm`` : float
         - ``fusion_sigma_y_nm`` : float
         - ``fusion_sigma_xy_nm`` : float (sqrt(sigma_x^2 + sigma_y^2),
@@ -436,10 +468,10 @@ def compute_modality_fusion_crlb(
           numerically singular for the selected dimensional objective.
         - ``fusion_rank`` / ``fusion_axes_singular`` : observable rank and
           named singular axes for partial-rank diagnostics.
-        - ``best_single_modality`` : str | None — name of the registration-adjusted
-          per-modality CRLB minimizer on sigma_xy_nm (or sigma_xyz_nm in 3D).
-          None if no single modality is non-singular.
-        - ``best_single_xy_modality`` : str — lateral-only lowest-bound modality used
+        - ``best_single_candidate`` : str | None — name of the registration-adjusted
+          per-candidate CRLB minimizer on sigma_xy_nm (or sigma_xyz_nm in 3D).
+          None if no single candidate is non-singular.
+        - ``best_single_xy_candidate`` : str — lateral-only lowest-bound candidate used
           for ``fusion_gain_xy``.
         - ``best_single_sigma_xy_nm`` : float (or None)
         - ``best_single_sigma_xyz_nm`` : float (3D mode only; or None)
@@ -452,8 +484,8 @@ def compute_modality_fusion_crlb(
         - ``fusion_complementarity`` : dict
             Pairwise and aggregate complementarity metrics for the fused Fisher
             matrices.
-        - ``modalities_used`` : list[str] — modalities included in the
-          fusion. Equals the full key set of the input dict if
+        - ``candidates_used`` : list[str] — candidates included in the
+          fusion. Equals the full key set of the candidates if
           ``subset_size`` is None; the chosen best subset otherwise.
         - ``subset_size`` : int or None — echo of the input subset_size.
         - ``subset_search_count`` : int — number of subsets evaluated
@@ -464,61 +496,44 @@ def compute_modality_fusion_crlb(
     Raises
     ------
     ValueError
-        If the input dicts are empty, have mismatched keys, contain malformed
-        contrast images/noise maps, or if subset_size is out of range.
+        If the candidate list is empty, has duplicate keys, contains malformed
+        signals/noise, or if subset_size is out of range.
 
     Notes
     -----
     The fusion bound assumes statistically independent measurements across
-    modalities, which is the typical assumption for distinct detectors,
-    disjoint spectral channels, or separate physical channels. A calibrated
-    registration covariance can be supplied here; correlated detector noise
-    would require a full cross-modality covariance model.
+    candidates. Physical modality compatibility is metadata-gated separately,
+    because candidate identity and backend modality identity are distinct.
     """
     from .axial import compute_localization_crlb_3d
     from .convergence import _parent_convergence_statuses, _parent_validation_statuses
-    from .lateral import _resolve_modality_scalar_map, _resolve_modality_string_map, compute_localization_crlb
+    from .lateral import compute_localization_crlb
 
     import itertools
-    from modality_compatibility import fusion_subset_metadata
 
-    if not isinstance(contrast_by_modality, dict) or not contrast_by_modality:
-        raise ValueError(
-            "contrast_by_modality must be a non-empty dict keyed by modality name."
-        )
-    if not isinstance(noise_variance_by_modality, dict):
-        raise ValueError("noise_variance_by_modality must be a dict.")
-    if set(contrast_by_modality.keys()) != set(noise_variance_by_modality.keys()):
-        missing = set(contrast_by_modality.keys()) ^ set(noise_variance_by_modality.keys())
-        raise ValueError(
-            f"contrast_by_modality and noise_variance_by_modality must have the "
-            f"same keys; symmetric diff: {sorted(missing)!r}."
-        )
+    candidate_list = list(candidates)
+    if not candidate_list:
+        raise ValueError("compute_fisher_candidate_fusion_crlb requires at least one candidate.")
+    candidate_keys = [candidate.key for candidate in candidate_list]
+    duplicates = sorted({key for key in candidate_keys if candidate_keys.count(key) > 1})
+    if duplicates:
+        raise ValueError(f"Fisher candidate keys must be unique; duplicates: {duplicates!r}.")
+    n = len(candidate_list)
 
-    modalities = list(contrast_by_modality.keys())
-    n = len(modalities)
-
-    pixel_sizes = _resolve_modality_scalar_map(
-        pixel_size_nm,
-        modalities,
-        "pixel_size_nm",
-        override=pixel_size_nm_by_modality,
+    target = (
+        COMPARISON_TARGET_LATERAL_XY
+        if z_step_nm is None
+        else COMPARISON_TARGET_LOCALIZATION_XYZ
     )
-    measurement_domains = _resolve_modality_string_map(
-        measurement_domain_by_modality,
-        modalities,
-        "contrast",
+    noise_inputs = resolve_fisher_candidate_noise_inputs(
+        candidate_list,
+        context="compute_fisher_candidate_fusion_crlb",
     )
-    signal_units = _resolve_modality_string_map(
-        signal_units_by_modality,
-        modalities,
-        "contrast",
-    )
-    noise_variance_units = _resolve_modality_string_map(
-        noise_variance_units_by_modality,
-        modalities,
-        "",
-    )
+    candidate_parent_metadata = {
+        candidate.key: dict(candidate.parent_result_metadata)
+        for candidate in candidate_list
+        if candidate.parent_result_metadata
+    } or None
 
     if subset_size is not None:
         if not isinstance(subset_size, int) or subset_size < 1 or subset_size > n:
@@ -528,21 +543,48 @@ def compute_modality_fusion_crlb(
 
     dim = 2 if z_step_nm is None else 3
 
-    # Step 1: per-modality Fisher matrices.
-    per_modality_fisher: dict[str, np.ndarray] = {}
-    registration_adjusted_per_modality_fisher: dict[str, np.ndarray] = {}
-    per_modality_crlb: dict[str, dict[str, Any]] = {}
-    registration_adjusted_per_modality_crlb: dict[str, dict[str, Any]] = {}
-    for m in modalities:
-        c = np.asarray(contrast_by_modality[m], dtype=float)
-        v = noise_variance_by_modality[m]
-        F_m = _fisher_for_modality(c, v, pixel_sizes[m], z_step_nm)
-        per_modality_fisher[m] = F_m
+    # Step 1: per-candidate Fisher matrices.
+    per_candidate_fisher: dict[str, np.ndarray] = {}
+    registration_adjusted_per_candidate_fisher: dict[str, np.ndarray] = {}
+    per_candidate_crlb: dict[str, dict[str, Any]] = {}
+    registration_adjusted_per_candidate_crlb: dict[str, dict[str, Any]] = {}
+    derivative_basis: dict[str, dict[str, Any]] = {}
+    for candidate in candidate_list:
+        m = candidate.key
+        c = np.asarray(candidate.signal)
+        v = noise_inputs[m]
+        derivative_basis[m] = fisher_derivative_basis_for_candidate(
+            candidate,
+            target=target,
+            z_step_nm=z_step_nm,
+        )
+        from .dhm_demodulated import (
+            compute_off_axis_demodulated_fisher_information,
+            compute_off_axis_demodulated_localization_crlb_from_field,
+            is_off_axis_demodulated_fisher_payload,
+            is_off_axis_holography_modality,
+        )
+
+        off_axis_demodulated_2d = (
+            z_step_nm is None
+            and is_off_axis_holography_modality(candidate.modality)
+            and is_off_axis_demodulated_fisher_payload(c, v)
+        )
+        if off_axis_demodulated_2d:
+            F_m, _precision_metadata = compute_off_axis_demodulated_fisher_information(
+                c,
+                v,
+                candidate.pixel_size_nm,
+                context=f"fusion candidate {m!r} off-axis demodulated Fisher",
+            )
+        else:
+            F_m = _fisher_for_candidate(np.asarray(c, dtype=float), v, candidate.pixel_size_nm, z_step_nm)
+        per_candidate_fisher[m] = F_m
         F_adjusted = _registration_adjusted_fisher(
             F_m,
             registration_covariance,
         )
-        registration_adjusted_per_modality_fisher[m] = F_adjusted
+        registration_adjusted_per_candidate_fisher[m] = F_adjusted
         sigma_xy_adjusted, xy_singular_adjusted = _sigma_xy_from_fisher(F_adjusted)
         adjusted_summary: dict[str, Any] = {
             "sigma_xy_nm": sigma_xy_adjusted,
@@ -555,39 +597,46 @@ def compute_modality_fusion_crlb(
             adjusted_summary["singular"] = xyz_singular_adjusted
         else:
             adjusted_summary["singular"] = xy_singular_adjusted
-        registration_adjusted_per_modality_crlb[m] = adjusted_summary
+        registration_adjusted_per_candidate_crlb[m] = adjusted_summary
         if z_step_nm is None:
-            per_modality_crlb[m] = compute_localization_crlb(
-                c,
-                v,
-                pixel_sizes[m],
-                signal_units=signal_units[m],
-                measurement_domain=measurement_domains[m],
-                noise_variance_units=noise_variance_units[m] or None,
-            )
+            if off_axis_demodulated_2d:
+                per_candidate_crlb[m] = compute_off_axis_demodulated_localization_crlb_from_field(
+                    c,
+                    v,
+                    candidate.pixel_size_nm,
+                )
+            else:
+                per_candidate_crlb[m] = compute_localization_crlb(
+                    np.asarray(c, dtype=float),
+                    v,
+                    candidate.pixel_size_nm,
+                    signal_units=candidate.signal_units,
+                    measurement_domain=candidate.measurement_domain,
+                    noise_variance_units=candidate.noise_variance_units,
+                )
         else:
-            per_modality_crlb[m] = compute_localization_crlb_3d(
-                c,
+            per_candidate_crlb[m] = compute_localization_crlb_3d(
+                np.asarray(c, dtype=float),
                 v,
-                pixel_sizes[m],
+                candidate.pixel_size_nm,
                 z_step_nm=z_step_nm,
-                signal_units=signal_units[m],
-                measurement_domain=measurement_domains[m],
-                noise_variance_units=noise_variance_units[m] or None,
+                signal_units=candidate.signal_units,
+                measurement_domain=candidate.measurement_domain,
+                noise_variance_units=candidate.noise_variance_units,
             )
 
-    # Step 2: identify best single-modality CRLB (skipping singular ones).
-    # NOTE: per-modality CRLB result dicts use the module-wide `_nm` suffix
+    # Step 2: identify best single-candidate CRLB (skipping singular ones).
+    # NOTE: per-candidate CRLB result dicts use the module-wide `_nm` suffix
     # convention (see compute_localization_crlb / compute_localization_crlb_3d).
     if z_step_nm is None:
         sigma_key_single = "sigma_xy_nm"
     else:
         sigma_key_single = "sigma_xyz_nm"
-    best_single_modality: str | None = None
+    best_single_candidate: str | None = None
     best_single_sigma: float | None = None
-    best_single_xy_modality: str | None = None
+    best_single_xy_candidate: str | None = None
     best_single_sigma_xy: float | None = None
-    for m, crlb in registration_adjusted_per_modality_crlb.items():
+    for m, crlb in registration_adjusted_per_candidate_crlb.items():
         if crlb.get("singular", False):
             s = None
         else:
@@ -596,18 +645,18 @@ def compute_modality_fusion_crlb(
             pass
         elif best_single_sigma is None or s < best_single_sigma:
             best_single_sigma = float(s)
-            best_single_modality = m
+            best_single_candidate = m
 
         s_xy = crlb.get("sigma_xy_nm")
         if s_xy is not None and np.isfinite(s_xy) and (
             best_single_sigma_xy is None or float(s_xy) < best_single_sigma_xy
         ):
             best_single_sigma_xy = float(s_xy)
-            best_single_xy_modality = m
+            best_single_xy_candidate = m
 
-    # Step 3: choose the modality subset to fuse.
+    # Step 3: choose the candidate subset to fuse.
     def _fuse_subset(subset: tuple[str, ...]) -> dict[str, Any]:
-        """Inner helper: sum per-modality Fishers for a given subset and
+        """Inner helper: sum per-candidate Fishers for a given subset and
         invert. Returns a dict with the fusion-side keys (without the gain
         comparison; the gain is computed once at the outer level).
 
@@ -618,7 +667,7 @@ def compute_modality_fusion_crlb(
         ``fusion_sigma_xyz_nm`` is the analogous L2 sum in 3-D."""
         F_sum = np.zeros((dim, dim), dtype=float)
         for s in subset:
-            F_sum = F_sum + registration_adjusted_per_modality_fisher[s]
+            F_sum = F_sum + registration_adjusted_per_candidate_fisher[s]
         F_sum = 0.5 * (F_sum + F_sum.T)
         axis_sigmas, axis_singular = _axis_sigmas_from_fisher(F_sum)
         axis_names = _axis_names_for_dim(dim)
@@ -637,7 +686,7 @@ def compute_modality_fusion_crlb(
             "fusion_rank": rank,
             "fusion_axes_singular": axes_singular,
             "fusion_xy_singular": bool(axis_singular[0] or axis_singular[1]),
-            "modalities_used": list(subset),
+            "candidates_used": list(subset),
         }
         if singular:
             if dim == 3:
@@ -674,7 +723,7 @@ def compute_modality_fusion_crlb(
         return out
 
     if subset_size is None:
-        chosen_subset = tuple(modalities)
+        chosen_subset = tuple(candidate_keys)
         fused = _fuse_subset(chosen_subset)
         xy_optimized_fused = fused
         subset_search_count = 1
@@ -686,7 +735,7 @@ def compute_modality_fusion_crlb(
             "fusion_sigma_xy_nm" if dim == 2 else "fusion_sigma_xyz_nm"
         )
         count = 0
-        for subset in itertools.combinations(modalities, subset_size):
+        for subset in itertools.combinations(candidate_keys, subset_size):
             count += 1
             cand = _fuse_subset(subset)
             if (
@@ -706,21 +755,31 @@ def compute_modality_fusion_crlb(
         if best is None:
             # Every subset of size k was singular; report a singular
             # result using the first enumerated subset.
-            chosen_subset = next(iter(itertools.combinations(modalities, subset_size)))
+            chosen_subset = next(iter(itertools.combinations(candidate_keys, subset_size)))
             fused = _fuse_subset(chosen_subset)
         else:
             fused = best
         xy_optimized_fused = best_xy
 
     # Step 4: assemble result + fusion-gain comparisons.
+    candidate_records = candidate_metadata_records(candidate_list)
+    record_by_key = {record["candidate_key"]: record for record in candidate_records}
+    for candidate in candidate_list:
+        record = record_by_key[candidate.key]
+        record["fisher_derivative_basis"] = derivative_basis[candidate.key]
+        record["noise_variance_units"] = (
+            per_candidate_crlb[candidate.key].get("noise_variance_units")
+            or candidate.noise_variance_units
+        )
+
     result: dict[str, Any] = {
-        "per_modality_fisher": per_modality_fisher,
-        "registration_adjusted_per_modality_fisher": (
-            registration_adjusted_per_modality_fisher
+        "per_candidate_fisher": per_candidate_fisher,
+        "registration_adjusted_per_candidate_fisher": (
+            registration_adjusted_per_candidate_fisher
         ),
-        "per_modality_crlb": per_modality_crlb,
-        "registration_adjusted_per_modality_crlb": (
-            registration_adjusted_per_modality_crlb
+        "per_candidate_crlb": per_candidate_crlb,
+        "registration_adjusted_per_candidate_crlb": (
+            registration_adjusted_per_candidate_crlb
         ),
         "fusion_fisher": fused["fusion_fisher"],
         "fusion_sigma_x_nm": fused["fusion_sigma_x_nm"],
@@ -730,16 +789,16 @@ def compute_modality_fusion_crlb(
         "fusion_rank": fused["fusion_rank"],
         "fusion_axes_singular": fused["fusion_axes_singular"],
         "fusion_xy_singular": fused["fusion_xy_singular"],
-        "best_single_modality": best_single_modality,
-        "best_single_xy_modality": best_single_xy_modality,
+        "best_single_candidate": best_single_candidate,
+        "best_single_xy_candidate": best_single_xy_candidate,
         "best_single_sigma_xy_nm": best_single_sigma_xy,
-        "modalities_used": fused["modalities_used"],
-        "xy_optimized_modalities_used": (
-            None if xy_optimized_fused is None else xy_optimized_fused["modalities_used"]
+        "candidates_used": fused["candidates_used"],
+        "xy_optimized_candidates_used": (
+            None if xy_optimized_fused is None else xy_optimized_fused["candidates_used"]
         ),
         "fusion_complementarity": _fusion_complementarity_metrics(
-            registration_adjusted_per_modality_fisher,
-            fused["modalities_used"],
+            registration_adjusted_per_candidate_fisher,
+            fused["candidates_used"],
         ),
         "subset_size": subset_size,
         "subset_search_count": subset_search_count,
@@ -749,25 +808,22 @@ def compute_modality_fusion_crlb(
             else np.asarray(registration_covariance, dtype=float)
         ),
         "registration_covariance_units": "nm^2",
-        "pixel_size_nm_by_modality": pixel_sizes,
-        "measurement_domain_by_modality": measurement_domains,
-        "signal_units_by_modality": signal_units,
-        "noise_variance_units_by_modality": {
-            modality: (
-                noise_variance_units[modality]
-                or _variance_units(signal_units[modality])
-            )
-            for modality in modalities
-        },
+        "candidate_records": candidate_records,
+        "candidate_keys": candidate_keys,
     }
-    result["fusion_physical_metadata"] = fusion_subset_metadata(
-        fused["modalities_used"],
-        modality_profile_cards,
+    result["fusion_physical_metadata"] = _fusion_subset_metadata_for_precomputed_matrices(
+        fused["candidates_used"],
+        candidate_profile_cards,
+        candidate_parent_metadata,
     )
     selected_parent_metadata = (
-        {m: parent_result_metadata_by_modality[m] for m in fused["modalities_used"]}
-        if parent_result_metadata_by_modality else None
-    )
+        {
+            m: candidate_parent_metadata[m]
+            for m in fused["candidates_used"]
+            if m in candidate_parent_metadata
+        }
+        if candidate_parent_metadata else None
+    ) or None
     result["parent_status_metadata"] = combine_parent_statuses(selected_parent_metadata)
     result["parent_convergence_statuses"] = _parent_convergence_statuses(selected_parent_metadata)
     result["parent_validation_statuses"] = _parent_validation_statuses(selected_parent_metadata)
@@ -792,7 +848,7 @@ def compute_modality_fusion_crlb(
         result["fusion_sigma_z_nm"] = fused["fusion_sigma_z_nm"]
         result["fusion_sigma_xyz_nm"] = fused["fusion_sigma_xyz_nm"]
         result["best_single_sigma_xyz_nm"] = (
-            best_single_sigma if best_single_modality is not None else None
+            best_single_sigma if best_single_candidate is not None else None
         )
 
     # Fusion gain on the lateral (xy) plane.
@@ -825,7 +881,7 @@ def compute_modality_fusion_crlb(
 
     if dim == 3:
         if (
-            best_single_modality is not None
+            best_single_candidate is not None
             and not fused["fusion_singular"]
             and fused["fusion_sigma_xyz_nm"] > 0.0
         ):
@@ -837,59 +893,156 @@ def compute_modality_fusion_crlb(
 
     return result
 
-def compute_modality_fusion_crlb_from_fisher_matrices(
-    per_modality_fisher: dict[str, np.ndarray],
+
+def _algebraic_only_fusion_metadata(
+    candidates: list[str],
+    *,
+    reason: str,
+) -> dict[str, Any]:
+    labels = [str(candidate) for candidate in candidates]
+    return {
+        "candidate_keys": labels,
+        "modalities": [],
+        "modality_physical_profiles": {},
+        "pairwise_compatibility": [],
+        "compatible": False,
+        "reason": reason,
+        "required_review": True,
+        "incompatible_hard_stop": False,
+        "compatible_only_as_sequential": False,
+        "compatible_only_as_algebraic_diagnostic": True,
+        "physical_feasibility_status": "unregistered_candidate_labels",
+        "physical_compatibility_status": "unregistered_candidate_labels",
+        "fusion_mode": "algebraic_diagnostic_only",
+        "algebraic_fusion_allowed": True,
+        "physically_feasible_fusion_allowed": False,
+        "independent_noise_assumption": True,
+        "same_sample_state_required": True,
+        "double_count_risk": False,
+        "same_quanta_reconstruction_risk": False,
+        "destructive_measurement_conflict": False,
+        "live_sample_conflict": False,
+        "preparation_conflict": False,
+        "fusion_interpretation": "algebraic_diagnostic_only",
+        "acquisition_cost_models": {},
+        "requires_physical_design_review": True,
+    }
+
+
+def _fusion_subset_metadata_for_precomputed_matrices(
+    candidates: list[str],
+    candidate_profile_cards: dict[str, dict[str, Any]] | None,
+    candidate_parent_metadata: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    from modality_compatibility import fusion_subset_metadata
+
+    cards = {} if candidate_profile_cards is None else dict(candidate_profile_cards)
+    parent_metadata = (
+        {}
+        if candidate_parent_metadata is None
+        else dict(candidate_parent_metadata)
+    )
+
+    def _physical_modality_for_candidate(candidate: str) -> str:
+        """Return backend modality metadata for a fusion candidate key."""
+
+        metadata = parent_metadata.get(candidate, {})
+        if isinstance(metadata, dict):
+            for key in ("modality", "canonical_modality_name", "imaging_model"):
+                value = metadata.get(key)
+                if value:
+                    return str(value)
+        card = cards.get(candidate, {})
+        if isinstance(card, dict):
+            for key in ("canonical_modality_name", "modality", "imaging_model"):
+                value = card.get(key)
+                if value:
+                    return str(value)
+        return str(candidate)
+
+    compatibility_modalities = [
+        _physical_modality_for_candidate(candidate) for candidate in candidates
+    ]
+    compatibility_cards: dict[str, dict[str, Any]] = {}
+    for candidate, physical_modality in zip(candidates, compatibility_modalities):
+        card = cards.get(candidate, {})
+        # Fusion algebra is keyed by microscope/candidate identity, but physical
+        # compatibility belongs to the backend modality installed for that
+        # microscope. Map candidate-keyed cards onto modality labels here so an
+        # explicit microscope name such as ``widefield_high_na`` is not treated
+        # as an unregistered physical modality.
+        if isinstance(card, dict) and physical_modality not in compatibility_cards:
+            compatibility_cards[physical_modality] = dict(card)
+
+    try:
+        metadata = fusion_subset_metadata(compatibility_modalities, compatibility_cards)
+        metadata["candidate_keys"] = list(candidates)
+        return metadata
+    except ValueError as exc:
+        return _algebraic_only_fusion_metadata(
+            candidates,
+            reason=(
+                "Precomputed Fisher matrices were fused algebraically, but one or "
+                f"more candidate labels do not declare registered physical modalities: {exc}"
+            ),
+        )
+
+
+def compute_candidate_fusion_crlb_from_fisher_matrices(
+    candidates: Sequence[FisherMatrixCandidate],
     *,
     subset_size: int | None = None,
     registration_covariance: np.ndarray | None = None,
-    modality_profile_cards: dict[str, dict[str, Any]] | None = None,
-    parent_result_metadata_by_modality: dict[str, dict[str, Any]] | None = None,
+    candidate_profile_cards: dict[str, dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Fusion CRLB directly from precomputed Fisher matrices.
 
     This is the core-owned route for workflows that already selected
-    rerendered finite-difference Fisher matrices. It uses the same lateral L2
-    sigma convention, registration-covariance model, physical-compatibility
-    metadata, and parent-status gating as image-domain fusion.
+    rerendered finite-difference Fisher matrices and now carry them as
+    ``FisherMatrixCandidate`` objects. It uses the same lateral L2 sigma
+    convention, registration-covariance model, physical-compatibility metadata,
+    and parent-status gating as image-domain fusion.
     """
     from .convergence import _parent_convergence_statuses, _parent_validation_statuses
 
     import itertools
-    from modality_compatibility import fusion_subset_metadata
 
-    if not isinstance(per_modality_fisher, dict) or not per_modality_fisher:
-        raise ValueError("per_modality_fisher must be a non-empty dict.")
-    modalities = list(per_modality_fisher)
-    matrices = {m: np.asarray(F, dtype=float) for m, F in per_modality_fisher.items()}
-    shape = matrices[modalities[0]].shape
+    candidate_list = _matrix_candidate_list(
+        candidates,
+        context="compute_candidate_fusion_crlb_from_fisher_matrices",
+    )
+    candidates = [candidate.key for candidate in candidate_list]
+    matrices = {candidate.key: np.asarray(candidate.fisher_matrix, dtype=float) for candidate in candidate_list}
+    candidate_parent_metadata = _parent_metadata_from_matrix_candidates(candidate_list)
+    shape = matrices[candidates[0]].shape
     if len(shape) != 2 or shape[0] != shape[1] or shape[0] < 2:
         raise ValueError(f"Fisher matrices must be square with at least two axes; got {shape}.")
-    for modality, F in matrices.items():
+    for candidate_key, F in matrices.items():
         if F.shape != shape:
             raise ValueError(
-                f"All Fisher matrices must have shape {shape}; {modality!r} has {F.shape}."
+                f"All Fisher matrices must have shape {shape}; {candidate_key!r} has {F.shape}."
             )
         if not np.all(np.isfinite(F)):
-            raise ValueError(f"Fisher matrix for {modality!r} contains non-finite values.")
+            raise ValueError(f"Fisher matrix for {candidate_key!r} contains non-finite values.")
     if subset_size is not None and (
-        not isinstance(subset_size, int) or subset_size < 1 or subset_size > len(modalities)
+        not isinstance(subset_size, int) or subset_size < 1 or subset_size > len(candidates)
     ):
         raise ValueError(
-            f"subset_size must be an integer in [1, {len(modalities)}]; got {subset_size!r}."
+            f"subset_size must be an integer in [1, {len(candidates)}]; got {subset_size!r}."
         )
 
     dim = int(shape[0])
     adjusted = {
-        modality: _registration_adjusted_fisher(F, registration_covariance)
-        for modality, F in matrices.items()
+        candidate_key: _registration_adjusted_fisher(F, registration_covariance)
+        for candidate_key, F in matrices.items()
     }
     adjusted_crlb: dict[str, dict[str, Any]] = {}
-    best_single_modality: str | None = None
+    best_single_candidate: str | None = None
     best_single_sigma_xy: float | None = None
-    for modality, F in adjusted.items():
+    for candidate_key, F in adjusted.items():
         sigma_xy, xy_singular = _sigma_xy_from_fisher(F)
         axis_sigmas, axis_singular = _axis_sigmas_from_fisher(F)
-        adjusted_crlb[modality] = {
+        adjusted_crlb[candidate_key] = {
             "sigma_xy_nm": sigma_xy,
             "xy_singular": xy_singular,
             "singular": bool(any(axis_singular)),
@@ -906,12 +1059,12 @@ def compute_modality_fusion_crlb_from_fisher_matrices(
             and (best_single_sigma_xy is None or sigma_xy < best_single_sigma_xy)
         ):
             best_single_sigma_xy = float(sigma_xy)
-            best_single_modality = modality
+            best_single_candidate = candidate_key
 
     def _fuse_subset(subset: tuple[str, ...]) -> dict[str, Any]:
         F_sum = np.zeros(shape, dtype=float)
-        for modality in subset:
-            F_sum = F_sum + adjusted[modality]
+        for candidate_key in subset:
+            F_sum = F_sum + adjusted[candidate_key]
         F_sum = 0.5 * (F_sum + F_sum.T)
         sigma_xy, xy_singular = _sigma_xy_from_fisher(F_sum)
         axis_sigmas, axis_singular = _axis_sigmas_from_fisher(F_sum)
@@ -928,16 +1081,16 @@ def compute_modality_fusion_crlb_from_fisher_matrices(
             "fusion_xy_singular": bool(xy_singular),
             "fusion_rank": int(dim - sum(bool(flag) for flag in axis_singular[:dim])),
             "fusion_axes_singular": axes_singular,
-            "modalities_used": list(subset),
+            "candidates_used": list(subset),
         }
 
     if subset_size is None:
-        fused = _fuse_subset(tuple(modalities))
+        fused = _fuse_subset(tuple(candidates))
         subset_search_count = 1
     else:
         fused = None
         subset_search_count = 0
-        for subset in itertools.combinations(modalities, subset_size):
+        for subset in itertools.combinations(candidates, subset_size):
             subset_search_count += 1
             candidate = _fuse_subset(subset)
             if candidate["fusion_xy_singular"] or not np.isfinite(candidate["fusion_sigma_xy_nm"]):
@@ -951,14 +1104,22 @@ def compute_modality_fusion_crlb_from_fisher_matrices(
             ):
                 fused = candidate
         if fused is None:
-            fused = _fuse_subset(next(iter(itertools.combinations(modalities, subset_size))))
+            fused = _fuse_subset(next(iter(itertools.combinations(candidates, subset_size))))
 
     selected_parent_metadata = (
-        {m: parent_result_metadata_by_modality[m] for m in fused["modalities_used"]}
-        if parent_result_metadata_by_modality else None
-    )
+        {
+            m: candidate_parent_metadata[m]
+            for m in fused["candidates_used"]
+            if m in candidate_parent_metadata
+        }
+        if candidate_parent_metadata else None
+    ) or None
     parent_status_metadata = combine_parent_statuses(selected_parent_metadata)
-    physical_metadata = fusion_subset_metadata(fused["modalities_used"], modality_profile_cards)
+    physical_metadata = _fusion_subset_metadata_for_precomputed_matrices(
+        fused["candidates_used"],
+        candidate_profile_cards,
+        candidate_parent_metadata,
+    )
     physical_fusion_allowed = bool(physical_metadata["physically_feasible_fusion_allowed"])
     fusion_validation_status = parent_status_metadata["validation_status"]
     production_grid_diagnostic = parent_status_metadata["production_grid_diagnostic"]
@@ -967,9 +1128,9 @@ def compute_modality_fusion_crlb_from_fisher_matrices(
         production_grid_diagnostic = True
 
     result: dict[str, Any] = {
-        "per_modality_fisher": matrices,
-        "registration_adjusted_per_modality_fisher": adjusted,
-        "registration_adjusted_per_modality_crlb": adjusted_crlb,
+        "per_candidate_fisher": matrices,
+        "registration_adjusted_per_candidate_fisher": adjusted,
+        "registration_adjusted_per_candidate_crlb": adjusted_crlb,
         "fusion_fisher": fused["fusion_fisher"],
         "fusion_sigma_x_nm": fused["fusion_sigma_x_nm"],
         "fusion_sigma_y_nm": fused["fusion_sigma_y_nm"],
@@ -978,10 +1139,10 @@ def compute_modality_fusion_crlb_from_fisher_matrices(
         "fusion_xy_singular": fused["fusion_xy_singular"],
         "fusion_rank": fused["fusion_rank"],
         "fusion_axes_singular": fused["fusion_axes_singular"],
-        "best_single_modality": best_single_modality,
-        "best_single_xy_modality": best_single_modality,
+        "best_single_candidate": best_single_candidate,
+        "best_single_xy_candidate": best_single_candidate,
         "best_single_sigma_xy_nm": best_single_sigma_xy,
-        "modalities_used": fused["modalities_used"],
+        "candidates_used": fused["candidates_used"],
         "subset_size": subset_size,
         "subset_search_count": subset_search_count,
         "registration_covariance": (
@@ -990,9 +1151,11 @@ def compute_modality_fusion_crlb_from_fisher_matrices(
             else np.asarray(registration_covariance, dtype=float)
         ),
         "registration_covariance_units": "nm^2",
+        "candidate_records": matrix_candidate_metadata_records(candidate_list),
+        "candidate_keys": candidates,
         "fusion_complementarity": _fusion_complementarity_metrics(
             adjusted,
-            fused["modalities_used"],
+            fused["candidates_used"],
         ),
         "fusion_physical_metadata": physical_metadata,
         "parent_status_metadata": parent_status_metadata,
@@ -1018,4 +1181,4 @@ def compute_modality_fusion_crlb_from_fisher_matrices(
     result["fusion_gain_xy_semantics"] = "selected_subset_lateral_ratio"
     return result
 
-__all__ = ['sigma_xy_from_fisher', 'compute_registration_degradation_curve', 'compute_modality_fusion_crlb', 'compute_modality_fusion_crlb_from_fisher_matrices']
+__all__ = ['sigma_xy_from_fisher', 'compute_candidate_registration_degradation_curve', 'compute_fisher_candidate_fusion_crlb', 'compute_candidate_fusion_crlb_from_fisher_matrices']

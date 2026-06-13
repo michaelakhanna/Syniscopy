@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional
+from functools import lru_cache
+from typing import Callable, Dict, Optional
 
 import numpy as np
 
@@ -163,36 +164,14 @@ MATERIAL_ELECTRON_DEFAULTS: Dict[str, Dict[str, float]] = {
     },
 }
 
-MATERIAL_NAME_VARIANTS: Dict[str, List[str]] = {
-    "gold": ["gold", "au", "gold nanoparticle", "nanogold"],
-    "silver": ["silver", "ag", "silver nanoparticle", "nanosilver"],
-    "copper": ["copper", "cu"],
-    "aluminum": ["aluminum", "aluminium", "al"],
-    "silicon": ["silicon", "si"],
-    "pet": ["pet", "polyethylene terephthalate", "pet plastic"],
-    "polyethylene": ["polyethylene", "pe"],
-    "polypropylene": ["polypropylene", "pp"],
-    "polystyrene": ["polystyrene", "ps"],
-    "fluorescent_polystyrene": [
-        "fluorescent_polystyrene",
-        "fluorescent polystyrene",
-        "fluorescent_ps",
-        "fluorescent ps",
-    ],
-    "air": ["air"],
-    "carbon": ["carbon", "amorphous carbon", "holey carbon"],
-    "silica": ["silica", "sio2", "silicon dioxide"],
-    "water": ["water", "h2o"],
-    "protein": ["protein", "proteins"],
-    "lipid": ["lipid", "lipids"],
-    "glass": ["glass", "bk7", "borosilicate glass"],
+MATERIAL_NAME_MAP: Dict[str, str] = {
+    canonical: canonical
+    for canonical in (
+        set(MATERIAL_REFRACTIVE_INDEX)
+        | set(MATERIAL_FLUORESCENCE_DEFAULTS)
+        | set(MATERIAL_ELECTRON_DEFAULTS)
+    )
 }
-
-MATERIAL_NAME_MAP: Dict[str, str] = {}
-for canonical, variants in MATERIAL_NAME_VARIANTS.items():
-    for variant in variants:
-        MATERIAL_NAME_MAP[variant.lower()] = canonical
-    MATERIAL_NAME_MAP[canonical.lower()] = canonical
 
 GOLD_WAVELENGTHS_NM = np.array([450.0, 500.0, 550.0, 600.0, 650.0], dtype=float)
 GOLD_N = np.array([1.46, 0.97, 0.57, 0.27, 0.17], dtype=float)
@@ -258,6 +237,11 @@ def lookup_refractive_index(
 ) -> complex:
     del diameter_nm
     canonical = normalize_material_name(material_name)
+    return _lookup_refractive_index_cached(canonical, float(wavelength_nm))
+
+
+@lru_cache(maxsize=1024)
+def _lookup_refractive_index_cached(canonical: str, wavelength_nm: float) -> complex:
     if canonical == "gold":
         return _interp_complex_from_table(GOLD_WAVELENGTHS_NM, GOLD_N, GOLD_K, wavelength_nm)
     if canonical == "silver":
@@ -270,8 +254,7 @@ def lookup_refractive_index(
     if canonical in MATERIAL_REFRACTIVE_INDEX:
         return complex(MATERIAL_REFRACTIVE_INDEX[canonical])
     raise ValueError(
-        f"Material '{material_name}' normalized to '{canonical}', "
-        "but no refractive index model is defined for this key."
+        f"Material '{canonical}' has no refractive index model defined."
     )
 
 
@@ -286,15 +269,32 @@ def optical_index_model_for_material(material_name: str) -> complex | Callable[[
 
 
 def material_electron_defaults(material_name: str) -> dict[str, float]:
-    return dict(MATERIAL_ELECTRON_DEFAULTS.get(normalize_material_name(material_name), {}))
+    canonical = normalize_material_name(material_name)
+    return dict(_material_electron_defaults_cached(canonical))
 
 
 def material_fluorescence_defaults(material_name: str) -> dict[str, float | None]:
-    return dict(MATERIAL_FLUORESCENCE_DEFAULTS.get(normalize_material_name(material_name), {}))
+    canonical = normalize_material_name(material_name)
+    return dict(_material_fluorescence_defaults_cached(canonical))
 
 
 def sem_transport_material(material_name: str) -> SEMTransportMaterial:
     canonical = normalize_material_name(material_name)
+    return _sem_transport_material_cached(canonical)
+
+
+@lru_cache(maxsize=256)
+def _material_electron_defaults_cached(canonical: str) -> tuple[tuple[str, float], ...]:
+    return tuple(MATERIAL_ELECTRON_DEFAULTS.get(canonical, {}).items())
+
+
+@lru_cache(maxsize=256)
+def _material_fluorescence_defaults_cached(canonical: str) -> tuple[tuple[str, float | None], ...]:
+    return tuple(MATERIAL_FLUORESCENCE_DEFAULTS.get(canonical, {}).items())
+
+
+@lru_cache(maxsize=256)
+def _sem_transport_material_cached(canonical: str) -> SEMTransportMaterial:
     values = MATERIAL_ELECTRON_DEFAULTS[canonical]
     required = (
         "atomic_number",
@@ -336,7 +336,6 @@ __all__ = [
     "MATERIAL_ELECTRON_DEFAULTS",
     "MATERIAL_FLUORESCENCE_DEFAULTS",
     "MATERIAL_NAME_MAP",
-    "MATERIAL_NAME_VARIANTS",
     "MATERIAL_REFRACTIVE_INDEX",
     "SEMTransportMaterial",
     "lookup_refractive_index",

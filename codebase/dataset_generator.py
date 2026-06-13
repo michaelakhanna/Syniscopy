@@ -36,7 +36,6 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--reset", action="store_true")
     parser.add_argument("--composition-json", "--composition_json", type=str, default=None)
     parser.add_argument("--no-resume", "--no_resume", dest="no_resume", action="store_true")
-    parser.add_argument("--append-on-config-change", "--append_on_config_change", dest="append_on_config_change", action="store_true")
     parser.add_argument("--write-params-template", "--write_params_template", dest="write_params_template", type=str, default=None)
     parser.add_argument("--verbose", action="store_true")
     return parser.parse_args()
@@ -50,7 +49,7 @@ def main() -> None:
 
     if args.write_params_template:
         path = write_default_params_template(args.write_params_template)
-        logger.info("Wrote PARAMS template to %s", path)
+        logger.info("Wrote parameters template to %s", path)
         return
 
     composition = None
@@ -79,7 +78,6 @@ def main() -> None:
         composition=composition,
         resume_existing=not args.no_resume,
         reset_existing=args.reset,
-        append_on_config_change=args.append_on_config_change,
         verbose=args.verbose,
     )
 

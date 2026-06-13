@@ -8,11 +8,24 @@ from ._shared import (
     np,
 )
 from backend_fidelity import attach_backend_fidelity_metadata
-from config.runtime import TemSettings, param_value
-from .electron_constants import (
-    electron_interaction_parameter_rad_per_V_nm,
-    electron_wavelength_m,
-    scherzer_defocus_m,
+from config.runtime import (
+    OpticalPsfSupportSettings,
+    SampleEnvironmentSettings,
+    TemSettings,
+)
+from simulation_runtime_state import get_source_volume_support
+from detector_frame_conversion import (
+    DETECTOR_OUTPUT_DOMAIN_ELECTRON_COUNT,
+    MODEL_OUTPUT_DOMAIN_RELATIVE_INTENSITY,
+    REFERENCE_BASIS_NONE,
+    VALUE_FORM_ABSOLUTE,
+    DetectorFrameConversion,
+    convert_model_output_to_detector_frame,
+)
+from direct_signal_contracts import (
+    DirectParticleSignalProduct,
+    electron_count_delta_representation,
+    tem_projected_phase_source_representation,
 )
 from .tem_backends import (
     CTFProxyTEMBackend,
@@ -20,6 +33,7 @@ from .tem_backends import (
     PhysicalMultisliceTEMBackend,
     SyniscopyMultisliceTEMBackend,
 )
+from .source_rasterization import primitive_footprint_patch
 
 class TransmissionElectronMicroscopyImagingModel(ImagingModel):
     """
@@ -57,7 +71,7 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
     ``tem_backend='multislice_physical'``, Syniscopy uses its physical
     Cowley-Moodie/Kirkland-style multislice TEM backend.
 
-    Parameters (PARAMS keys, all optional with nominal defaults)
+    Parameters (parameters keys, all optional with nominal defaults)
     ------------------------------------------------------------
     The defaults define a stable moderate-contrast synthetic TEM regime; use
     calibrated values for instrument-specific studies.
@@ -74,8 +88,8 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
       rendered model-canvas pitch ``pixel_size_nm / psf_oversampling_factor``.
     - ``tem_dose_per_pixel``          (default 100)    mean electron
       count per pixel for the unscattered beam.  Used by
-      scale_intensity_to_counts to convert the dimensionless weak-phase
-      image into detector counts.
+      the model-output detector-frame conversion to convert the dimensionless
+      weak-phase image into detector electron counts.
 
     Output
     ------
@@ -91,6 +105,7 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
     """
 
     output_type = "intensity"
+    counts_are_exposure_integrated = True
     uses_sample_environment_pattern = True
     uses_particle_material_sources = True
     requires_complex_optical_psf = False
@@ -115,7 +130,7 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
             z_low = np.inf
             z_high = -np.inf
             for component in spec.components:
-                radius_nm = 0.5 * float(component.diameter_nm)
+                radius_nm = float(component.bounding_radius_nm)
                 offset_z_nm = float(component.offset_nm[2])
                 z_low = min(z_low, offset_z_nm - radius_nm)
                 z_high = max(z_high, offset_z_nm + radius_nm)
@@ -127,157 +142,73 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
 
     def __init__(self, params: dict) -> None:
         settings = TemSettings.from_params(params)
-        self._tem_model = str(param_value(params, "tem_model")).strip().lower()
-        if self._tem_model not in {
-            "weak_phase_ctf",
-            "multislice_lite",
-            "syniscopy_multislice",
-            "multislice_physical",
-        }:
-            raise ValueError(
-                "PARAMS['tem_model'] must be 'weak_phase_ctf', "
-                "'multislice_lite', 'syniscopy_multislice', or "
-                "'multislice_physical'; "
-                f"got {self._tem_model!r}."
-            )
-        self._tem_backend = str(param_value(params, "tem_backend")).strip().lower()
-        if self._tem_backend not in {
-            "ctf_proxy",
-            "multislice_lite",
-            "syniscopy_multislice",
-            "multislice_physical",
-        }:
-            raise ValueError(
-                "PARAMS['tem_backend'] must be 'ctf_proxy', 'multislice_lite', "
-                "'syniscopy_multislice', or 'multislice_physical'; "
-                f"got {self._tem_backend!r}."
-            )
-        if self._tem_backend == "multislice_lite" and self._tem_model != "multislice_lite":
-            raise ValueError(
-                "PARAMS['tem_backend']='multislice_lite' requires "
-                "PARAMS['tem_model']='multislice_lite'."
-            )
-        if self._tem_model == "syniscopy_multislice" and self._tem_backend != "syniscopy_multislice":
-            raise ValueError(
-                "PARAMS['tem_model']='syniscopy_multislice' requires "
-                "PARAMS['tem_backend']='syniscopy_multislice'."
-            )
-        if self._tem_model == "multislice_physical" and self._tem_backend != "multislice_physical":
-            raise ValueError(
-                "PARAMS['tem_model']='multislice_physical' requires "
-                "PARAMS['tem_backend']='multislice_physical'."
-            )
-        if self._tem_model == "weak_phase_ctf" and self._tem_backend != "ctf_proxy":
-            raise ValueError(
-                "PARAMS['tem_model']='weak_phase_ctf' requires "
-                "PARAMS['tem_backend']='ctf_proxy'."
-            )
-        if self._tem_backend == "ctf_proxy" and self._tem_model != "weak_phase_ctf":
-            raise ValueError(
-                "PARAMS['tem_backend']='ctf_proxy' requires "
-                "PARAMS['tem_model']='weak_phase_ctf'."
-            )
-        if self._tem_backend == "multislice_physical" and self._tem_model != "multislice_physical":
-            raise ValueError(
-                "PARAMS['tem_backend']='multislice_physical' requires "
-                "PARAMS['tem_model']='multislice_physical'."
-            )
-        self._tem_potential_source = self._resolve_tem_potential_source(
-            param_value(params, "tem_potential_source")
-        )
-        self._V_kV = float(param_value(params, "tem_acceleration_kV"))
-        if self._V_kV <= 0.0:
-            raise ValueError(
-                f"PARAMS['tem_acceleration_kV'] must be positive; got {self._V_kV}."
-            )
-        self._Cs_mm = float(param_value(params, "tem_Cs_mm"))
-        if self._Cs_mm < 0.0:
-            raise ValueError(
-                f"PARAMS['tem_Cs_mm'] must be non-negative; got {self._Cs_mm}."
-            )
-        self._alpha_mrad = float(param_value(params, "tem_partial_coherence_alpha_mrad"))
-        if self._alpha_mrad < 0.0:
-            raise ValueError(
-                f"PARAMS['tem_partial_coherence_alpha_mrad'] must be non-negative; "
-                f"got {self._alpha_mrad}."
-            )
+        self._tem_settings = settings
+        self._tem_model = settings.model
+        self._tem_backend = settings.backend
+        self._tem_potential_source = settings.potential_source
+        self._V_kV = settings.acceleration_kV
+        self._Cs_mm = settings.spherical_aberration_mm
+        self._alpha_mrad = settings.partial_coherence_alpha_mrad
+        self._lambda_m = settings.electron_wavelength_m
+        self._defocus_m = settings.defocus_m
+        self._phase_shift_per_volt_nm = settings.phase_shift_per_volt_nm
+        self._projected_potential_scale = settings.projected_potential_scale
 
-        # Resolve wavelength and defocus (defocus defaults to Scherzer).
-        self._lambda_m = electron_wavelength_m(self._V_kV)
-        if "tem_defocus_nm" in params and params["tem_defocus_nm"] is not None:
-            self._defocus_m = 1.0e-9 * float(params["tem_defocus_nm"])
-        else:
-            self._defocus_m = scherzer_defocus_m(self._V_kV, self._Cs_mm)
-
-        phase_shift_raw = param_value(params, "tem_phase_shift_per_volt_nm")
-        if phase_shift_raw is None:
-            self._phase_shift_per_volt_nm = electron_interaction_parameter_rad_per_V_nm(self._V_kV)
-        else:
-            self._phase_shift_per_volt_nm = float(phase_shift_raw)
-        if (
-            not np.isfinite(self._phase_shift_per_volt_nm)
-            or self._phase_shift_per_volt_nm < 0.0
-        ):
-            raise ValueError(
-                "PARAMS['tem_phase_shift_per_volt_nm'] must be finite and "
-                f"non-negative; got {self._phase_shift_per_volt_nm}."
-            )
-
-        canvas_pitch_nm = settings.sampling.model_canvas_pixel_size_nm
+        self._sampling = settings.sampling
+        canvas_pitch_nm = self._sampling.model_canvas_pixel_size_nm
         if not np.isfinite(canvas_pitch_nm) or canvas_pitch_nm <= 0.0:
             raise ValueError(
-                "PARAMS['pixel_size_nm'] / PARAMS['psf_oversampling_factor'] must "
+                "parameters['pixel_size_nm'] / parameters['psf_oversampling_factor'] must "
                 f"resolve to a positive pitch; got {canvas_pitch_nm} nm."
             )
 
         # Fourier-grid pitch is the physical pitch of the rendered model canvas.
-        # tem_pixel_size_pm is retained only as a compatibility assertion so it
-        # cannot silently make the CTF grid disagree with detector/Fisher units.
         self._pixel_size_m = 1.0e-9 * canvas_pitch_nm
-        if "tem_pixel_size_pm" in params and params["tem_pixel_size_pm"] is not None:
-            requested_m = 1.0e-12 * float(params["tem_pixel_size_pm"])
-            if (
-                not np.isfinite(requested_m)
-                or requested_m <= 0.0
-                or not np.isclose(requested_m, self._pixel_size_m, rtol=1e-6, atol=1e-15)
-            ):
-                raise ValueError(
-                    "PARAMS['tem_pixel_size_pm'] must match the rendered model-canvas "
-                    "pitch pixel_size_nm / psf_oversampling_factor. "
-                    f"Got tem_pixel_size_pm={params['tem_pixel_size_pm']} pm and "
-                    f"canvas pitch={canvas_pitch_nm * 1000.0:.6g} pm."
-                )
+        settings.assert_canvas_pixel_pitch()
         if not np.isfinite(self._pixel_size_m) or self._pixel_size_m <= 0.0:
             raise ValueError(
-                "PARAMS['tem_pixel_size_pm'] or PARAMS['pixel_size_nm'] must resolve "
+                "parameters['pixel_size_nm'] must resolve "
                 f"to a positive pixel pitch; got {self._pixel_size_m} m."
             )
 
         self._dose_per_pixel = settings.dose_per_pixel
         self._configured_multislice_slices = settings.multislice_slices
-        self._objective_aperture_mrad = param_value(params, "tem_objective_aperture_mrad")
-        if self._objective_aperture_mrad is not None:
-            self._objective_aperture_mrad = float(self._objective_aperture_mrad)
-            if not np.isfinite(self._objective_aperture_mrad) or self._objective_aperture_mrad <= 0.0:
-                raise ValueError(
-                    "PARAMS['tem_objective_aperture_mrad'] must be positive when set."
-                )
-        slice_thickness_raw = param_value(params, "tem_slice_thickness_nm")
-        self._slice_thickness_nm = None if slice_thickness_raw is None else float(slice_thickness_raw)
-        if self._slice_thickness_nm is not None and (
-            not np.isfinite(self._slice_thickness_nm) or self._slice_thickness_nm <= 0.0
-        ):
-            raise ValueError(
-                "PARAMS['tem_slice_thickness_nm'] must be positive and finite when set; "
-                f"got {slice_thickness_raw!r}."
-            )
+        self._objective_aperture_mrad = settings.objective_aperture_mrad
+        self._slice_thickness_nm = settings.slice_thickness_nm
         self._required_multislice_slices = self._required_multislice_slices_from_particles(
             params,
             self._slice_thickness_nm,
         )
+        source_volume_support = get_source_volume_support(params, "tem")
+        resolved_source_slices = None if source_volume_support is None else int(source_volume_support.slice_count)
+        resolved_required_slices = (
+            None if source_volume_support is None else int(source_volume_support.required_slice_count)
+        )
+        self._resolved_source_volume_slices = (
+            None if resolved_source_slices is None else int(resolved_source_slices)
+        )
+        self._required_multislice_slices_for_rendered_z = (
+            None if resolved_required_slices is None else int(resolved_required_slices)
+        )
         self._multislice_slices = max(
             int(self._configured_multislice_slices),
             int(self._required_multislice_slices),
+            1
+            if self._resolved_source_volume_slices is None
+            else int(self._resolved_source_volume_slices),
+        )
+        source_z_center = None if source_volume_support is None else float(source_volume_support.z_center_nm)
+        self._source_z_center_nm = 0.0 if source_z_center is None else float(source_z_center)
+        if not np.isfinite(self._source_z_center_nm):
+            raise ValueError(
+                "Resolved internal TEM source-volume z center must be finite; "
+                f"got {source_z_center!r}."
+            )
+        self._source_z_envelope_min_nm = (
+            None if source_volume_support is None else float(source_volume_support.envelope_min_nm)
+        )
+        self._source_z_envelope_max_nm = (
+            None if source_volume_support is None else float(source_volume_support.envelope_max_nm)
         )
         # Cache the CTF array per frame shape. The CTF depends only on
         # the shape, pixel pitch, lambda, Cs, defocus, alpha, so once
@@ -301,55 +232,49 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
         self._tem_high_fidelity_backend = None
         if self._tem_backend == "multislice_physical":
             self._tem_high_fidelity_backend = PhysicalMultisliceTEMBackend(
-                params,
                 ctf_backend=self._ctf_backend,
+                tem_settings=settings,
                 electron_wavelength_m=self._lambda_m,
                 pixel_size_m=self._pixel_size_m,
                 dose_per_pixel=self._dose_per_pixel,
                 default_slice_count=self._multislice_slices,
-                default_slice_thickness_nm=self._slice_thickness_nm,
-                default_objective_aperture_mrad=self._objective_aperture_mrad,
             )
         elif self._tem_backend == "syniscopy_multislice":
             self._tem_high_fidelity_backend = SyniscopyMultisliceTEMBackend(
-                params,
                 pixel_size_m=self._pixel_size_m,
+                tem_settings=settings,
                 electron_wavelength_m=self._lambda_m,
                 Cs_mm=self._Cs_mm,
                 defocus_m=self._defocus_m,
                 partial_coherence_alpha_mrad=self._alpha_mrad,
                 dose_per_pixel=self._dose_per_pixel,
                 default_slice_count=self._multislice_slices,
-                default_slice_thickness_nm=self._slice_thickness_nm,
-                default_objective_aperture_mrad=self._objective_aperture_mrad,
             )
 
-    @classmethod
-    def _resolve_tem_potential_source(cls, raw: object) -> str:
-        source = str(raw).strip().lower()
-        if source in {
-            cls._TEM_POTENTIAL_SOURCE_MATERIAL,
-            "material",
-            "particle_only",
-            "material_projected_potential",
-        }:
-            return cls._TEM_POTENTIAL_SOURCE_MATERIAL
-        if source in {
-            cls._TEM_POTENTIAL_SOURCE_SAMPLE_ENVIRONMENT,
-            "sample_environment",
-            "sample_environment_only",
-            "environment_only",
-        }:
-            return cls._TEM_POTENTIAL_SOURCE_SAMPLE_ENVIRONMENT
-        if source in {
-            cls._TEM_POTENTIAL_SOURCE_COMPOSITE,
-            "material_plus_environment",
-            "composite",
-            "material_and_sample_environment",
-            "particle_plus_sample_environment",
-        }:
-            return cls._TEM_POTENTIAL_SOURCE_COMPOSITE
-        return source
+    def _uses_sliced_source_stack(self) -> bool:
+        return self._tem_high_fidelity_backend is not None and self._slice_thickness_nm is not None
+
+    def particle_source_z_basis(self, params: dict) -> str:
+        del params
+        return "physical_sample_world" if self._uses_sliced_source_stack() else "projected_no_z"
+
+    def source_coordinate_contract(self, params: dict) -> dict:
+        del params
+        source_z_basis = self.particle_source_z_basis({})
+        # TEM has two distinct source-coordinate regimes. Weak-phase CTF and
+        # multislice-lite consume a projected phase/potential map, so absolute
+        # particle z must not cross the source-density seam. Physical multislice
+        # consumes a slice-resolved source stack and must retain world-z placement.
+        return {
+            "source_density_z_basis": source_z_basis,
+            "source_z_planes_basis": source_z_basis,
+            "optical_response_z_basis": "physical_sample_world" if self._uses_sliced_source_stack() else "projected_no_z",
+            "tem_source_coordinate_regime": (
+                "slice_resolved_physical_world_z"
+                if self._uses_sliced_source_stack()
+                else "projected_phase_no_particle_z"
+            ),
+        }
 
     @staticmethod
     def _as_sample_environment_potential(
@@ -362,12 +287,7 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
                 "TEM potential synthesis requested sample-environment terms "
                 "but sample_environment is not configured."
             )
-        scale = float(param_value(params, "tem_sample_environment_potential_scale"))
-        if not np.isfinite(scale) or scale < 0.0:
-            raise ValueError(
-                "PARAMS['tem_sample_environment_potential_scale'] must be finite "
-                f"and non-negative; got {scale!r}."
-            )
+        scale = SampleEnvironmentSettings.from_params(params).tem_potential_scale
         return scale * phase_shift_per_volt_nm * sample_environment.substrate.projected_potential_V_nm()
 
     def _compose_tem_projected_potential_source(
@@ -450,17 +370,45 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
             return self._multislice_lite_backend.contrast_from_projected_phase(source)
         return self._ctf_backend.contrast_from_projected_phase(source)
 
+    @staticmethod
+    def _centered_l1_support_radius_pixels(
+        response: np.ndarray,
+        *,
+        tail_fraction: float,
+    ) -> int:
+        arr = np.maximum(np.asarray(response, dtype=float), 0.0)
+        total = float(np.sum(arr))
+        if total <= 0.0 or not np.isfinite(total):
+            return 0
+        h, w = arr.shape[-2:]
+        yy, xx = np.indices((h, w), dtype=float)
+        cy = h // 2
+        cx = w // 2
+        radius = np.sqrt((yy - float(cy)) ** 2 + (xx - float(cx)) ** 2).ravel()
+        values = arr.ravel()
+        order = np.argsort(radius)
+        cumulative = np.cumsum(values[order])
+        target = total * (1.0 - float(np.clip(tail_fraction, 0.0, 1.0)))
+        idx = int(np.searchsorted(cumulative, target, side="left"))
+        idx = min(max(idx, 0), order.size - 1)
+        return int(np.ceil(float(radius[order[idx]])))
+
+    def _automatic_filter_guard_radius_pixels(self, params: dict) -> int:
+        os_size = max(1, self._sampling.model_canvas_shape[0])
+        probe_size = max(os_size, 128)
+        ctf = self._ctf_backend.ctf((probe_size, probe_size))
+        impulse = np.abs(np.fft.fftshift(np.fft.ifft2(ctf)))
+        threshold = OpticalPsfSupportSettings.from_params(params).intensity_fraction_threshold
+        support = self._centered_l1_support_radius_pixels(
+            impulse,
+            tail_fraction=threshold,
+        )
+        return int(np.ceil(min(max(support + 2, 64), max(os_size, 64))))
+
     def filter_guard_radius_pixels(self, params: dict) -> int | None:
-        raw = param_value(params, 'tem_filter_guard_pixels')
-        if raw is None:
-            return 64
-        guard = float(raw)
-        if not np.isfinite(guard) or guard < 0.0:
-            raise ValueError(
-                "PARAMS['tem_filter_guard_pixels'] must be non-negative and finite; "
-                f"got {raw!r}."
-            )
-        return int(np.ceil(guard))
+        return self._tem_settings.filter_guard_radius_pixels(
+            automatic_guard_radius=self._automatic_filter_guard_radius_pixels(params)
+        )
 
 
     def _projected_phase_source(
@@ -475,6 +423,8 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
         material_properties,
         params: dict,
         particle_z_nm: float | None = None,
+        component_geometry=None,
+        orientation_matrix=None,
     ) -> np.ndarray:
         source = self.initialize_particle_source_canvas(shape, params)
         self.accumulate_particle_source(
@@ -487,6 +437,8 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
             material_properties=material_properties,
             params=params,
             particle_z_nm=particle_z_nm,
+            component_geometry=component_geometry,
+            orientation_matrix=orientation_matrix,
         )
         return source
 
@@ -494,8 +446,28 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
         del params
         return float(self._lambda_m * 1.0e9)
 
+    def _source_z_planes_nm(self) -> list[float] | None:
+        if self._slice_thickness_nm is None:
+            return None
+        dz_nm = float(self._slice_thickness_nm)
+        return [
+            float(self._source_z_center_nm + (idx - 0.5 * (self._multislice_slices - 1)) * dz_nm)
+            for idx in range(self._multislice_slices)
+        ]
+
+    def _source_z_bounds_nm(self) -> tuple[float, float] | None:
+        if self._slice_thickness_nm is None:
+            return None
+        half_extent_nm = 0.5 * float(self._multislice_slices) * float(self._slice_thickness_nm)
+        return (
+            float(self._source_z_center_nm - half_extent_nm),
+            float(self._source_z_center_nm + half_extent_nm),
+        )
+
     def compute_response_function(self, shape: tuple[int, int], params: dict) -> dict:
         response = super().compute_response_function(shape, params)
+        source_z_planes_nm = self._source_z_planes_nm()
+        source_z_bounds_nm = self._source_z_bounds_nm()
         kind_by_model = {
             "weak_phase_ctf": "tem_ctf",
             "multislice_lite": "tem_multislice_lite",
@@ -515,7 +487,7 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
             "pre_count_contrast_units": "relative_intensity_difference",
             "final_measurement_domain": "electron_count",
             "final_signal_units": "electron_count",
-            "count_scaling_mode": "electron_dose_per_pixel",
+            "count_scaling_mode": "incident_electron_dose_per_pixel_times_relative_direct_beam_intensity",
             "forward_observable": (
                 "|multislice-lite exit wave with objective CTF readout|^2"
                 if self._tem_model == "multislice_lite"
@@ -535,11 +507,27 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
             "multislice_slices": self._multislice_slices,
             "configured_multislice_slices": self._configured_multislice_slices,
             "required_multislice_slices_for_particle_depth": self._required_multislice_slices,
+            "required_multislice_slices_for_rendered_z": self._required_multislice_slices_for_rendered_z,
+            "resolved_tem_source_volume": bool(self._resolved_source_volume_slices is not None),
+            "resolved_tem_source_volume_slices": self._resolved_source_volume_slices,
             "slice_thickness_nm": self._slice_thickness_nm,
             "multislice_source_extent_nm": (
                 float(self._multislice_slices * self._slice_thickness_nm)
                 if self._slice_thickness_nm is not None
                 else None
+            ),
+            "source_z_center_nm": float(self._source_z_center_nm),
+            "source_z_min_nm": None if source_z_bounds_nm is None else float(source_z_bounds_nm[0]),
+            "source_z_max_nm": None if source_z_bounds_nm is None else float(source_z_bounds_nm[1]),
+            "source_z_envelope_min_nm": (
+                None
+                if self._source_z_envelope_min_nm is None
+                else float(self._source_z_envelope_min_nm)
+            ),
+            "source_z_envelope_max_nm": (
+                None
+                if self._source_z_envelope_max_nm is None
+                else float(self._source_z_envelope_max_nm)
             ),
             "filter_guard_radius_pixels": self.filter_guard_radius_pixels(params),
             "fidelity_label": (
@@ -590,12 +578,10 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
                 tem_environment_source_dimensionality="none",
                 tem_projected_source_fallback=False,
                 source_slice_thickness_nm=self._slice_thickness_nm,
-                source_z_planes_nm=[
-                    (idx - 0.5 * (self._multislice_slices - 1)) * float(self._slice_thickness_nm)
-                    for idx in range(self._multislice_slices)
-                ] if self._slice_thickness_nm is not None else None,
-                source_z_origin="particle_centered_object_depth",
-                source_z_uses_particle_world_z=False,
+                source_z_planes_nm=source_z_planes_nm,
+                source_z_origin="resolved_world_z_multislice_stack",
+                source_z_uses_particle_world_z=True,
+                source_z_out_of_range_policy="raise_outside_resolved_multislice_slab",
             )
         elif tem_uses_slice_stack and self._tem_potential_source == self._TEM_POTENTIAL_SOURCE_COMPOSITE:
             response.update(
@@ -608,22 +594,32 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
                 tem_environment_source_dimensionality="projected_2d_broadcast_to_slices",
                 tem_projected_source_fallback=True,
                 source_slice_thickness_nm=self._slice_thickness_nm,
-                source_z_planes_nm=[
-                    (idx - 0.5 * (self._multislice_slices - 1)) * float(self._slice_thickness_nm)
-                    for idx in range(self._multislice_slices)
-                ] if self._slice_thickness_nm is not None else None,
-                source_z_origin="particle_centered_object_depth",
-                source_z_uses_particle_world_z=False,
+                source_z_planes_nm=source_z_planes_nm,
+                source_z_origin="resolved_world_z_multislice_stack",
+                source_z_uses_particle_world_z=True,
+                source_z_out_of_range_policy="raise_outside_resolved_multislice_slab",
             )
         elif self._tem_high_fidelity_backend is not None:
+            if self._tem_potential_source == self._TEM_POTENTIAL_SOURCE_MATERIAL:
+                fallback_source_kind = "projected_2d_tem_material_potential"
+                environment_dimensionality = "none"
+                projection_policy = "projected_material_source_evenly_split_across_multislice_slices"
+            elif self._tem_potential_source == self._TEM_POTENTIAL_SOURCE_COMPOSITE:
+                fallback_source_kind = "projected_2d_tem_material_plus_environment_potential"
+                environment_dimensionality = "projected_2d"
+                projection_policy = "projected_material_plus_environment_source_evenly_split_across_multislice_slices"
+            else:
+                fallback_source_kind = "projected_2d_tem_environment_potential"
+                environment_dimensionality = "projected_2d"
+                projection_policy = "projected_environment_source_evenly_split_across_multislice_slices"
             response.update(
-                source_input_kind="projected_2d_tem_environment_potential",
+                source_input_kind=fallback_source_kind,
                 source_map_ndim=2,
                 source_axis_order="yx",
-                source_projection_policy="projected_source_evenly_split_across_multislice_slices",
+                source_projection_policy=projection_policy,
                 backend_consumes_volume_source=False,
                 volume_transport_model="split_step_multislice_projected_source_fallback",
-                tem_environment_source_dimensionality="projected_2d",
+                tem_environment_source_dimensionality=environment_dimensionality,
                 tem_projected_source_fallback=True,
                 source_z_origin="projected_2d_no_slice_depth",
                 source_z_uses_particle_world_z=False,
@@ -642,6 +638,8 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
                     else "none"
                 ),
                 tem_projected_source_fallback=True,
+                source_z_origin="projected_2d_no_slice_depth",
+                source_z_uses_particle_world_z=False,
             )
         if self._tem_high_fidelity_backend is None:
             response.update(self._ctf_backend.diagnostics(tuple(shape)))
@@ -688,10 +686,14 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
         params: dict,
         particle_z_nm: float | None = None,
         source_multiplier: float = 1.0,
+        component_geometry=None,
+        orientation_matrix=None,
     ) -> None:
+        if component_geometry is None:
+            raise ValueError("TEM multislice source accumulation requires component_geometry.")
         if not self._slice_thickness_nm:
             raise ValueError(
-                "PARAMS['tem_slice_thickness_nm'] must be set for high-fidelity "
+                "parameters['tem_slice_thickness_nm'] must be set for high-fidelity "
                 "multislice source accumulation."
             )
         if source_canvas.ndim != 3:
@@ -707,16 +709,11 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
         mip = float(getattr(material_properties, "mean_inner_potential_V", 0.0))
         if mip <= 0.0 or self._phase_shift_per_volt_nm <= 0.0:
             return
-        scale = float(param_value(params, 'tem_projected_potential_scale'))
-        if not np.isfinite(scale) or scale < 0.0:
-            raise ValueError(
-                "PARAMS['tem_projected_potential_scale'] must be finite and "
-                f"non-negative; got {scale}."
-            )
+        scale = self._projected_potential_scale
         dz_nm = float(self._slice_thickness_nm)
         if not np.isfinite(dz_nm) or dz_nm <= 0.0:
             raise ValueError(
-                "PARAMS['tem_slice_thickness_nm'] must be positive and finite; "
+                "parameters['tem_slice_thickness_nm'] must be positive and finite; "
                 f"got {dz_nm!r}."
             )
 
@@ -725,49 +722,72 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
         else:
             particle_z_nm = float(particle_z_nm)
             if not np.isfinite(particle_z_nm):
-                particle_z_nm = 0.0
+                raise ValueError(f"particle_z_nm must be finite for TEM multislice source placement; got {particle_z_nm!r}.")
 
-        radius_px = max(0.5, 0.5 * float(diameter_nm) / float(pixel_size_nm) * float(os_factor))
-        radius_nm = 0.5 * float(diameter_nm)
-        y0 = max(0, int(np.floor(center_y_canvas - radius_px - 2)))
-        y1 = min(h, int(np.ceil(center_y_canvas + radius_px + 3)))
-        x0 = max(0, int(np.floor(center_x_canvas - radius_px - 2)))
-        x1 = min(w, int(np.ceil(center_x_canvas + radius_px + 3)))
-        if x0 >= x1 or y0 >= y1:
+        radius_nm = float(component_geometry.axial_half_extent_nm(orientation_matrix))
+        footprint = primitive_footprint_patch(
+            component_geometry=component_geometry,
+            center_x_canvas=float(center_x_canvas),
+            center_y_canvas=float(center_y_canvas),
+            pixel_size_nm=float(pixel_size_nm),
+            os_factor=int(os_factor),
+            canvas_shape=(h, w),
+            orientation_matrix=orientation_matrix,
+        )
+        if footprint is None:
             return
-
-        yy, xx = np.indices((y1 - y0, x1 - x0), dtype=float)
-        dx = xx + x0 - float(center_x_canvas)
-        dy = yy + y0 - float(center_y_canvas)
-        r_px = np.sqrt(dx * dx + dy * dy)
-        r_nm = r_px * float(pixel_size_nm) / float(os_factor)
-        chord_half_nm = np.sqrt(np.maximum(radius_nm * radius_nm - r_nm * r_nm, 0.0))
-        if not np.any(chord_half_nm > 0.0):
-            return
-        taper = np.clip((radius_px + max(0.75, 0.5 * float(os_factor)) - r_px) / max(0.5 * float(os_factor), 1e-9), 0.0, 1.0)
         multiplier = float(source_multiplier)
         if not np.isfinite(multiplier) or multiplier < 0.0:
             raise ValueError(f"source_multiplier must be finite and non-negative; got {source_multiplier!r}.")
         edge_scale = self._phase_shift_per_volt_nm * mip * scale * multiplier
 
-        slab_centers_nm = (np.arange(float(n_slices), dtype=float) - 0.5 * (n_slices - 1)) * dz_nm
+        slab_centers_nm = self._source_z_center_nm + (
+            np.arange(float(n_slices), dtype=float) - 0.5 * (n_slices - 1)
+        ) * dz_nm
         slab_half = 0.5 * dz_nm
         slab_low = slab_centers_nm - slab_half
         slab_high = slab_centers_nm + slab_half
-        # The slice stack is an object-internal material-thickness
-        # representation. World/lab z controls optical defocus and trajectories
-        # elsewhere; it must not translate the particle out of its own TEM
-        # source stack.
-        z_center = np.float64(0.0)
+        z_center = np.float64(particle_z_nm)
+        # Do not silently rewrite trajectory z. A particle outside the resolved
+        # multislice slab means the requested scene cannot be represented by this
+        # source volume; callers should expand the source volume or reduce axial
+        # motion instead of accepting clipped physics.
+        slab_min_center = float(slab_low[0]) + radius_nm
+        slab_max_center = float(slab_high[-1]) - radius_nm
+        if np.isfinite(slab_min_center) and np.isfinite(slab_max_center) and slab_min_center <= slab_max_center:
+            z_float = float(z_center)
+            tol_nm = max(
+                1.0e-9,
+                1.0e-12
+                * max(abs(slab_min_center), abs(slab_max_center), abs(z_float), 1.0),
+            )
+            if z_float < slab_min_center - tol_nm or z_float > slab_max_center + tol_nm:
+                raise ValueError(
+                    "TEM particle_z_nm lies outside the resolved multislice slab: "
+                    f"z={z_float} nm, allowed center range=[{slab_min_center}, {slab_max_center}] nm. "
+                    "Increase parameters['tem_multislice_slices'], reduce axial motion/span, "
+                    "or adjust parameters['tem_slice_thickness_nm']."
+                )
+        elif np.isfinite(radius_nm) and radius_nm > 0.0:
+            raise ValueError(
+                "TEM particle primitive is thicker than the resolved multislice slab: "
+                f"axial half extent={float(radius_nm)} nm, slab thickness={float(n_slices * dz_nm)} nm. "
+                "Increase parameters['tem_multislice_slices'] or parameters['tem_slice_thickness_nm']."
+        )
         for idx in range(n_slices):
             slab_lower = float(slab_low[idx])
             slab_upper = float(slab_high[idx])
-            z_low = z_center - chord_half_nm
-            z_high = z_center + chord_half_nm
-            overlap = np.minimum(slab_upper, z_high) - np.maximum(slab_lower, z_low)
-            thickness_nm = np.maximum(overlap, 0.0)
+            thickness_nm = footprint.average_over_samples(
+                lambda z_lower_rel_nm, z_upper_rel_nm: np.maximum(
+                    np.minimum(slab_upper, z_center + z_upper_rel_nm)
+                    - np.maximum(slab_lower, z_center + z_lower_rel_nm),
+                    0.0,
+                )
+            )
             if np.any(thickness_nm > 0.0):
-                source_canvas[idx, y0:y1, x0:x1] += edge_scale * thickness_nm * taper
+                source_canvas[idx, footprint.y0:footprint.y1, footprint.x0:footprint.x1] += (
+                    edge_scale * thickness_nm
+                )
 
 
     def accumulate_particle_source(
@@ -782,8 +802,15 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
         material_properties,
         params: dict,
         particle_z_nm: float | None = None,
+        source_coordinate_context=None,
         source_multiplier: float = 1.0,
+        component_geometry=None,
+        orientation_matrix=None,
     ) -> None:
+        if component_geometry is None:
+            raise ValueError("TEM source accumulation requires component_geometry.")
+        if source_coordinate_context is not None:
+            particle_z_nm = source_coordinate_context.source_density_z_nm
         if source_canvas is None:
             return
         if self._tem_high_fidelity_backend is not None and self._slice_thickness_nm is not None:
@@ -798,40 +825,41 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
                 params=params,
                 particle_z_nm=particle_z_nm,
                 source_multiplier=source_multiplier,
+                component_geometry=component_geometry,
+                orientation_matrix=orientation_matrix,
             )
             return
+        if particle_z_nm is not None:
+            z_float = float(particle_z_nm)
+            if not np.isfinite(z_float):
+                raise ValueError(f"particle_z_nm must be finite for TEM projected-source accumulation; got {particle_z_nm!r}.")
+            if abs(z_float) > 1e-12:
+                raise ValueError(
+                    "TEM projected 2D source accumulation cannot represent nonzero particle_z_nm "
+                    f"({z_float} nm). Use a slice-resolved multislice TEM source or set particle z to 0."
+                )
         mip = float(getattr(material_properties, "mean_inner_potential_V", 0.0))
         if mip <= 0.0 or self._phase_shift_per_volt_nm <= 0.0:
             return
-        scale = float(param_value(params, 'tem_projected_potential_scale'))
-        if not np.isfinite(scale) or scale < 0.0:
-            raise ValueError(
-                "PARAMS['tem_projected_potential_scale'] must be finite and "
-                f"non-negative; got {scale}."
-            )
-        radius_px = max(0.5, 0.5 * float(diameter_nm) / float(pixel_size_nm) * float(os_factor))
+        scale = self._projected_potential_scale
         h, w = source_canvas.shape
-        x0 = max(0, int(np.floor(center_x_canvas - radius_px - 2)))
-        x1 = min(w, int(np.ceil(center_x_canvas + radius_px + 3)))
-        y0 = max(0, int(np.floor(center_y_canvas - radius_px - 2)))
-        y1 = min(h, int(np.ceil(center_y_canvas + radius_px + 3)))
-        if x0 >= x1 or y0 >= y1:
+        footprint = primitive_footprint_patch(
+            component_geometry=component_geometry,
+            center_x_canvas=float(center_x_canvas),
+            center_y_canvas=float(center_y_canvas),
+            pixel_size_nm=float(pixel_size_nm),
+            os_factor=int(os_factor),
+            canvas_shape=(h, w),
+            orientation_matrix=orientation_matrix,
+        )
+        if footprint is None:
             return
-        yy, xx = np.indices((y1 - y0, x1 - x0), dtype=float)
-        dx = xx + x0 - float(center_x_canvas)
-        dy = yy + y0 - float(center_y_canvas)
-        r = np.sqrt(dx * dx + dy * dy)
-        inside = r <= radius_px
-        thickness_px = np.zeros_like(r, dtype=float)
-        thickness_px[inside] = 2.0 * np.sqrt(np.maximum(radius_px ** 2 - r[inside] ** 2, 0.0))
-        thickness_nm = thickness_px * float(pixel_size_nm) / float(os_factor)
+        thickness_nm = footprint.projected_chord_nm()
         multiplier = float(source_multiplier)
         if not np.isfinite(multiplier) or multiplier < 0.0:
             raise ValueError(f"source_multiplier must be finite and non-negative; got {source_multiplier!r}.")
         phase = multiplier * scale * self._phase_shift_per_volt_nm * mip * thickness_nm
-        edge_width = max(0.75, 0.5 * float(os_factor))
-        taper = np.clip((radius_px + edge_width - r) / max(edge_width, 1e-9), 0.0, 1.0)
-        source_canvas[y0:y1, x0:x1] += phase * taper
+        source_canvas[footprint.y0:footprint.y1, footprint.x0:footprint.x1] += phase
 
     def compute_scene_intensity(
         self,
@@ -922,6 +950,50 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
         del background_field, params
         return self._contrast_from_projected_phase(E_sca_particle)
 
+    def _tem_direct_detector_scale(self, params: dict) -> float:
+        dose = TemSettings.from_params(params).dose_per_pixel
+        if not np.isfinite(dose) or dose < 0.0:
+            raise ValueError(
+                "parameters['tem_dose_per_pixel'] must be finite and non-negative; "
+                f"got {dose}."
+            )
+        return float(dose)
+
+    def _direct_signal_product_from_projected_source(
+        self,
+        source: np.ndarray,
+        params: dict,
+        *,
+        producer: str,
+        frame_index: int = 0,
+    ) -> DirectParticleSignalProduct:
+        # The fix-site invariant is detector-transfer ownership: TEM projected
+        # phase/relative contrast is not an electron-count derivative until the
+        # incident dose is applied.  This product performs that dose transfer
+        # exactly once and keeps projected-phase provenance attached.
+        projected = np.asarray(source, dtype=float)
+        if projected.ndim == 3 and self._tem_high_fidelity_backend is None:
+            projected = np.sum(projected, axis=0)
+        contrast = self._contrast_from_projected_phase(projected)
+        dose = self._tem_direct_detector_scale(params)
+        electron_delta = dose * np.asarray(contrast, dtype=float)
+        return DirectParticleSignalProduct(
+            values=electron_delta,
+            representation=electron_count_delta_representation(),
+            modality="tem_phase_contrast",
+            producer=producer,
+            safe_for_fisher=True,
+            detector_scale_applied=True,
+            background_included=False,
+            source_representation=tem_projected_phase_source_representation(),
+            detector_scale_factor=float(dose),
+            conversion_note=(
+                "Converted TEM projected-phase/relative contrast response to "
+                "electron-count contribution using tem_dose_per_pixel."
+            ),
+            provenance={"frame_index": int(frame_index)},
+        )
+
     def compute_particle_contrast(
         self,
         E_sca_particle: np.ndarray,
@@ -931,13 +1003,34 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
         *,
         frame_index: int = 0,
     ) -> np.ndarray:
-        background = background_field
+        del E_sca_particle, background_field, params, particle_instance, frame_index
+        raise RuntimeError(
+            "TEM direct particle contrast no longer returns a bare array. Use "
+            "compute_particle_signal_product(); its metadata records the "
+            "projected-phase to electron-count transfer before Fisher use."
+        )
+
+    def compute_particle_signal_product(
+        self,
+        E_sca_particle: np.ndarray,
+        background_field: np.ndarray,
+        params: dict,
+        particle_instance=None,
+        *,
+        frame_index: int = 0,
+    ) -> DirectParticleSignalProduct:
+        del background_field
         if particle_instance is None:
-            return self.compute_per_particle_contrast(E_sca_particle, background, params)
+            return self._direct_signal_product_from_projected_source(
+                E_sca_particle,
+                params,
+                producer="TransmissionElectronMicroscopyImagingModel.compute_particle_signal_product",
+                frame_index=frame_index,
+            )
         if bool(getattr(getattr(particle_instance, "particle_type", None), "is_composite", False)):
             raise ValueError(
-                "Direct TEM particle contrast for composite particles requires a "
-                "rendered source map; use compute_particle_contrast_from_source_map()."
+                "Direct TEM particle signal for composite particles requires a "
+                "rendered source map; use compute_particle_signal_product_from_source_map()."
             )
         shape = E_sca_particle.shape
         traj = np.asarray(particle_instance.trajectory_nm, dtype=float)
@@ -957,8 +1050,15 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
             material_properties=getattr(particle_instance, "material_properties", None),
             params=params,
             particle_z_nm=pz,
+            component_geometry=getattr(particle_instance, "component_geometry", None),
+            orientation_matrix=None,
         )
-        return self._contrast_from_projected_phase(source)
+        return self._direct_signal_product_from_projected_source(
+            source,
+            params,
+            producer="TransmissionElectronMicroscopyImagingModel.compute_particle_signal_product",
+            frame_index=frame_idx,
+        )
 
     def compute_particle_contrast_from_source_map(
         self,
@@ -968,15 +1068,32 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
         *,
         frame_index: int = 0,
     ) -> np.ndarray:
-        del background_field, params, frame_index
-        source = np.asarray(particle_source_map, dtype=float)
-        if source.ndim == 3 and self._tem_high_fidelity_backend is None:
-            source = np.sum(source, axis=0)
-        return self._contrast_from_projected_phase(source)
+        del particle_source_map, background_field, params, frame_index
+        raise RuntimeError(
+            "TEM source-map contrast no longer returns a bare array. Use "
+            "compute_particle_signal_product_from_source_map(); it converts "
+            "projected-phase response to electron-count contribution exactly once."
+        )
 
-    def scale_intensity_to_counts(
+    def compute_particle_signal_product_from_source_map(
         self,
-        intensity: np.ndarray,
+        particle_source_map: np.ndarray,
+        background_field: np.ndarray,
+        params: dict,
+        *,
+        frame_index: int = 0,
+    ) -> DirectParticleSignalProduct:
+        del background_field
+        return self._direct_signal_product_from_projected_source(
+            np.asarray(particle_source_map, dtype=float),
+            params,
+            producer="TransmissionElectronMicroscopyImagingModel.compute_particle_signal_product_from_source_map",
+            frame_index=frame_index,
+        )
+
+    def convert_model_output_to_detector_frame(
+        self,
+        model_output: np.ndarray,
         background_final: np.ndarray,
         E_ref_intensity_final: np.ndarray,
         params: dict,
@@ -984,17 +1101,34 @@ class TransmissionElectronMicroscopyImagingModel(ImagingModel):
         """
         TEM intensity-to-counts conversion.
 
-        The TEM model's compute_intensity returns a dimensionless image
-        normalized such that the unscattered direct beam has intensity
-        one. We convert to detector counts by multiplying by the resolved
-        TEM electron dose per pixel.
+        The TEM model's compute_intensity returns a dimensionless relative
+        direct-beam intensity. ``tem_dose_per_pixel`` is the incident primary
+        electron dose per pixel, so detected counts are the incident dose
+        multiplied by the relative transmitted/objective-filtered intensity.
+        Do not renormalize by the frame mean here: attenuation, aperture loss,
+        and energy/objective filtering are physical changes to detected counts.
         """
         dose = TemSettings.from_params(params).dose_per_pixel
         if not np.isfinite(dose) or dose < 0.0:
             raise ValueError(
-                "PARAMS['tem_dose_per_pixel'] must be finite and non-negative; "
+                "parameters['tem_dose_per_pixel'] must be finite and non-negative; "
                 f"got {dose}."
             )
-        return dose * intensity
+        return convert_model_output_to_detector_frame(
+            model_output=model_output,
+            background_frame=background_final,
+            reference_intensity_frame=E_ref_intensity_final,
+            conversion=DetectorFrameConversion(
+                model_output_domain=MODEL_OUTPUT_DOMAIN_RELATIVE_INTENSITY,
+                detector_output_domain=DETECTOR_OUTPUT_DOMAIN_ELECTRON_COUNT,
+                value_form=VALUE_FORM_ABSOLUTE,
+                reference_basis=REFERENCE_BASIS_NONE,
+                scale=dose,
+                measurement_domain="electron_count",
+                signal_units="electron_count",
+            ),
+            params=params,
+            context="TransmissionElectronMicroscopyImagingModel.convert_model_output_to_detector_frame",
+        )
 
 __all__ = ['TransmissionElectronMicroscopyImagingModel']

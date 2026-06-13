@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from config.runtime import SemSettings, param_value, resolved_sem_monte_carlo_seed
+from config.runtime import SemSettings
+from stochastic_runtime import rng_from_seed
+from imaging_models.sem_depth_grid import sem_depth_grid_from_params
 
 from ._metadata import (
     Any,
@@ -42,86 +44,52 @@ class MonteCarloSEMTransportBackend:
         self.canvas_pitch_nm = _finite_nonnegative("canvas_pitch_nm", canvas_pitch_nm, minimum=1e-12)
         self.probe_sigma_px = _finite_nonnegative("sem_probe_sigma_px", probe_sigma_px, minimum=0.0)
         self.backend_mode = self.__class__.backend_mode
-        self._acceleration_kV = _finite_nonnegative("sem_acceleration_kV", param_value(params, 'sem_acceleration_kV'), minimum=1e-9)
-        self._baseline = _finite_nonnegative("sem_baseline_yield", param_value(params, 'sem_baseline_yield'), minimum=0.0)
-        self._edge_gain = _finite_nonnegative("sem_edge_contrast_gain", param_value(params, 'sem_edge_contrast_gain'), minimum=0.0)
-        self._bulk_gain = _finite_nonnegative("sem_bulk_contrast_gain", param_value(params, 'sem_bulk_contrast_gain'), minimum=0.0)
-        self._topography_gain = _finite_nonnegative("sem_topography_contrast_gain", param_value(params, 'sem_topography_contrast_gain'), minimum=0.0)
-        self._detector_acceptance = _finite_nonnegative("sem_detector_acceptance", param_value(params, 'sem_detector_acceptance'), minimum=0.0)
-        self._takeoff_angle_deg = _finite_nonnegative("sem_detector_takeoff_angle_deg", param_value(params, 'sem_detector_takeoff_angle_deg'), minimum=0.0)
-        self._escape_depth_nm = _finite_nonnegative("sem_escape_depth_nm", param_value(params, 'sem_escape_depth_nm'), minimum=0.0)
-        self._backscatter_fraction = _finite_nonnegative("sem_backscatter_fraction", param_value(params, 'sem_backscatter_fraction'), minimum=0.0)
-        self._material_scale = _finite_nonnegative("sem_transport_material_scale", param_value(params, 'sem_transport_material_scale'), minimum=0.0)
-        self._source_exponent = _finite_nonnegative("sem_transport_source_exponent", param_value(params, 'sem_transport_source_exponent'), minimum=0.05)
-        self._topography_source_exponent = _finite_nonnegative("sem_transport_topography_exponent", param_value(params, 'sem_transport_topography_exponent'), minimum=0.05)
-        self._beam_current_nA = _finite_nonnegative("sem_beam_current_nA", param_value(params, 'sem_beam_current_nA'), minimum=0.0)
-        self._dwell_time_us = _finite_nonnegative("sem_dwell_time_us", param_value(params, 'sem_dwell_time_us'), minimum=0.0)
-        self._electrons_per_pixel_reference = SemSettings.from_params(params).electrons_per_pixel
-        self._source_representation = str(param_value(params, "sem_source_representation")).strip().lower()
-        if self._source_representation not in {"projected", "volume"}:
-            raise SEMTransportBackendError(
-                "PARAMS['sem_source_representation'] must be 'projected' or 'volume'."
-            )
+        sem_settings = SemSettings.from_params(params)
+        self._acceleration_kV = sem_settings.acceleration_kV
+        self._baseline = sem_settings.baseline_yield
+        self._edge_gain = sem_settings.edge_contrast_gain
+        self._bulk_gain = sem_settings.bulk_contrast_gain
+        self._topography_gain = sem_settings.topography_contrast_gain
+        self._detector_acceptance = sem_settings.detector_acceptance
+        self._takeoff_angle_deg = sem_settings.detector_takeoff_angle_deg
+        self._escape_depth_nm = sem_settings.escape_depth_nm
+        self._backscatter_fraction = sem_settings.backscatter_fraction
+        self._material_scale = sem_settings.transport_material_scale
+        self._source_exponent = sem_settings.transport_source_exponent
+        self._topography_source_exponent = sem_settings.transport_topography_exponent
+        self._beam_current_nA = sem_settings.beam_current_nA
+        self._dwell_time_us = sem_settings.dwell_time_us
+        self._electrons_per_pixel_reference = sem_settings.electrons_per_pixel
+        self._source_representation = sem_settings.source_representation
 
-        trajectories = param_value(params, 'sem_monte_carlo_trajectories')
-        steps = param_value(params, 'sem_monte_carlo_steps')
-        self._trajectory_count = int(trajectories)
-        self._step_count = int(steps)
-        if self._trajectory_count <= 0:
-            raise SEMTransportBackendError("PARAMS['sem_monte_carlo_trajectories'] must be positive.")
-        if self._step_count <= 0:
-            raise SEMTransportBackendError("PARAMS['sem_monte_carlo_steps'] must be positive.")
-        range_raw = param_value(params, 'sem_monte_carlo_range_nm')
-        base_range_nm = float(param_value(params, 'sem_interaction_volume_nm')) if range_raw is None else float(range_raw)
-        energy_scale = np.sqrt(max(self._acceleration_kV, 1e-9) / 5.0)
-        self._range_nm = max(base_range_nm * energy_scale, self.canvas_pitch_nm)
-        step_raw = param_value(params, 'sem_monte_carlo_step_nm')
-        self._step_nm = (
-            max(self._range_nm / float(self._step_count), 0.05)
-            if step_raw is None
-            else float(step_raw)
-        )
-        if not np.isfinite(self._step_nm) or self._step_nm <= 0.0:
-            raise SEMTransportBackendError("PARAMS['sem_monte_carlo_step_nm'] must be positive when supplied.")
-        scatter_deg = float(param_value(params, 'sem_monte_carlo_scatter_std_deg'))
-        if not np.isfinite(scatter_deg) or scatter_deg < 0.0:
-            raise SEMTransportBackendError("PARAMS['sem_monte_carlo_scatter_std_deg'] must be finite and non-negative.")
+        self._trajectory_count = sem_settings.monte_carlo_trajectories
+        self._step_count = sem_settings.monte_carlo_steps
+        self._range_nm = sem_settings.monte_carlo_transport_range_nm(self.canvas_pitch_nm)
+        self._step_nm = sem_settings.monte_carlo_step_nm_for_range(self._range_nm)
+        scatter_deg = sem_settings.monte_carlo_scatter_std_deg
+        energy_scale = sem_settings.beam_energy_gain
         self._scatter_std_rad = np.deg2rad(scatter_deg) / max(energy_scale, 1e-6)
-        self._seed = resolved_sem_monte_carlo_seed(params)
-        kernel_raw = param_value(params, 'sem_monte_carlo_kernel_size_px')
-        if kernel_raw is None:
-            radius_px = int(np.ceil((3.0 * self.probe_sigma_px) + (1.5 * self._range_nm / self.canvas_pitch_nm) + 4.0))
-            self._kernel_size_px = max(9, 2 * radius_px + 1)
+        self._seed = sem_settings.sem_monte_carlo_seed
+        self._kernel_size_px = sem_settings.monte_carlo_kernel_size_px_for(
+            canvas_pitch_nm=self.canvas_pitch_nm,
+            probe_sigma_px=self.probe_sigma_px,
+            range_nm=self._range_nm,
+        )
+        self._sem_effective_source_representation = sem_settings.effective_source_representation
+        if self._sem_effective_source_representation == "volume":
+            self._sem_depth_grid = sem_depth_grid_from_params(params, backend_name=self.backend_mode)
+            self._volume_slices = self._sem_depth_grid.slice_count
+            self._volume_slice_thickness_nm = self._sem_depth_grid.slice_thickness_nm
+            self._volume_depth_offset_nm = self._sem_depth_grid.offset_nm
         else:
-            self._kernel_size_px = int(kernel_raw)
-            if self._kernel_size_px <= 0:
-                raise SEMTransportBackendError("PARAMS['sem_monte_carlo_kernel_size_px'] must be positive.")
-            if self._kernel_size_px % 2 == 0:
-                self._kernel_size_px += 1
-        volume_slices = int(param_value(params, 'sem_volume_slices'))
-        if volume_slices <= 0:
-            raise SEMTransportBackendError("PARAMS['sem_volume_slices'] must be positive.")
-        self._volume_slices = volume_slices
-        slice_raw = param_value(params, 'sem_volume_slice_thickness_nm')
-        if slice_raw is None:
-            self._volume_slice_thickness_nm = max(self._range_nm / float(self._volume_slices), 1e-9)
-        else:
-            self._volume_slice_thickness_nm = float(slice_raw)
-            if not np.isfinite(self._volume_slice_thickness_nm) or self._volume_slice_thickness_nm <= 0.0:
-                raise SEMTransportBackendError(
-                    "PARAMS['sem_volume_slice_thickness_nm'] must be positive when supplied."
-                )
+            self._sem_depth_grid = None
+            self._volume_slices = sem_settings.volume_slices
+            self._volume_slice_thickness_nm = sem_settings.volume_slice_thickness_for_backend(self.backend_mode)
+            self._volume_depth_offset_nm = 0.0
 
-        direction_raw = param_value(params, 'sem_detector_direction_xy')
-        direction = np.asarray(direction_raw, dtype=float)
-        if direction.shape != (2,) or not np.all(np.isfinite(direction)):
-            raise SEMTransportBackendError("PARAMS['sem_detector_direction_xy'] must be a finite length-2 vector.")
-        norm = float(np.linalg.norm(direction))
-        if norm <= 0.0:
-            raise SEMTransportBackendError("PARAMS['sem_detector_direction_xy'] must have nonzero norm.")
-        self._detector_direction_xy = direction / norm
+        self._detector_direction_xy = np.asarray(sem_settings.detector_direction_xy, dtype=float)
         self._kernel_cache: np.ndarray | None = None
-        self._kernel_stack_cache: dict[tuple[int, float], np.ndarray] = {}
+        self._kernel_stack_cache: dict[tuple[int, float, float], np.ndarray] = {}
         self._kernel_weight_sum = 0.0
         self._kernel_stack_weight_sum = 0.0
 
@@ -157,7 +125,7 @@ class MonteCarloSEMTransportBackend:
     def _interaction_kernel(self) -> np.ndarray:
         if self._kernel_cache is not None:
             return self._kernel_cache
-        rng = np.random.default_rng(self._seed)
+        rng = rng_from_seed(self._seed, stream="sem_monte_carlo_interaction_kernel")
         kernel = np.zeros((self._kernel_size_px, self._kernel_size_px), dtype=float)
         probe_sigma_nm = self.probe_sigma_px * self.canvas_pitch_nm
         escape_depth = max(self._escape_depth_nm, 1e-9)
@@ -198,6 +166,7 @@ class MonteCarloSEMTransportBackend:
         self,
         num_slices: int,
         slice_thickness_nm: float | None = None,
+        depth_offset_nm: float | None = None,
     ) -> np.ndarray:
         num_slices = int(num_slices)
         if num_slices <= 0:
@@ -209,19 +178,26 @@ class MonteCarloSEMTransportBackend:
         )
         if not np.isfinite(slice_thickness) or slice_thickness <= 0.0:
             raise SEMTransportBackendError("SEM volume slice thickness must be positive.")
-        key = (num_slices, float(slice_thickness))
+        depth_offset = (
+            self._volume_depth_offset_nm
+            if depth_offset_nm is None
+            else float(depth_offset_nm)
+        )
+        if not np.isfinite(depth_offset) or depth_offset < 0.0:
+            raise SEMTransportBackendError("SEM volume depth offset must be finite and non-negative.")
+        key = (num_slices, float(slice_thickness), float(depth_offset))
         cached = self._kernel_stack_cache.get(key)
         if cached is not None:
             return cached
 
-        rng = np.random.default_rng(self._seed)
+        rng = rng_from_seed(self._seed, stream="sem_monte_carlo_volume_kernel")
         kernels = np.zeros(
             (num_slices, self._kernel_size_px, self._kernel_size_px),
             dtype=float,
         )
         probe_sigma_nm = self.probe_sigma_px * self.canvas_pitch_nm
         escape_depth = max(self._escape_depth_nm, 1e-9)
-        max_depth_nm = num_slices * slice_thickness
+        max_depth_nm = depth_offset + num_slices * slice_thickness
         for _ in range(self._trajectory_count):
             x_nm = float(rng.normal(0.0, probe_sigma_nm)) if probe_sigma_nm > 0.0 else 0.0
             y_nm = float(rng.normal(0.0, probe_sigma_nm)) if probe_sigma_nm > 0.0 else 0.0
@@ -238,7 +214,12 @@ class MonteCarloSEMTransportBackend:
                     break
                 if z_nm > max_depth_nm:
                     continue
-                slice_idx = int(np.floor(z_nm / slice_thickness))
+                # The renderer's SEMDepthGrid defines source_stack[i] as the
+                # physical interval [offset+i*dz, offset+(i+1)*dz).  Kernel
+                # binning must use the same origin, otherwise a nonzero
+                # sem_source_z_offset_nm pairs source slices with the wrong
+                # depth-dependent escape/energy kernel.
+                slice_idx = int(np.floor((z_nm - depth_offset) / slice_thickness))
                 if slice_idx < 0 or slice_idx >= num_slices:
                     continue
                 escape_weight = np.exp(-z_nm / escape_depth)
@@ -286,18 +267,21 @@ class MonteCarloSEMTransportBackend:
         kernels = self._interaction_kernel_stack(stack.shape[0])
         out = np.zeros(stack.shape[-2:], dtype=float)
         for idx in range(stack.shape[0]):
-            out += _fft_convolve_centered(_gradient_magnitude(stack[idx]), kernels[idx])
+            out += _fft_convolve_centered(_gradient_magnitude(stack[idx], self.canvas_pitch_nm), kernels[idx])
         return np.maximum(out, 0.0)
 
     def _topography_term(self, source: np.ndarray) -> np.ndarray:
         if self._topography_gain <= 0.0:
             return np.zeros_like(source)
-        gx, gy = _gradient_components(source)
+        gx, gy = _gradient_components(source, self.canvas_pitch_nm)
         directed = gy * self._detector_direction_xy[1] + gx * self._detector_direction_xy[0]
-        topo = np.abs(directed)
+        topo = np.maximum(directed, 0.0)
         if self._topography_source_exponent != 1.0:
             topo = np.power(topo, self._topography_source_exponent)
         return self._topography_gain * self._kernel_blur(topo)
+
+    def _surface_topography_source(self, source_model: np.ndarray) -> np.ndarray:
+        return np.asarray(source_model[0], dtype=float)
 
     def yield_from_source(self, source: np.ndarray, *, baseline: float = 0.0) -> np.ndarray:
         src = np.asarray(source, dtype=float)
@@ -307,10 +291,10 @@ class MonteCarloSEMTransportBackend:
         if source_model.ndim == 3:
             bulk = self._kernel_blur_volume(source_model)
             edge = self._edge_volume(source_model)
-            topography_source = np.max(source_model, axis=0)
+            topography_source = self._surface_topography_source(source_model)
         elif source_model.ndim == 2:
             bulk = self._kernel_blur(source_model)
-            edge = self._kernel_blur(_gradient_magnitude(source_model))
+            edge = self._kernel_blur(_gradient_magnitude(source_model, self.canvas_pitch_nm))
             topography_source = source_model
         else:
             raise SEMTransportBackendError(
@@ -381,11 +365,30 @@ class MonteCarloSEMTransportBackend:
                 "monte_carlo_volume_kernel_peak": (
                     float(np.max(volume_kernels)) if volume_kernels is not None else None
                 ),
-                "source_representation": self._source_representation,
-                "sem_source_representation": self._source_representation,
+                # Report both requested and effective basis.  The Monte Carlo
+                # backend consumes z-y-x stacks when auto resolves to volume; raw
+                # auto must not be exposed as the numeric source-array basis.
+                "sem_effective_source_representation": self._sem_effective_source_representation,
+                "source_representation": self._sem_effective_source_representation,
+                "sem_requested_source_representation": self._source_representation,
                 "sem_volume_slices": self._volume_slices,
                 "sem_volume_slice_thickness_nm": self._volume_slice_thickness_nm,
                 "sem_volume_depth_nm": self._volume_slices * self._volume_slice_thickness_nm,
+                "source_depth_grid_contract_version": (
+                    self._sem_depth_grid.contract_version if self._sem_depth_grid is not None else None
+                ),
+                "source_depth_grid_offset_policy": (
+                    self._sem_depth_grid.offset_policy if self._sem_depth_grid is not None else None
+                ),
+                "source_z_offset_nm": (
+                    self._volume_depth_offset_nm if self._sem_depth_grid is not None else None
+                ),
+                "source_z_edges_nm": (
+                    self._sem_depth_grid.edges_nm if self._sem_depth_grid is not None else None
+                ),
+                "source_z_planes_nm": (
+                    self._sem_depth_grid.centers_nm if self._sem_depth_grid is not None else None
+                ),
                 "escape_depth_nm": self._escape_depth_nm,
                 "backscatter_fraction": self._backscatter_fraction,
                 "detector_takeoff_angle_deg": self._takeoff_angle_deg,

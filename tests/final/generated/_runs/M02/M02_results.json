@@ -1,0 +1,64 @@
+{
+  "budget_B": 20000.0,
+  "budget_4B": 80000.0,
+  "modalities": [
+    "interferometric",
+    "dark_field",
+    "fluorescence_widefield",
+    "partially_coherent_bright_field",
+    "coherent_bright_field"
+  ],
+  "per_modality": [
+    {
+      "modality": "interferometric",
+      "sigma_B_nm": 10.048304397521413,
+      "sigma_4B_nm": 5.0241521987607065,
+      "ratio_sigma_4B_over_B": 0.5,
+      "ratio_ok": true
+    },
+    {
+      "modality": "dark_field",
+      "sigma_B_nm": 1891.271584231912,
+      "sigma_4B_nm": 473.5871377284387,
+      "ratio_sigma_4B_over_B": 0.25040673252687456,
+      "ratio_ok": true
+    },
+    {
+      "modality": "fluorescence_widefield",
+      "sigma_B_nm": 0.019748580044922436,
+      "sigma_4B_nm": 0.009874290022461218,
+      "ratio_sigma_4B_over_B": 0.5,
+      "ratio_ok": true
+    },
+    {
+      "modality": "partially_coherent_bright_field",
+      "sigma_B_nm": 2792.918513194396,
+      "sigma_4B_nm": 1396.459256597198,
+      "ratio_sigma_4B_over_B": 0.5,
+      "ratio_ok": true
+    },
+    {
+      "modality": "coherent_bright_field",
+      "sigma_B_nm": 581.7706852730787,
+      "sigma_4B_nm": 290.88534263653935,
+      "ratio_sigma_4B_over_B": 0.5,
+      "ratio_ok": true
+    }
+  ],
+  "ordering_B": [
+    "fluorescence_widefield",
+    "interferometric",
+    "coherent_bright_field",
+    "dark_field",
+    "partially_coherent_bright_field"
+  ],
+  "ordering_4B": [
+    "fluorescence_widefield",
+    "interferometric",
+    "coherent_bright_field",
+    "dark_field",
+    "partially_coherent_bright_field"
+  ],
+  "all_ratios_ok": true,
+  "ranking_ok": true
+}

@@ -75,8 +75,6 @@ def annotate_fisher_result_status(result: dict[str, Any], *, convergence_status:
     out = dict(result)
     rid = result_id or "fisher:" + stable_hash({"modality": modality, "contract": source_contract, "result": result})[:16]
     convergence_status = normalize_convergence_status(convergence_status)
-    if "derivative_method" not in out and "lateral_derivative_mode" in out:
-        out["derivative_method"] = out["lateral_derivative_mode"]
     wrapped = fisher_result_from_crlb_result(out, result_id=rid, source_contract=source_contract, modality=modality, convergence_status=convergence_status)
     out["fisher_result"] = wrapped.to_dict()
     out["result_id"] = rid
@@ -157,36 +155,36 @@ def _max_adjacent_relative_change(values: list[Any]) -> float | None:
         changes.append(float(abs(curr - prev) / denom))
     return float(max(changes)) if changes else None
 
-def _parent_convergence_statuses(parent_result_metadata_by_modality: dict[str, dict[str, Any]] | None) -> dict[str, str]:
-    if not parent_result_metadata_by_modality:
+def _parent_convergence_statuses(candidate_parent_metadata: dict[str, dict[str, Any]] | None) -> dict[str, str]:
+    if not candidate_parent_metadata:
         return {}
     out: dict[str, str] = {}
-    for modality, meta in parent_result_metadata_by_modality.items():
+    for candidate, meta in candidate_parent_metadata.items():
         if hasattr(meta, "to_dict"):
             meta = meta.to_dict()
         if not isinstance(meta, dict):
-            out[str(modality)] = ConvergenceStatus.UNCHECKED.value
+            out[str(candidate)] = ConvergenceStatus.UNCHECKED.value
             continue
         status = meta.get("convergence_status")
         if status is None and isinstance(meta.get("fisher_result"), dict):
             status = meta["fisher_result"].get("convergence_status")
-        out[str(modality)] = normalize_convergence_status(status)
+        out[str(candidate)] = normalize_convergence_status(status)
     return out
 
-def _parent_validation_statuses(parent_result_metadata_by_modality: dict[str, dict[str, Any]] | None) -> dict[str, str]:
-    if not parent_result_metadata_by_modality:
+def _parent_validation_statuses(candidate_parent_metadata: dict[str, dict[str, Any]] | None) -> dict[str, str]:
+    if not candidate_parent_metadata:
         return {}
     out: dict[str, str] = {}
-    for modality, meta in parent_result_metadata_by_modality.items():
+    for candidate, meta in candidate_parent_metadata.items():
         if hasattr(meta, "to_dict"):
             meta = meta.to_dict()
         if isinstance(meta, dict):
             status = meta.get("validation_status")
             if status is None and isinstance(meta.get("fisher_result"), dict):
                 status = meta["fisher_result"].get("validation_status")
-            out[str(modality)] = str(status or ValidationStatus.UNCHECKED.value)
+            out[str(candidate)] = str(status or ValidationStatus.UNCHECKED.value)
         else:
-            out[str(modality)] = ValidationStatus.UNCHECKED.value
+            out[str(candidate)] = ValidationStatus.UNCHECKED.value
     return out
 
 def _structured_status_from_adaptive_result(
@@ -244,80 +242,6 @@ def convergence_status_metadata(status: FisherConvergenceStatus | dict[str, Any]
         out.setdefault("validation_status", combine_parent_statuses({"_": {"convergence_status": out["convergence_status"]}})["validation_status"])
         return out
     raise TypeError(f"Unsupported convergence status payload {type(status).__name__}")
-
-def compute_converged_lateral_crlb(
-    render_at_xy: Any,
-    base_x_nm: float,
-    base_y_nm: float,
-    noise_variance_map: np.ndarray | float,
-    pixel_size_nm: float,
-    *,
-    step_pixels: tuple[float, ...] | list[float] = (1.0, 0.5, 0.25, 0.125, 0.0625),
-    max_relative_change: float = 0.05,
-    min_stable_steps: int = 3,
-    source_contract: str = "Contract-LP",
-    modality: str = "unknown",
-    signal_units: str = "contrast",
-    measurement_domain: str = "contrast",
-    noise_variance_units: str | None = None,
-) -> dict[str, Any]:
-    """Compute convergence-gated lateral CRLB using rerendered finite differences.
-
-    ``render_at_xy(x_nm, y_nm)`` must return a finite 2D signal image at the
-    requested particle centre.  The function never falls back to stationary
-    image-gradient derivatives; it constructs explicit x/y rerender pairs for
-    each tested step and returns a structured ``FisherConvergenceStatus``.
-    """
-    from .lateral import adaptive_lateral_crlb_from_rerender_pairs
-
-    if not callable(render_at_xy):
-        raise TypeError("render_at_xy must be callable")
-    px = float(pixel_size_nm)
-    if not np.isfinite(px) or px <= 0.0:
-        raise ValueError("pixel_size_nm must be positive and finite")
-    pairs: dict[float, dict[str, np.ndarray]] = {}
-    for step_px in step_pixels:
-        h_nm = float(step_px) * px
-        if not np.isfinite(h_nm) or h_nm <= 0.0:
-            raise ValueError(f"step_pixels must be positive finite values; got {step_px!r}")
-        pairs[h_nm] = {
-            "x_minus": np.asarray(render_at_xy(float(base_x_nm) - h_nm, float(base_y_nm)), dtype=float),
-            "x_plus": np.asarray(render_at_xy(float(base_x_nm) + h_nm, float(base_y_nm)), dtype=float),
-            "y_minus": np.asarray(render_at_xy(float(base_x_nm), float(base_y_nm) - h_nm), dtype=float),
-            "y_plus": np.asarray(render_at_xy(float(base_x_nm), float(base_y_nm) + h_nm), dtype=float),
-        }
-    adaptive = adaptive_lateral_crlb_from_rerender_pairs(
-        pairs,
-        noise_variance_map,
-        px,
-        convergence_tolerance=float(max_relative_change),
-        min_stable_steps=int(min_stable_steps),
-        source_contract=source_contract,
-        modality=modality,
-        signal_units=signal_units,
-        measurement_domain=measurement_domain,
-        noise_variance_units=noise_variance_units,
-    )
-    structured = _structured_status_from_adaptive_result(
-        adaptive,
-        derivative_mode="rerendered_central_difference_xy",
-        source_contract=source_contract,
-        modality=modality,
-        scalar_key="sigma_xy_nm",
-    )
-    final = dict(adaptive.get("final_result", {}))
-    final["convergence_status_record"] = structured.to_dict()
-    final["convergence_status"] = structured.status
-    final["validation_status"] = structured.validation_status
-    final["selected_step_nm"] = structured.selected_step
-    final["steps_tested_nm"] = list(structured.steps_tested)
-    final["max_adjacent_relative_change"] = structured.max_adjacent_relative_change
-    final["parent_convergence_statuses"] = {modality: structured.status}
-    adaptive["convergence_status_record"] = structured.to_dict()
-    adaptive["final_result"] = final
-    adaptive["validation_status"] = structured.validation_status
-    adaptive["max_adjacent_relative_change"] = structured.max_adjacent_relative_change
-    return adaptive
 
 def compute_converged_axial_crlb(
     render_at_z: Any,
@@ -389,7 +313,6 @@ def compute_converged_axial_crlb(
 __all__ = [
     "FisherConvergenceStatus",
     "annotate_fisher_result_status",
-    "compute_converged_lateral_crlb",
     "compute_converged_axial_crlb",
     "convergence_status_metadata",
 ]

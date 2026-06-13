@@ -1,7 +1,7 @@
 """registry substrate-pattern helpers."""
 
 from __future__ import annotations
-from config import param_value
+from config import SampleEnvironmentSettings
 from param_schema.sample_environment import PATTERN_DEFAULT_PRESETS
 
 from ._shared import (
@@ -50,16 +50,16 @@ def generate_sample_environment_pattern_maps(
     if not np.isfinite(layer_thickness_nm):
         raise ValueError("layer_thickness_nm must be finite for sample-environment maps.")
 
-    pattern_model_raw = param_value(params, 'sample_environment_pattern')
-    substrate_preset_raw = param_value(params, "sample_environment_pattern_preset")
+    sample_environment = SampleEnvironmentSettings.from_params(params)
     pattern_model, substrate_preset = canonical_sample_environment_pattern_and_preset(
-        pattern_model_raw, substrate_preset_raw
+        sample_environment.pattern,
+        sample_environment.pattern_preset,
     )
 
     uniform_height = np.zeros((height, width), dtype=float)
     uniform_fraction = np.ones((height, width), dtype=float)
     if (
-        not bool(param_value(params, 'sample_environment_enabled'))
+        not sample_environment.enabled
         or not _substrate_pattern_is_enabled(params)
         or substrate_preset == "empty_background"
         or pattern_model == "none"
@@ -71,7 +71,7 @@ def generate_sample_environment_pattern_maps(
         if substrate_preset != expected_preset:
             raise ValueError(
                 f"sample_environment_pattern={pattern_model!r} received invalid "
-                f"preset {substrate_preset_raw!r}."
+                f"preset {sample_environment.pattern_preset!r}."
             )
         geom = _circular_feature_geometry(params, pattern_model)
         feature_is_material = bool(geom["feature_is_material"])

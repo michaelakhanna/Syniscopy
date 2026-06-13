@@ -1,13 +1,15 @@
 """Shared imports and helper functions for imaging model implementations."""
 from __future__ import annotations
 
+from functools import lru_cache
+
 import numpy as np
 
-from config.runtime import param_value
-from optical_params import resolve_probe_wavelength_nm
+from config.runtime import OpticalInstrumentSettings, RicmSettings
 from substrate import MaterialProperties, SampleEnvironment, fresnel_reflection_amplitude
 from .base import (
     ImagingModel,
+    SourceCoordinateContext,
     coherent_phase_from_reference,
     field_intensity,
     is_vectorial_field,
@@ -24,7 +26,7 @@ from modality_registry import (
 
 
 def _ricm_particle_reflection_material(params: dict) -> str | MaterialProperties:
-    explicit = param_value(params, 'ricm_particle_material')
+    explicit = RicmSettings.from_params(params).particle_material
     if isinstance(explicit, MaterialProperties):
         return explicit
     explicit_text = "" if explicit is None else str(explicit).strip()
@@ -43,7 +45,7 @@ def _ricm_particle_reflection_material(params: dict) -> str | MaterialProperties
     ):
         return resolve_component_material_properties(params, primary)
     raise ValueError(
-        "Particle material properties could not be resolved from PARAMS['particles']. "
+        "Particle material properties could not be resolved from parameters['particles']. "
         "Set the primary component material/material_properties/refractive_index, "
         "or use the modality-specific material parameter."
     )
@@ -88,20 +90,42 @@ def _optical_pupil_frequency_grid(
     pixel_nm = float(pixel_size_nm)
     if not np.isfinite(pixel_nm) or pixel_nm <= 0.0:
         raise ValueError(f"pixel_size_nm must be finite and positive; got {pixel_size_nm!r}.")
-    wavelength_nm = resolve_probe_wavelength_nm(params)
-    numerical_aperture = float(param_value(params, "numerical_aperture"))
+    instrument = OpticalInstrumentSettings.from_params(params)
+    wavelength_nm = instrument.probe_wavelength_nm
+    numerical_aperture = instrument.numerical_aperture
     if not np.isfinite(wavelength_nm) or wavelength_nm <= 0.0:
         raise ValueError(f"Optical pupil wavelength must be finite and positive; got {wavelength_nm!r}.")
     if not np.isfinite(numerical_aperture) or numerical_aperture <= 0.0:
         raise ValueError(
-            f"PARAMS['numerical_aperture'] must be finite and positive; got {numerical_aperture!r}."
+            f"parameters['numerical_aperture'] must be finite and positive; got {numerical_aperture!r}."
         )
+    return _optical_pupil_frequency_grid_cached(
+        H,
+        W,
+        pixel_nm,
+        float(wavelength_nm),
+        float(numerical_aperture),
+    )
+
+
+@lru_cache(maxsize=128)
+def _optical_pupil_frequency_grid_cached(
+    H: int,
+    W: int,
+    pixel_nm: float,
+    wavelength_nm: float,
+    numerical_aperture: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
     fy = np.fft.fftfreq(H, d=pixel_nm)
     fx = np.fft.fftfreq(W, d=pixel_nm)
     FX, FY = np.meshgrid(fx, fy, indexing="xy")
     cutoff_cycles_per_nm = max(numerical_aperture / wavelength_nm, 1e-30)
     rho = np.sqrt(FX * FX + FY * FY) / cutoff_cycles_per_nm
-    return FX / cutoff_cycles_per_nm, FY / cutoff_cycles_per_nm, rho, cutoff_cycles_per_nm
+    FXn = FX / cutoff_cycles_per_nm
+    FYn = FY / cutoff_cycles_per_nm
+    for arr in (FXn, FYn, rho):
+        arr.setflags(write=False)
+    return FXn, FYn, rho, cutoff_cycles_per_nm
 
 __all__ = [
     "CANONICAL_COHERENT_MODALITIES",

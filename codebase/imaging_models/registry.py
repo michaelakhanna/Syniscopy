@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from .base import ImagingModel
-from config.runtime import resolved_modality
+from config.runtime import ModalitySettings
 from modality_registry import (
     CANONICAL_COHERENT_MODALITIES,
     LABEL_FREE_OPTICAL_MODALITIES,
@@ -83,7 +83,7 @@ def modality_uses_sample_environment_pattern(model_name: str) -> bool:
 
 def get_imaging_model(params: dict) -> ImagingModel:
     """Instantiate and return the imaging model specified by ``params``."""
-    model_name = resolved_modality(params)
+    model_name = ModalitySettings.from_params(params).modality
     return get_imaging_model_class(model_name)(params)
 
 

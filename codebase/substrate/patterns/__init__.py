@@ -16,6 +16,7 @@ from .registry import (
     canonical_sample_environment_pattern_and_preset,
     generate_sample_environment_pattern_maps,
 )
+from ._shared import sample_environment_pattern_is_active
 from .roughness import (
     generate_empirical_background_field,
     generate_sample_environment_roughness_field,
@@ -34,4 +35,5 @@ __all__ = [
     "project_position_to_fluid_region",
     "reflect_position_across_substrate_boundary",
     "resize_empirical_background_field",
+    "sample_environment_pattern_is_active",
 ]

@@ -41,9 +41,12 @@ class MultisliceLiteTEMBackend:
         dz_nm = 0.0 if self.slice_thickness_nm is None else float(self.slice_thickness_nm)
         psi = np.ones(source.shape, dtype=complex)
         phase_slice = source / float(self.multislice_slices)
-        for _ in range(self.multislice_slices):
+        if dz_nm != 0.0:
+            psi = self._fresnel_propagate_exit_wave(psi, 0.5 * dz_nm)
+        for idx in range(self.multislice_slices):
             psi *= np.exp(1j * phase_slice)
-            psi = self._fresnel_propagate_exit_wave(psi, dz_nm)
+            step_nm = 0.5 * dz_nm if idx == self.multislice_slices - 1 else dz_nm
+            psi = self._fresnel_propagate_exit_wave(psi, step_nm)
         projected_exit_phase = np.angle(psi)
         return np.maximum(1.0 + self.ctf_backend.apply_ctf(projected_exit_phase), 0.0)
 

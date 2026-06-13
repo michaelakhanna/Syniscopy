@@ -1,7 +1,7 @@
 {
   "title": "Syniscopy: Theoretical Foundations and Cross-Modality Cramér-Rao Analysis for Synthetic Single-Particle Microscopy",
   "upload_type": "software",
-  "version": "1.1.3",
+  "version": "1.1.4",
   "publication_date": "2026-06-05",
   "access_right": "open",
   "creators": [
@@ -27,5 +27,5 @@
     "Segment Anything Model 2",
     "segmentation"
   ],
-  "notes": "The MIT license applies to Syniscopy code and documentation. Third-party media and model assets are not relicensed as Syniscopy code. Liverpool caustic-video review manifests identify Creative Commons Attribution 4.0 third-party DataCat sources; the source release does not bundle raw DataCat videos, regenerated reviewed clip AVIs, or derived overlays. Segment Anything Model 2 code, base checkpoints, and any fine-tuned checkpoint derived from those weights retain Meta's upstream Segment Anything Model 2 licenses and notices."
+  "notes": "The MIT license applies to Syniscopy code and documentation. Optional Segment Anything Model 2 starter notebooks clone/download Meta's external Segment Anything 2 code and checkpoints at runtime; those external assets, and any checkpoint derived from them, retain Meta's upstream licenses and notices."
 }

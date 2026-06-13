@@ -62,6 +62,7 @@ def compute_rayleigh_amplitude_scaling_control(
     that algebraic Fisher response from the full configured particle-size sweep,
     where the rendered optical profile, sampling, and noise model can also vary.
     """
+    from noise_contracts import independent_pixel_noise_model
     from .lateral import compute_localization_crlb
 
     if diameter_nm is None:
@@ -76,12 +77,19 @@ def compute_rayleigh_amplitude_scaling_control(
     yy, xx = np.meshgrid(coords, coords, indexing="ij")
     base_contrast = np.exp(-(xx * xx + yy * yy) / (2.0 * gaussian_sigma_pixels ** 2))
 
+    noise_model = independent_pixel_noise_model(
+        noise_variance,
+        measurement_domain="contrast",
+        signal_units="contrast",
+        noise_variance_units="contrast_squared",
+        context="compute_rayleigh_amplitude_scaling_control noise",
+    )
     sigma_xy = []
     for diameter in diameters:
         amplitude = (float(diameter) / float(reference_diameter_nm)) ** 3
         crlb = compute_localization_crlb(
             amplitude * base_contrast,
-            noise_variance,
+            noise_model,
             pixel_size_nm,
         )
         sigma_xy.append(crlb["sigma_xy_nm"])

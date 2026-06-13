@@ -13,7 +13,7 @@ Design & Usage
   once for each optical preset (combination of NA, wavelength, medium index,
   apodization, etc.).
 - The resulting integer `pupil_samples` is then written into the preset
-  definition (e.g., in `config.PARAMS` or an instrument preset), and the main
+  definition (e.g., in `config.parameters` or an instrument preset), and the main
   simulation uses that fixed value.
 
 Algorithm
@@ -63,7 +63,7 @@ the aperture and apodization.
 Note:
     - This implementation deliberately avoids any dependency on the rest of the
       simulation pipeline. It is safe to run standalone and does not modify
-      global state or PARAMS.
+      global state or parameters.
 """
 
 from __future__ import annotations
@@ -73,7 +73,7 @@ from typing import Dict
 
 import numpy as np
 
-from optical_params import resolve_probe_wavelength_nm
+from config.runtime import AberrationSettings, OpticalInstrumentSettings
 
 
 def compute_pupil_samples(
@@ -269,7 +269,7 @@ def recommend_pupil_samples_for_params(
 ) -> int:
     """
     Convenience wrapper that computes a recommended `pupil_samples` value
-    directly from a PARAMS-style dictionary.
+    directly from a parameters-style dictionary.
 
     This function reads the relevant optical parameters from `params`:
 
@@ -282,14 +282,14 @@ def recommend_pupil_samples_for_params(
     input dictionary.
 
     Example:
-        >>> from config import PARAMS
+        >>> from config import default_params
         >>> from pupil_sampling import recommend_pupil_samples_for_params
-        >>> ps = recommend_pupil_samples_for_params(PARAMS)
+        >>> ps = recommend_pupil_samples_for_params(default_params())
         >>> print(ps)
 
     Args:
         params (dict):
-            Simulation parameter dictionary (e.g., `config.PARAMS`). Must
+            Simulation parameter dictionary assembled from default owners. Must
             contain the keys listed above.
 
         amplitude_threshold (float, optional):
@@ -310,15 +310,13 @@ def recommend_pupil_samples_for_params(
         ValueError:
             If any of the parameter values are invalid.
     """
-    try:
-        NA = float(params["numerical_aperture"])
-        wavelength_nm = resolve_probe_wavelength_nm(params)
-        n_medium = float(params["refractive_index_medium"])
-        apodization_factor = float(params["apodization_factor"])
-    except KeyError as exc:
-        raise KeyError(
-            f"Missing required key in params for pupil_samples recommendation: {exc}"
-        ) from exc
+    instrument = OpticalInstrumentSettings.from_params(params)
+    NA = instrument.numerical_aperture
+    wavelength_nm = instrument.probe_wavelength_nm
+    n_medium = instrument.refractive_index_medium
+    # Effective (preset-resolved) apodization, so the sample-count heuristic
+    # matches the optical system the backends actually render.
+    apodization_factor = AberrationSettings.from_params(params).apodization_factor
 
     return compute_pupil_samples(
         numerical_aperture=NA,
@@ -334,15 +332,15 @@ if __name__ == "__main__":
     # Command-line entry point for quick offline usage.
     #
     # When invoked as a script, this will:
-    #   - Import the global PARAMS from config.
+    #   - Assemble a fresh default parameter mapping.
     #   - Compute a recommended pupil_samples value for those parameters.
-    #   - Print the result alongside the current PARAMS["pupil_samples"] value
+    #   - Print the result alongside the current parameters["pupil_samples"] value
     #     for inspection.
     #
-    # This does not modify PARAMS or any preset definitions.
+    # This does not modify any preset definitions.
     import argparse
 
-    from config import PARAMS
+    from config import default_params
 
     parser = argparse.ArgumentParser(
         description=(
@@ -370,14 +368,15 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
+    params = default_params()
     recommended = recommend_pupil_samples_for_params(
-        PARAMS,
+        params,
         amplitude_threshold=args.amplitude_threshold,
         ground_truth_samples=args.ground_truth_samples,
     )
 
-    current = PARAMS["pupil_samples"]
+    current = OpticalInstrumentSettings.from_params(params).pupil_samples
 
     print("=== Pupil Samples Recommendation ===")
-    print(f"Current PARAMS['pupil_samples']: {current!r}")
+    print(f"Current parameters['pupil_samples']: {current!r}")
     print(f"Recommended pupil_samples       : {recommended}")

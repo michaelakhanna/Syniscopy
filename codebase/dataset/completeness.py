@@ -1,7 +1,12 @@
 """Dataset output completeness checks."""
 
 from __future__ import annotations
-from config import param_value
+from config import (
+    MatchedMicroscopeSettings,
+    SimulationOutputSettings,
+    SpectralIntegrationSettings,
+    VolumeRenderingSettings,
+)
 
 import os
 from typing import Any, Mapping
@@ -50,33 +55,33 @@ def _avi_video_complete(path: str, expected_num_frames: int) -> bool:
     finally:
         capture.release()
 
-def _counterfactual_packet_complete(path: str) -> bool:
+def _matched_microscope_packet_complete(path: str) -> bool:
     if not _existing_nonempty_file(path):
         return False
     try:
-        from counterfactual_packets import load_counterfactual_modality_packet
+        from matched_microscope_packets import load_matched_microscope_packet
 
-        packet = load_counterfactual_modality_packet(path)
+        packet = load_matched_microscope_packet(path)
         metadata = packet.get("metadata")
         if not isinstance(metadata, dict):
             return False
-        if metadata.get("schema_version") != "syniscopy-matched-modality-packet-v1":
+        if metadata.get("schema_version") != "syniscopy-matched-microscope-packet-v2":
             return False
-        if metadata.get("packet_kind") != "matched_modality_information_packet":
+        if metadata.get("packet_kind") != "matched_microscope_information_packet":
             return False
-        modalities = metadata.get("modalities", [])
-        if not isinstance(modalities, list) or len(modalities) < 2:
+        microscopes = metadata.get("microscopes", [])
+        if not isinstance(microscopes, list) or len(microscopes) < 2:
             return False
-        if set(metadata.get("crlb_by_modality", {}).keys()) != set(modalities):
+        if set(metadata.get("crlb_by_microscope", {}).keys()) != set(microscopes):
             return False
-        if set(packet.get("images_by_modality", {}).keys()) != set(modalities):
+        if set(packet.get("images_by_microscope", {}).keys()) != set(microscopes):
             return False
-        if set(packet.get("fisher_by_modality", {}).keys()) != set(modalities):
+        if set(packet.get("fisher_by_microscope", {}).keys()) != set(microscopes):
             return False
         shared_frame = (metadata.get("metadata") or {}).get("shared_coordinate_frame")
         if not isinstance(shared_frame, dict):
             return False
-        if not bool(metadata.get("has_fisher_by_modality", False)):
+        if not bool(metadata.get("has_fisher_by_microscope", False)):
             return False
     except Exception:
         return False
@@ -176,13 +181,13 @@ def _video_assets_complete(base_output_dir: str, video_index: int) -> bool:
             expected_num_frames,
         ):
             return False
-    packet_rel = manifest.get("matched_modality_packet_npz")
-    matched_modalities = manifest.get("matched_modalities")
-    if matched_modalities:
+    packet_rel = manifest.get("matched_microscope_packet_npz")
+    matched_microscopes = manifest.get("matched_microscopes")
+    if matched_microscopes:
         if not packet_rel:
             return False
     if packet_rel:
-        if not _counterfactual_packet_complete(os.path.join(base_output_dir, str(packet_rel))):
+        if not _matched_microscope_packet_complete(os.path.join(base_output_dir, str(packet_rel))):
             return False
     return True
 
@@ -192,23 +197,17 @@ def _validate_dataset_output_contract(params: Mapping[str, Any]) -> None:
     manifest. Multichannel direct-render modes that skip the primary video are
     valid for low-level simulation calls but not for this dataset entry point.
     """
-    channels = param_value(params, 'channels')
-    if channels is not None and param_value(params, "matched_modalities") is not None:
+    channels = SpectralIntegrationSettings.from_params(params).channels
+    if channels is not None and MatchedMicroscopeSettings.from_params(params).enabled:
         raise ValueError(
-            "Dataset generation cannot combine PARAMS['channels'] with "
-            "PARAMS['matched_modalities']; matched packets render their own "
-            "modality set and reject spectral channels."
+            "Dataset generation cannot combine parameters['channels'] with "
+            "parameters['matched_microscopes']; matched packets render their own "
+            "microscope set and reject spectral channels."
         )
-    if not bool(param_value(params, 'save_frame_sequence')):
-        raise ValueError(
-            "Dataset generation requires save_frame_sequence=True. "
-            "PNG frame sequences are the canonical 8-bit contrast-analysis "
-            "training/inference artifact. Enable save_raw_camera_video for a "
-            "raw-camera preview and save_raw_frame_views for quantitative "
-            "raw/ideal arrays."
-        )
-    volumetric_mode = str(param_value(params, 'volumetric_imaging_mode')).strip().lower()
-    if volumetric_mode != "single_plane":
+    output = SimulationOutputSettings.from_params(params)
+    output.require_dataset_frame_artifacts()
+    volume = VolumeRenderingSettings.from_params(params)
+    if volume.imaging_mode != "single_plane":
         raise ValueError(
             "Dataset generation requires volumetric_imaging_mode='single_plane'. "
             "Volumetric simulation outputs are analysis-volume dictionaries, "
@@ -216,12 +215,4 @@ def _validate_dataset_output_contract(params: Mapping[str, Any]) -> None:
             "dataset frame-sequence writer. Use generate_volumetric_views() "
             "for volumetric analysis outputs."
         )
-    if channels:
-        output_mode = str(param_value(params, 'multichannel_output_mode')).strip().lower()
-        if output_mode not in {"rgb", "both"}:
-            raise ValueError(
-                "Dataset generation requires multichannel_output_mode='rgb' "
-                "or 'both' when channels are enabled, because the dataset "
-                "manifest needs a primary training video. Use the low-level "
-                "run_simulation path for sidecar-only or no-video spectral renders."
-            )
+    output.require_dataset_primary_multichannel_video(channels_enabled=bool(channels))

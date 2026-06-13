@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from config import param_value
+from config import SampleEnvironmentSettings
 
 from ._shared import (
     Optional,
@@ -88,7 +88,7 @@ def _generate_gold_hole_pattern(
     feature-layout holes.
 
     Behavior:
-        - When a PARAMS dictionary is provided, the function uses the shared
+        - When a parameters dictionary is provided, the function uses the shared
           randomized feature layout so optical pattern geometry matches the
           Brownian exclusion geometry.
         - When params is None, the function uses an ideal circular,
@@ -200,18 +200,11 @@ def _generate_gold_hole_pattern(
 def _resolve_gold_hole_parameters(params: dict) -> dict:
     """
     Resolve geometry and optical-intensity parameters for the gold film with
-    circular holes from the global PARAMS dictionary.
+    circular holes from the global parameters dictionary.
     """
-    dims = param_value(params, "sample_environment_pattern_dimensions")
-    if not isinstance(dims, dict):
-        raise TypeError(
-            "PARAMS['sample_environment_pattern_dimensions'] must be a dictionary when "
-            "using sample_environment_pattern 'gold_holes'."
-        )
-
-    substrate_preset_raw = param_value(params, "sample_environment_pattern_preset"
-    )
-    substrate_preset = str(substrate_preset_raw).strip().lower()
+    sample_environment = SampleEnvironmentSettings.from_params(params)
+    dims = sample_environment.pattern_dimensions
+    substrate_preset = sample_environment.pattern_preset
 
     hole_diameter_um = float(dims["hole_diameter_um"])
     hole_edge_to_edge_spacing_um = float(dims["hole_edge_to_edge_spacing_um"])

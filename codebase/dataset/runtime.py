@@ -1,6 +1,7 @@
 """Dataset runtime path, parameter, and frame-asset helpers."""
 
 from __future__ import annotations
+from configured_parameters import configured_assign
 
 import json
 import os
@@ -10,14 +11,15 @@ from typing import Any, Dict, Mapping, Optional
 
 import numpy as np
 
-from config import PARAMS
+from config import default_params
 from json_utils import json_safe
 from presets import apply_instrument_preset
+from simulation_runtime_state import runtime_state
 
 from .overrides import apply_parameter_overrides
 
 PUBLIC_DATASET_PRESET_DESCRIPTIONS: Dict[str, str] = {
-    "default": "Core config.PARAMS surface for programmatic dataset generation.",
+    "default": "Core concept-owned default parameter surface for programmatic dataset generation.",
 }
 
 def _resolve_base_output_dir(base_output_dir: Optional[str]) -> str:
@@ -59,11 +61,10 @@ def get_default_dataset_params() -> Dict[str, Any]:
     """
     Return the complete default simulation parameter dictionary.
 
-    This is intentionally a copy of ``config.PARAMS`` rather than a second
-    hand-maintained dictionary. Users can inspect or dump this structure to see
-    every configurable parameter that the core generator accepts.
+    Users can inspect or dump this structure to see every configurable
+    parameter that the core generator accepts.
     """
-    return deepcopy(PARAMS)
+    return default_params()
 
 def _normalize_dataset_preset_name(preset_name: Optional[str]) -> str:
     if preset_name is None:
@@ -84,7 +85,7 @@ def _remove_video_artifacts(base_output_dir: str, video_index: int) -> None:
         os.path.join(base_output_dir, "raw_frame_views", f"{video_id}.npz"),
         os.path.join(base_output_dir, "raw_frame_views", f"{video_id}.npz.tmp"),
         os.path.join(base_output_dir, "videos", "channels", video_id),
-        os.path.join(base_output_dir, "counterfactual_packets", f"{video_id}.npz"),
+        os.path.join(base_output_dir, "matched_microscope_packets", f"{video_id}.npz"),
         os.path.join(base_output_dir, "metadata", f"{video_id}.json"),
     ]
     for path in removals:
@@ -234,7 +235,7 @@ def _build_params_for_video(preset_name: Optional[str]) -> Dict[str, Any]:
     normalized_preset = _normalize_dataset_preset_name(preset_name)
 
     if normalized_preset == "default":
-        params = deepcopy(PARAMS)
+        params = default_params()
     else:
         raise ValueError(
             f"Unknown public dataset preset {normalized_preset!r}. "
@@ -253,7 +254,7 @@ def build_dataset_video_params(
     param_overrides: Optional[Mapping[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
-    Build the full PARAMS dictionary for one dataset video.
+    Build the full parameters dictionary for one dataset video.
 
     This is the public counterpart to the generator's per-video construction
     step. Notebooks can use it to preview the same preset and override
@@ -274,8 +275,8 @@ def build_dataset_video_params(
         params = apply_instrument_preset(params, instrument_preset)
     params = apply_parameter_overrides(params, param_overrides)
     seed_value = int(rng.integers(0, np.iinfo(np.uint32).max, dtype=np.uint32))
-    params["random_seed"] = seed_value
-    params["_substrate_pattern_layout_cache_token"] = f"video_{video_index:04d}:{seed_value}"
+    configured_assign(params, 'random_seed', seed_value)
+    runtime_state(params).substrate_pattern_layout_cache_token = f"video_{video_index:04d}:{seed_value}"
     return params
 
 def _raw_frame_view_payload(
@@ -286,24 +287,78 @@ def _raw_frame_view_payload(
     payload: Dict[str, np.ndarray] = {
         "background_subtracted_frames": np.asarray(final_frames_for_raw_view),
         "trajectories_nm": np.asarray(result_metadata.get("trajectories_nm", [])),
+        "rendered_trajectories_nm": np.asarray(
+            result_metadata.get("rendered_trajectories_nm", [])
+        ),
     }
     for key in (
         "raw_signal_frames",
         "raw_reference_frames",
         "ideal_signal_frames",
         "ideal_reference_frames",
+        "detector_input_signal_frames",
+        "detector_input_reference_frames",
+        "detector_mean_signal_frames",
+        "detector_mean_reference_frames",
+        "detector_object_field_frames",
         "raw_signal_frames_rgb",
         "raw_reference_frames_rgb",
         "ideal_signal_frames_by_spectral_sample",
         "ideal_reference_frames_by_spectral_sample",
+        "detector_input_signal_frames_by_spectral_sample",
+        "detector_input_reference_frames_by_spectral_sample",
+        "detector_mean_signal_frames_by_spectral_sample",
+        "detector_mean_reference_frames_by_spectral_sample",
         "background_subtracted_frames_rgb",
+        "contrast_frames_float",
+        "raw_observation_contrast_frames",
+        "analysis_contrast_frames",
+        "quantitative_contrast_frames",
     ):
         if key in result_metadata:
             payload[key] = np.asarray(result_metadata[key])
+    for key in (
+        "analysis_contrast_frame_units",
+        "analysis_contrast_frame_semantics",
+        "analysis_contrast_frame_source",
+        "analysis_contrast_frame_basis",
+        "analysis_contrast_frame_contrast_basis",
+        "analysis_contrast_frame_quantitative",
+        "analysis_contrast_frame_safe_for_fisher",
+        "analysis_contrast_frame_provenance_warning",
+        "analysis_contrast_frame_contract_id",
+        "raw_observation_contrast_frame_source",
+        "raw_observation_contrast_frame_basis",
+        "raw_observation_contrast_frame_contrast_basis",
+        "raw_observation_contrast_frame_units",
+        "raw_observation_contrast_frame_quantitative",
+        "quantitative_contrast_frame_key",
+        "quantitative_contrast_frame_source",
+        "quantitative_contrast_frame_quantitative",
+        "quantitative_contrast_frame_basis",
+        "quantitative_contrast_frame_contrast_basis",
+        "quantitative_contrast_frame_units",
+        "quantitative_contrast_frame_semantics",
+        "quantitative_contrast_frame_safe_for_fisher",
+        "quantitative_contrast_frame_provenance_warning",
+        "quantitative_contrast_frame_contract_id",
+        "quantitative_contrast_background_subtraction_method",
+        "quantitative_contrast_display_background_subtraction_applied",
+    ):
+        if key in result_metadata:
+            payload[key] = np.array(str(result_metadata[key]))
     if "source_map_provenance" in result_metadata:
         payload["source_map_provenance_json"] = np.array(
             json.dumps(
                 json_safe(result_metadata["source_map_provenance"]),
+                sort_keys=True,
+                allow_nan=False,
+            )
+        )
+    if "trajectory_semantics" in result_metadata:
+        payload["trajectory_semantics_json"] = np.array(
+            json.dumps(
+                json_safe(result_metadata["trajectory_semantics"]),
                 sort_keys=True,
                 allow_nan=False,
             )
@@ -320,7 +375,7 @@ def _raw_frame_view_payload(
 
 def write_default_params_template(output_path: str) -> str:
     """
-    Write the full default PARAMS surface as a JSON template and return the path.
+    Write the full default parameters surface as a JSON template and return the path.
     """
     output_path = os.path.abspath(os.path.expanduser(output_path))
     parent = os.path.dirname(output_path)

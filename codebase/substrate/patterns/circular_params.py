@@ -4,23 +4,17 @@ from __future__ import annotations
 
 import numpy as np
 
-from config import param_value
+from config import SampleEnvironmentSettings
 
 
 def _resolve_nanopillar_parameters(params: dict) -> dict:
     """
     Resolve geometry and optical-intensity parameters for a circular nanopillar
-    array from the global PARAMS dictionary.
+    array from the global parameters dictionary.
     """
-    dims = param_value(params, "sample_environment_pattern_dimensions")
-    if not isinstance(dims, dict):
-        raise TypeError(
-            "PARAMS['sample_environment_pattern_dimensions'] must be a dictionary when "
-            "using sample_environment_pattern 'nanopillars'."
-        )
-
-    substrate_preset_raw = param_value(params, "sample_environment_pattern_preset")
-    substrate_preset = str(substrate_preset_raw).strip().lower()
+    sample_environment = SampleEnvironmentSettings.from_params(params)
+    dims = sample_environment.pattern_dimensions
+    substrate_preset = sample_environment.pattern_preset
 
     pillar_diameter_um = float(dims["pillar_diameter_um"])
     pillar_edge_to_edge_spacing_um = float(dims["pillar_edge_to_edge_spacing_um"])
